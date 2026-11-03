@@ -81,33 +81,60 @@ static const char *kIl2Api[] = {
     "il2cpp_image_get_class",
 };
 
+static bool decode_adrp(uint32_t w, uint64_t pc, int64_t &pageOut) {
+    if ((w & 0x9F000000u) != 0x90000000u) return false;
+    int64_t immhi = (int64_t)((w >> 5) & 0x7ffffu);
+    int64_t immlo = (int64_t)((w >> 29) & 0x3u);
+    int64_t imm = (immhi | (immlo << 19)) << 12;
+    if (w & (1u << 23)) imm |= 0xFFFFFFFFF0000000ULL;
+    pageOut = (int64_t)(pc & ~0xFFFULL) + imm;
+    return true;
+}
+
 static bool domain_from_getter(pid_t pid, uintptr_t func, uintptr_t &domainOut) {
     domainOut = 0;
     if (!func) return false;
-    uint32_t ins[12] = {};
+    uint32_t ins[32] = {};
     if (!mem_read(pid, func, ins, sizeof(ins))) return false;
 
-    for (int i = 0; i < 10; ++i) {
+    uint64_t x[31] = {};
+    for (int i = 0; i < 28; ++i) {
         const uint32_t w = ins[i];
         const uint32_t w2 = ins[i + 1];
-        if ((w & 0x9F000000u) != 0x90000000u) continue;
-        if ((w2 & 0xFFC00000u) != 0xF9400000u) continue;
-        const int rd = (int)(w & 0x1fu);
-        const int rn = (int)((w2 >> 5) & 0x1fu);
-        if (rd != rn) continue;
-        int64_t immhi = (int64_t)((w >> 5) & 0x7ffffu) << 12;
-        int64_t immlo = (int64_t)((w >> 29) & 0x3u) << 12;
-        int64_t imm = (immhi | immlo) << 12;
-        if (w & (1u << 23)) imm |= 0xFFFFFFFFF0000000ULL;
-        const int64_t page = ((int64_t)func & ~0xFFFLL) + imm;
-        const uint32_t imm12 = (w2 >> 10) & 0xfffu;
-        const uintptr_t slot = (uintptr_t)(page + (int64_t)imm12 * 8);
-        uintptr_t ptr = 0;
-        if (!mem_read(pid, slot, ptr) || !mem_ptr_ok(ptr)) continue;
-        domainOut = ptr;
-        return true;
+        const uint64_t pc = func + (uint64_t)i * 4;
+
+        int64_t page = 0;
+        if (decode_adrp(w, pc, page)) {
+            const int rd = (int)(w & 0x1fu);
+            if (rd >= 0 && rd < 31) x[rd] = (uint64_t)page;
+        }
+        if ((w & 0xFFC00000u) == 0x91000000u) {
+            const int rd = (int)(w & 0x1fu);
+            const int rn = (int)((w >> 5) & 0x1fu);
+            const uint64_t imm = (uint64_t)((w >> 10) & 0xFFFu);
+            if (rd < 31 && rn < 31) x[rd] = x[rn] + imm;
+        }
+        if ((w2 & 0xFFC00000u) == 0xF9400000u) {
+            const int rd = (int)(w2 & 0x1fu);
+            const int rn = (int)((w2 >> 5) & 0x1fu);
+            const uint64_t off = (uint64_t)(((w2 >> 10) & 0xFFFu) * 8);
+            if (rd < 31 && rn < 31) {
+                uintptr_t ptr = 0;
+                if (mem_read(pid, (uintptr_t)(x[rn] + off), ptr) && mem_ptr_ok(ptr)) {
+                    if (rd == 0) domainOut = ptr;
+                    x[rd] = ptr;
+                }
+            }
+        }
+        if ((w & 0xFFFFFC1Fu) == 0xD65F0000u && (w & 0x1fu) == 0x1fu) {
+            if (domainOut) return true;
+            if (mem_ptr_ok(x[0])) {
+                domainOut = x[0];
+                return true;
+            }
+        }
     }
-    return false;
+    return domainOut != 0;
 }
 
 static bool module_like_il2cpp(const SoModule &m) {
@@ -174,7 +201,8 @@ static void domain_scan_bss(pid_t pid, const RemoteIl2CppInfo &lib, uintptr_t &d
     std::vector<MapsReg> maps;
     if (!mem_maps(pid, maps)) return;
     for (const auto &m : maps) {
-        if (m.start < lib.base || m.start > lib.end + 0x4000000ULL) continue;
+        if (m.start < lib.base || m.end > lib.end + 0x200000ULL) continue;
+        if (m.path.find("liblogic") == std::string::npos && m.fileOff != 0) continue;
         if (m.perms[0] != 'r' || m.perms[1] != 'w') continue;
         const size_t sz = (size_t)(m.end - m.start);
         for (size_t off = 0; off < sz; off += 512 * sizeof(uintptr_t)) {

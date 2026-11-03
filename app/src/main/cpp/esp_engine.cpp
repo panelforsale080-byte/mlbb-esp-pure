@@ -200,6 +200,65 @@ static int score_bm(pid_t pid, uintptr_t bm) {
     return 0;
 }
 
+/* conRent resolves Instance via il2cpp; externally scan game heap for the live object. */
+static int score_bm_heap(pid_t pid, uintptr_t bm) {
+    const int s = score_bm(pid, bm);
+    if (s > 0) return s;
+    uintptr_t pDict = 0;
+    if (!mem_read(pid, bm + Off::DicPlayerShow, pDict) || !mem_ptr_ok(pDict)) return -1;
+    std::vector<std::pair<int, uintptr_t>> players;
+    if (!dict_entries(pid, pDict, players) || players.empty()) return -1;
+    return 100 + (int)players.size();
+}
+
+static bool map_is_game_heap(const MapsReg &m) {
+    if (m.perms[0] != 'r' || m.perms[1] != 'w' || m.end <= m.start) return false;
+    if ((size_t)(m.end - m.start) < 64 * 1024) return false;
+    if (m.start < 0x100000000ULL) return false;
+    if (m.path.find(".so") != std::string::npos) return false;
+    if (m.path.find("liblogic") != std::string::npos) return false;
+    if (m.path.find("il2cpp") != std::string::npos) return false;
+    return m.path.empty() || m.path[0] == '[' || m.path.find("[anon:") != std::string::npos ||
+           m.start >= 0x7400000000ULL;
+}
+
+static bool heap_find_battle_manager(pid_t pid, const std::vector<MapsReg> &maps,
+                                     uintptr_t &bmOut, int &bestScoreOut) {
+    bmOut = 0;
+    bestScoreOut = -1;
+    int candidates = 0;
+    size_t budget = 0;
+
+    for (const auto &m : maps) {
+        if (!map_is_game_heap(m)) continue;
+        const size_t sz = (size_t)(m.end - m.start);
+        if ((budget += sz) > 96 * 1024 * 1024) break;
+
+        for (uintptr_t a = (m.start + 0x3f) & ~0xFULL; a + 0x300 < m.end; a += 0x80) {
+            ++candidates;
+            const int sc = score_bm_heap(pid, a);
+            if (sc > bestScoreOut) {
+                bestScoreOut = sc;
+                bmOut = a;
+            }
+        }
+    }
+
+    if (bmOut && bestScoreOut >= 100) {
+        for (uintptr_t a = bmOut - 0x200; a < bmOut + 0x200; a += 0x10) {
+            const int sc = score_bm_heap(pid, a);
+            if (sc > bestScoreOut) {
+                bestScoreOut = sc;
+                bmOut = a;
+            }
+        }
+    }
+
+    ui_log("[resolve] heap scan (EspTab-style) tried=%d best=%d inst=0x%llx",
+           candidates, bestScoreOut, (unsigned long long)bmOut);
+    return bmOut != 0 && bestScoreOut >= 100;
+}
+
 static bool typeinfo_to_klass(pid_t pid, uintptr_t addr, uintptr_t &klass) {
     klass = 0;
     if (!addr) return false;
@@ -508,6 +567,25 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;
     if (!find_bm(g_pid, maps, k, st, inst, &meta)) {
+        int heapScore = -1;
+        uintptr_t heapBm = 0;
+        if (heap_find_battle_manager(g_pid, maps, heapBm, heapScore)) {
+            g_il2_for_resolve = nullptr;
+            g_bmKlass = 0;
+            g_bmStatics = 0;
+            g_bmInstance = heapBm;
+            g_resolved = true;
+            meta.usedElf = false;
+            fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, 0, 0, heapBm);
+            std::snprintf(rep.detail, sizeof(rep.detail),
+                          "heap Instance=0x%llx score=%d (no Il2CppClass; same as esp_resolve.txt)",
+                          (unsigned long long)heapBm, heapScore);
+            ui_log("[resolve] OK heap BattleManager.Instance (conRent fields via PID read)");
+            g_lastReport = rep;
+            if (reportOut) *reportOut = rep;
+            return rep.status;
+        }
+
         g_il2_for_resolve = nullptr;
         g_resolved = false;
         fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, k, st, inst);
@@ -521,6 +599,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
                        (unsigned long long)dbg[i], txt);
             }
         }
+        ui_log("[resolve] klass+heap both failed — need classic match (not lobby)");
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;
@@ -554,6 +633,9 @@ EspStatus esp_tick(EspFrame &out) {
         out.status = EspStatus::NoBattleManager;
         std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (in match)");
         return out.status;
+    }
+    if (!g_bmInstance && g_bmStatics) {
+        refresh_instance(g_pid);
     }
 
     refresh_instance(g_pid);
