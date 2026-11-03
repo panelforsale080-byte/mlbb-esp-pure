@@ -1,0 +1,42 @@
+plugins {
+    id("com.android.application")
+}
+
+android {
+    namespace = "com.mlbb.esp.pure"
+    compileSdk = 35
+    ndkVersion = "28.2.13676358"
+
+    defaultConfig {
+        applicationId = "com.mlbb.esp.pure"
+        minSdk = 28
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.0"
+        ndk { abiFilters += setOf("arm64-v8a") }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17 -O2 -Wall"
+                arguments += listOf("-DANDROID_STL=c++_shared")
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("debug") { isMinifyEnabled = false }
+        getByName("release") {
+            isMinifyEnabled = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+        }
+    }
+
+    externalNativeBuild {
+        cmake { path = file("src/main/cpp/CMakeLists.txt") }
+    }
+
+    packaging {
+        jniLibs { useLegacyPackaging = true }
+    }
+}
+
+dependencies {}
