@@ -343,21 +343,23 @@ EspStatus esp_attach(pid_t pid) {
     return EspStatus::Idle;
 }
 
-static void fill_report(EspResolveReport &r, EspStatus st, int mapsCount, bool probe,
-                        const BmFindMeta &meta, uintptr_t k, uintptr_t st, uintptr_t inst) {
-    r.status = st;
+static void fill_report(EspResolveReport &r, EspStatus status, int mapsCount, bool probe,
+                        const BmFindMeta &meta, uintptr_t klass, uintptr_t statics,
+                        uintptr_t inst) {
+    r.status = status;
     r.mapsCount = mapsCount;
     r.readProbe = probe;
     r.bmNameStrings = meta.nameStrings;
     r.usedElfTypeInfo = meta.usedElf;
-    r.klass = k;
-    r.statics = st;
+    r.klass = klass;
+    r.statics = statics;
     r.instance = inst;
     std::snprintf(r.detail, sizeof(r.detail),
                   "maps=%d probe=%s strings=%d elf=%s klass=0x%llx statics=0x%llx inst=0x%llx",
                   mapsCount, probe ? "OK" : "FAIL", meta.nameStrings,
                   meta.usedElf ? "yes" : "no",
-                  (unsigned long long)k, (unsigned long long)st, (unsigned long long)inst);
+                  (unsigned long long)klass, (unsigned long long)statics,
+                  (unsigned long long)inst);
 }
 
 EspStatus esp_resolve(EspResolveReport *reportOut) {
