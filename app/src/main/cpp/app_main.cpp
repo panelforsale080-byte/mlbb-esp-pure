@@ -242,7 +242,7 @@ void android_main(android_app *app) {
         }
 
         ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplAndroid_NewFrame();
+        ImGui_ImplAndroid_NewFrame(g_width, g_height);
         ImGui::NewFrame();
 
         draw_ui();
