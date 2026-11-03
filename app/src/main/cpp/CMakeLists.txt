@@ -13,6 +13,7 @@ add_library(MlbbEsp SHARED
     proc.cpp
     mem.cpp
     esp_engine.cpp
+    ui_log.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp

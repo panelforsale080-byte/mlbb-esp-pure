@@ -28,9 +28,32 @@ struct EspFrame {
     char hint[96] = {};
     float selfX = 0, selfZ = 0;
     std::vector<EspTarget> targets;
+    /* live read diagnostics (shown in UI log panel) */
+    int mapsCount = 0;
+    bool readProbe = false;
+    uintptr_t bmKlass = 0;
+    uintptr_t bmStatics = 0;
+    uintptr_t bmInstance = 0;
+    uintptr_t playerDict = 0;
+    uintptr_t monsterDict = 0;
+    int dictPlayers = 0;
+    int dictMonsters = 0;
+};
+
+struct EspResolveReport {
+    EspStatus status = EspStatus::Idle;
+    int mapsCount = 0;
+    bool readProbe = false;
+    int bmNameStrings = 0;
+    bool usedElfTypeInfo = false;
+    uintptr_t klass = 0;
+    uintptr_t statics = 0;
+    uintptr_t instance = 0;
+    char detail[240] = {};
 };
 
 void esp_reset();
 EspStatus esp_attach(pid_t pid);
-EspStatus esp_resolve();
+EspStatus esp_resolve(EspResolveReport *reportOut = nullptr);
 EspStatus esp_tick(EspFrame &out);
+const EspResolveReport &esp_last_resolve_report();

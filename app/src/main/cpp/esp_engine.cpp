@@ -1,5 +1,6 @@
 #include "esp_engine.hpp"
 #include "offsets.hpp"
+#include "proc.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -14,6 +15,12 @@ uintptr_t g_bmKlass = 0;
 uintptr_t g_bmStatics = 0;
 uintptr_t g_bmInstance = 0;
 bool g_resolved = false;
+EspResolveReport g_lastReport{};
+
+struct BmFindMeta {
+    int nameStrings = 0;
+    bool usedElf = false;
+};
 
 static bool name_at(pid_t pid, uintptr_t p, const char *want) {
     char buf[80] = {};
@@ -243,11 +250,17 @@ static bool elf_bm_klass(pid_t pid, const std::vector<MapsReg> &maps, uintptr_t 
 }
 
 static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
-                    uintptr_t &klass, uintptr_t &statics, uintptr_t &instance) {
+                    uintptr_t &klass, uintptr_t &statics, uintptr_t &instance,
+                    BmFindMeta *meta) {
     klass = statics = instance = 0;
     const char *name = "BattleManager";
+    if (meta) {
+        meta->nameStrings = 0;
+        meta->usedElf = false;
+    }
 
     if (elf_bm_klass(pid, maps, klass)) {
+        if (meta) meta->usedElf = true;
         uintptr_t st = 0, inst = 0;
         if (verify_klass(pid, klass, name, Off::InstanceStatic, st, inst)) {
             statics = st;
@@ -259,6 +272,7 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
 
     std::vector<uintptr_t> strs;
     scan_strings(pid, maps, name, strs);
+    if (meta) meta->nameStrings = (int)strs.size();
     if (strs.empty()) return false;
 
     std::vector<const MapsReg *> order;
@@ -329,23 +343,67 @@ EspStatus esp_attach(pid_t pid) {
     return EspStatus::Idle;
 }
 
-EspStatus esp_resolve() {
-    std::lock_guard<std::mutex> lock(g_mu);
-    if (g_pid <= 0) return EspStatus::NoProcess;
-    std::vector<MapsReg> maps;
-    if (!mem_maps(g_pid, maps)) return EspStatus::NoRead;
+static void fill_report(EspResolveReport &r, EspStatus st, int mapsCount, bool probe,
+                        const BmFindMeta &meta, uintptr_t k, uintptr_t st, uintptr_t inst) {
+    r.status = st;
+    r.mapsCount = mapsCount;
+    r.readProbe = probe;
+    r.bmNameStrings = meta.nameStrings;
+    r.usedElfTypeInfo = meta.usedElf;
+    r.klass = k;
+    r.statics = st;
+    r.instance = inst;
+    std::snprintf(r.detail, sizeof(r.detail),
+                  "maps=%d probe=%s strings=%d elf=%s klass=0x%llx statics=0x%llx inst=0x%llx",
+                  mapsCount, probe ? "OK" : "FAIL", meta.nameStrings,
+                  meta.usedElf ? "yes" : "no",
+                  (unsigned long long)k, (unsigned long long)st, (unsigned long long)inst);
+}
 
+EspStatus esp_resolve(EspResolveReport *reportOut) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    EspResolveReport rep{};
+    if (g_pid <= 0) {
+        rep.status = EspStatus::NoProcess;
+        std::snprintf(rep.detail, sizeof(rep.detail), "no pid attached");
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        return rep.status;
+    }
+    std::vector<MapsReg> maps;
+    if (!mem_maps(g_pid, maps)) {
+        rep.status = EspStatus::NoRead;
+        rep.mapsCount = 0;
+        rep.readProbe = false;
+        std::snprintf(rep.detail, sizeof(rep.detail),
+                      "cannot read /proc/%d/maps (root? process dead?)", (int)g_pid);
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        return rep.status;
+    }
+    const bool probe = proc_probe_read(g_pid);
+    BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;
-    if (!find_bm(g_pid, maps, k, st, inst)) {
+    if (!find_bm(g_pid, maps, k, st, inst, &meta)) {
         g_resolved = false;
-        return EspStatus::NoBattleManager;
+        fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, k, st, inst);
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        return rep.status;
     }
     g_bmKlass = k;
     g_bmStatics = st;
     g_bmInstance = inst;
     g_resolved = true;
-    if (!inst) return EspStatus::NoInstance;
-    return EspStatus::Ready;
+    const EspStatus stOut = inst ? EspStatus::Ready : EspStatus::NoInstance;
+    fill_report(rep, stOut, (int)maps.size(), probe, meta, k, st, inst);
+    g_lastReport = rep;
+    if (reportOut) *reportOut = rep;
+    return stOut;
+}
+
+const EspResolveReport &esp_last_resolve_report() {
+    return g_lastReport;
 }
 
 EspStatus esp_tick(EspFrame &out) {
@@ -421,7 +479,18 @@ EspStatus esp_tick(EspFrame &out) {
         push(kv.second, 1, Off::monsterLabel(id), kv.first);
     }
 
+    out.mapsCount = 0;
+    out.readProbe = proc_probe_read(g_pid);
+    out.bmKlass = g_bmKlass;
+    out.bmStatics = g_bmStatics;
+    out.bmInstance = bm;
+    out.playerDict = pDict;
+    out.monsterDict = mDict;
+    out.dictPlayers = (int)players.size();
+    out.dictMonsters = (int)monsters.size();
+
     out.status = EspStatus::Ready;
-    std::snprintf(out.hint, sizeof(out.hint), "OK  %zu targets", out.targets.size());
+    std::snprintf(out.hint, sizeof(out.hint), "OK  %zu targets  dict P%d M%d",
+                  out.targets.size(), out.dictPlayers, out.dictMonsters);
     return out.status;
 }
