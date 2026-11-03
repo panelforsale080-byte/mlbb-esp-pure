@@ -20,6 +20,7 @@ static EGLDisplay g_eglDisplay = EGL_NO_DISPLAY;
 static EGLSurface g_eglSurface = EGL_NO_SURFACE;
 static EGLContext g_eglContext = EGL_NO_CONTEXT;
 static int g_width = 0, g_height = 0;
+ImVec2 initialScreenSize;
 
 static std::atomic<bool> g_runReader{true};
 static std::mutex g_frameMu;
@@ -198,6 +199,8 @@ static void handle_cmd(android_app *app, int32_t cmd) {
         if (app->window) {
             g_width = ANativeWindow_getWidth(app->window);
             g_height = ANativeWindow_getHeight(app->window);
+            if (initialScreenSize.x <= 0.f || initialScreenSize.y <= 0.f)
+                initialScreenSize = ImVec2((float)g_width, (float)g_height);
         }
         break;
     default:
