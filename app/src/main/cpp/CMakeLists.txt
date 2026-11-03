@@ -15,6 +15,7 @@ add_library(MlbbEsp SHARED
     esp_engine.cpp
     ui_log.cpp
     remote_il2cpp.cpp
+    remote_elf.cpp
     clip_android.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp

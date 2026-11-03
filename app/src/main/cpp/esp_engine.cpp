@@ -2,6 +2,8 @@
 #include "offsets.hpp"
 #include "proc.hpp"
 #include "remote_il2cpp.hpp"
+#include "remote_elf.hpp"
+#include "ui_log.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -184,48 +186,14 @@ static int score_bm(pid_t pid, uintptr_t bm) {
     return 0;
 }
 
-static bool elf_bm_klass_in(pid_t pid, uintptr_t base, uintptr_t soEnd, uintptr_t &klass) {
+static bool elf_bm_klass_in(pid_t pid, uintptr_t base, uintptr_t /*soEnd*/, uintptr_t &klass) {
     klass = 0;
     if (!base) return false;
 
-    Elf64_Ehdr eh{};
-    if (!mem_read(pid, base, eh) || eh.e_ident[0] != 0x7f) return false;
-    if (eh.e_shnum == 0 || eh.e_shnum > 256 || !eh.e_shoff) return false;
-
-    std::vector<Elf64_Shdr> sh(eh.e_shnum);
-    if (!mem_read(pid, base + eh.e_shoff, sh.data(), sh.size() * sizeof(Elf64_Shdr)))
-        return false;
-    if (eh.e_shstrndx >= eh.e_shnum) return false;
-    const Elf64_Shdr &strsh = sh[eh.e_shstrndx];
-    if (strsh.sh_size == 0 || strsh.sh_size > 256 * 1024) return false;
-    std::vector<char> shstr(strsh.sh_size);
-    if (!mem_read(pid, base + strsh.sh_offset, shstr.data(), shstr.size())) return false;
-
-    const Elf64_Shdr *dynsym = nullptr, *dynstr = nullptr;
-    for (const auto &s : sh) {
-        if (s.sh_name >= shstr.size()) continue;
-        const char *nm = shstr.data() + s.sh_name;
-        if (std::strcmp(nm, ".dynsym") == 0) dynsym = &s;
-        if (std::strcmp(nm, ".dynstr") == 0) dynstr = &s;
-    }
-    if (!dynsym || !dynstr || dynsym->sh_entsize != sizeof(Elf64_Sym)) return false;
-
-    std::vector<char> strtab(dynstr->sh_size);
-    if (!mem_read(pid, base + dynstr->sh_offset, strtab.data(), strtab.size())) return false;
-    const size_t nsym = dynsym->sh_size / sizeof(Elf64_Sym);
-    std::vector<Elf64_Sym> syms(nsym);
-    if (!mem_read(pid, base + dynsym->sh_offset, syms.data(), dynsym->sh_size)) return false;
-
     const char *names[] = {"BattleManager_TypeInfo", "BattleManager_c"};
-    for (const auto &s : syms) {
-        if (s.st_name >= strtab.size() || !s.st_value) continue;
-        const char *nm = strtab.data() + s.st_name;
-        bool hit = false;
-        for (const char *w : names)
-            if (std::strcmp(nm, w) == 0) { hit = true; break; }
-        if (!hit) continue;
-        uintptr_t addr = base + s.st_value;
-        if (addr < base || addr >= soEnd) continue;
+    for (const char *sym : names) {
+        uintptr_t addr = 0;
+        if (!elf_remote_sym(pid, base, sym, addr) || !addr) continue;
         uintptr_t k = 0;
         if (mem_read(pid, addr, k) && mem_ptr_ok(k)) {
             klass = k;
@@ -445,6 +413,16 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     if (!find_bm(g_pid, maps, k, st, inst, &meta)) {
         g_resolved = false;
         fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, k, st, inst);
+        if (meta.nameStrings > 0) {
+            std::vector<uintptr_t> dbg;
+            scan_strings(g_pid, maps, "BattleManager", dbg);
+            for (size_t i = 0; i < dbg.size() && i < 5; ++i) {
+                char txt[64] = {};
+                mem_read(g_pid, dbg[i], txt, sizeof(txt) - 1);
+                ui_log("[resolve] BattleManager str@%llX = \"%s\"",
+                       (unsigned long long)dbg[i], txt);
+            }
+        }
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;
