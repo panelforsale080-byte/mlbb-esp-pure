@@ -14,6 +14,13 @@ bool mem_read(pid_t pid, uintptr_t addr, void *buf, size_t n) {
     return process_vm_readv(pid, &local, 1, &remote, 1, 0) == (ssize_t)n;
 }
 
+bool mem_write(pid_t pid, uintptr_t addr, const void *buf, size_t n) {
+    if (!pid || !addr || !buf || !n) return false;
+    iovec local{(void *)buf, n};
+    iovec remote{(void *)addr, n};
+    return process_vm_writev(pid, &local, 1, &remote, 1, 0) == (ssize_t)n;
+}
+
 bool mem_maps(pid_t pid, std::vector<MapsReg> &out) {
     out.clear();
     std::ifstream maps("/proc/" + std::to_string(pid) + "/maps");

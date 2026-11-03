@@ -1,4 +1,5 @@
 #include "esp_engine.hpp"
+#include "conrent_esp.hpp"
 #include "offsets.hpp"
 #include "proc.hpp"
 #include "remote_il2cpp.hpp"
@@ -563,6 +564,26 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     remote_refresh_domain_ptr(g_pid, il2);
     merge_il2cpp_into_report(rep, il2);
     g_il2_for_resolve = &il2;
+
+    ConrentResolve cr{};
+    if (conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.battle_manager) {
+        g_il2_for_resolve = nullptr;
+        g_bmKlass = cr.battle_manager_klass;
+        g_bmStatics = 0;
+        g_bmInstance = cr.battle_manager;
+        g_resolved = true;
+        BmFindMeta meta{};
+        meta.usedElf = false;
+        fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, cr.battle_manager_klass,
+                    0, cr.battle_manager);
+        std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1: %s", cr.detail);
+        ui_log("[resolve] OK %s", cr.detail);
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        return rep.status;
+    }
+    if (cr.detail[0])
+        ui_log("[resolve] conRent path: %s", cr.detail);
 
     BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;

@@ -11,10 +11,18 @@ struct RemoteIl2CppInfo {
     uintptr_t sym_domain_get = 0;
     uintptr_t sym_class_from_name = 0;
     uintptr_t sym_domain_get_assemblies = 0;
+    uintptr_t sym_assembly_get_image = 0;
+    uintptr_t sym_class_get_field_from_name = 0;
+    uintptr_t sym_field_static_get_value = 0;
+    uintptr_t sym_thread_attach = 0;
     uintptr_t domain_ptr = 0;
     bool export_domain_get = false;
     bool export_class_from_name = false;
     bool export_domain_get_assemblies = false;
+    bool export_assembly_get_image = false;
+    bool export_class_get_field_from_name = false;
+    bool export_field_static_get_value = false;
+    bool export_thread_attach = false;
     char note[256] = {};
 };
 

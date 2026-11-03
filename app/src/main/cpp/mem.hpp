@@ -15,6 +15,7 @@ struct MapsReg {
 };
 
 bool mem_read(pid_t pid, uintptr_t addr, void *buf, size_t n);
+bool mem_write(pid_t pid, uintptr_t addr, const void *buf, size_t n);
 
 template <typename T>
 inline bool mem_read(pid_t pid, uintptr_t addr, T &out) {
