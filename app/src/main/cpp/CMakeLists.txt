@@ -13,6 +13,7 @@ add_library(MlbbEsp SHARED
     proc.cpp
     mem.cpp
     esp_engine.cpp
+    esp_draw.cpp
     conrent_esp.cpp
     remote_call.cpp
     ui_log.cpp

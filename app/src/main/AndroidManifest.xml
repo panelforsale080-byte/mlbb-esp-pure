@@ -2,19 +2,21 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:allowBackup="false"
         android:extractNativeLibs="true"
         android:label="MLBB ESP"
-        android:hasCode="false">
+        android:hasCode="true">
 
         <activity
-            android:name="android.app.NativeActivity"
+            android:name=".EspActivity"
             android:exported="true"
+            android:launchMode="singleInstance"
             android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|keyboardHidden|screenSize"
-            android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+            android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen">
             <meta-data
                 android:name="android.app.lib_name"
                 android:value="MlbbEsp" />

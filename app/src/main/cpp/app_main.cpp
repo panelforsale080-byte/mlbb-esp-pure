@@ -1,4 +1,5 @@
 #include "esp_engine.hpp"
+#include "esp_draw.hpp"
 #include "proc.hpp"
 #include "ui_log.hpp"
 #include "clip_android.hpp"
@@ -32,11 +33,24 @@ static std::atomic<bool> g_needResolve{true};
 
 static bool g_autoFind = true;
 static bool g_fallbackPid = true;
-static bool g_showEsp = true;
-static bool g_showPlayers = true;
-static bool g_showMonsters = true;
+static bool g_showMenu = true;
 static bool g_logScrollBottom = true;
+static EspFeatures g_feat{};
 static android_app *g_app = nullptr;
+
+static void apply_menu_style() {
+    ImGuiStyle &s = ImGui::GetStyle();
+    ImVec4 *c = s.Colors;
+    s.WindowRounding = 10.f;
+    s.FrameRounding = 6.f;
+    s.WindowPadding = ImVec2(10.f, 10.f);
+    s.WindowBorderSize = 1.f;
+    c[ImGuiCol_WindowBg] = ImVec4(0.07f, 0.08f, 0.10f, 0.92f);
+    c[ImGuiCol_TitleBgActive] = ImVec4(0.05f, 0.35f, 0.55f, 1.f);
+    c[ImGuiCol_Button] = ImVec4(0.10f, 0.45f, 0.68f, 0.70f);
+    c[ImGuiCol_ButtonHovered] = ImVec4(0.10f, 0.65f, 0.95f, 1.f);
+    c[ImGuiCol_CheckMark] = ImVec4(0.06f, 0.80f, 1.f, 1.f);
+}
 
 static const char *status_name(EspStatus s) {
     switch (s) {
@@ -104,7 +118,7 @@ static bool init_egl(ANativeWindow *window) {
         EGL_GREEN_SIZE, 8,
         EGL_RED_SIZE, 8,
         EGL_ALPHA_SIZE, 8,
-        EGL_DEPTH_SIZE, 24,
+        EGL_DEPTH_SIZE, 0,
         EGL_NONE
     };
     EGLConfig config = nullptr;
@@ -210,36 +224,6 @@ static void reader_loop() {
     }
 }
 
-static void draw_radar(const EspFrame &fr) {
-    if (!g_showEsp) return;
-    ImDrawList *dl = ImGui::GetBackgroundDrawList();
-    const ImVec2 center(g_width * 0.78f, g_height * 0.5f);
-    const float radius = (float)std::min(g_width, g_height) * 0.32f;
-    const float scale = radius / 40.f;
-
-    dl->AddCircle(center, radius, IM_COL32(60, 60, 60, 180), 64, 2.f);
-    dl->AddCircle(center, radius * 0.5f, IM_COL32(40, 40, 40, 120), 48, 1.f);
-    dl->AddLine({center.x - radius, center.y}, {center.x + radius, center.y},
-                IM_COL32(50, 50, 50, 100));
-    dl->AddLine({center.x, center.y - radius}, {center.x, center.y + radius},
-                IM_COL32(50, 50, 50, 100));
-    dl->AddCircleFilled(center, 6.f, IM_COL32(80, 200, 255, 255));
-
-    for (const EspTarget &t : fr.targets) {
-        if (t.kind == 0 && !g_showPlayers) continue;
-        if (t.kind == 1 && !g_showMonsters) continue;
-        const float rx = t.relX * scale;
-        const float rz = t.relZ * scale;
-        if (rx * rx + rz * rz > radius * radius) continue;
-        const ImVec2 p(center.x + rx, center.y + rz);
-        const ImU32 col = t.kind ? IM_COL32(255, 180, 60, 255) : IM_COL32(255, 70, 70, 255);
-        dl->AddCircleFilled(p, 5.f, col);
-        char buf[48];
-        std::snprintf(buf, sizeof(buf), "%s %dm", t.label, t.meters);
-        dl->AddText({p.x + 8.f, p.y - 8.f}, IM_COL32(240, 240, 240, 230), buf);
-    }
-}
-
 static void draw_ui() {
     EspFrame fr;
     {
@@ -247,72 +231,84 @@ static void draw_ui() {
         fr = g_frame;
     }
     const EspResolveReport &rep = esp_last_resolve_report();
+    const float sw = (float)g_width;
+    const float sh = (float)g_height;
 
-    ImGui::SetNextWindowSize({480, 520}, ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("MLBB ESP (pure C++)", nullptr, ImGuiWindowFlags_None)) {
-        ImGui::Checkbox("Auto find UnityKillsMe", &g_autoFind);
-        ImGui::SameLine();
-        ImGui::Checkbox("Fallback any MLBB pid", &g_fallbackPid);
-        ImGui::Checkbox("ESP radar", &g_showEsp);
-        ImGui::SameLine();
-        ImGui::Checkbox("Players", &g_showPlayers);
-        ImGui::SameLine();
-        ImGui::Checkbox("Monsters", &g_showMonsters);
+    esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
 
-        const pid_t pid = g_wantPid.load();
-        ImGui::Separator();
-        ImGui::Text("PID: %d", (int)pid);
-        ImGui::Text("Status: %s", status_name(fr.status));
-        ImGui::TextWrapped("%s", fr.hint);
-
-        if (ImGui::Button("Find UnityKillsMe")) {
-            pid_t p = proc_find_unity_kills();
-            if (p <= 0) ui_log("[find] UnityKillsMe not found");
-            attach_pid(p, "find");
+    if (!g_showMenu) {
+        ImGui::SetNextWindowBgAlpha(0.85f);
+        ImGui::SetNextWindowPos({12.f, 12.f}, ImGuiCond_Always);
+        if (ImGui::Begin("##esp_fab", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
+                             ImGuiWindowFlags_NoMove)) {
+            if (ImGui::Button("Menu")) g_showMenu = true;
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", status_name(fr.status));
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Scan MLBB")) scan_and_log_processes();
-        ImGui::SameLine();
+        ImGui::End();
+        return;
+    }
+
+    ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(0.92f);
+    if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
+        ImGui::TextDisabled("Overlay — open MLBB, allow display over apps, enter match.");
+        ImGui::Text("Status: %s", status_name(fr.status));
+        if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
+
         if (ImGui::Button("Resolve")) g_needResolve.store(true);
         ImGui::SameLine();
-        if (ImGui::Button("Clear log")) ui_log_clear();
+        if (ImGui::Button("Find pid")) {
+            pid_t p = proc_find_unity_kills();
+            if (p <= 0 && g_fallbackPid) p = proc_find_mlbb_fallback();
+            attach_pid(p, "find");
+        }
+
+        ImGui::SeparatorText("Enemy");
+        ImGui::Checkbox("Box", &g_feat.box);
         ImGui::SameLine();
-        if (ImGui::Button("Copy all logs")) {
-            static char logCopy[65536];
-            ui_log_copy_all(logCopy, sizeof(logCopy));
-            if (android_copy_to_clipboard(g_app, logCopy))
-                ui_log("[ui] logs copied to clipboard");
-            else
-                ui_log("[ui] clipboard copy failed");
-        }
+        ImGui::Checkbox("Line", &g_feat.line);
+        ImGui::SameLine();
+        ImGui::Checkbox("Health", &g_feat.health);
+        ImGui::Checkbox("Name", &g_feat.name);
+        ImGui::SameLine();
+        ImGui::Checkbox("Distance", &g_feat.distance);
 
-        if (pid > 0 && ImGui::Button("Scan IL2CPP exports")) log_il2cpp_scan(pid);
+        ImGui::SeparatorText("Monster");
+        ImGui::Checkbox("Box##m", &g_feat.monsterBox);
+        ImGui::SameLine();
+        ImGui::Checkbox("Name##m", &g_feat.monsterName);
+        ImGui::SameLine();
+        ImGui::Checkbox("Health##m", &g_feat.monsterHealth);
 
-        ImGui::Text("IL2CPP: %s", rep.il2cppLib[0] ? rep.il2cppLib : "(not scanned)");
-        ImGui::Text("Last resolve: %s", status_name(rep.status));
-        ImGui::TextWrapped("%s", rep.detail);
-
-        if (ImGui::CollapsingHeader("Targets", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::BeginChild("tgt", {0, 100}, true);
-            for (const EspTarget &t : fr.targets)
-                ImGui::Text("%s  %dm  HP %d/%d", t.label, t.meters, t.hp, t.hpMax);
-            if (fr.targets.empty()) ImGui::TextDisabled("(no entities — in match + Resolve?)");
-            ImGui::EndChild();
-        }
-
-        if (ImGui::CollapsingHeader("Logs", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Auto-scroll", &g_logScrollBottom);
+        if (ImGui::CollapsingHeader("Advanced")) {
+            ImGui::Checkbox("Auto find UnityKillsMe", &g_autoFind);
+            ImGui::SameLine();
+            ImGui::Checkbox("Fallback MLBB pid", &g_fallbackPid);
+            const pid_t pid = g_wantPid.load();
+            ImGui::Text("PID: %d", (int)pid);
+            if (ImGui::Button("Scan MLBB")) scan_and_log_processes();
+            ImGui::SameLine();
+            if (ImGui::Button("Copy logs")) {
+                static char logCopy[65536];
+                ui_log_copy_all(logCopy, sizeof(logCopy));
+                if (android_copy_to_clipboard(g_app, logCopy))
+                    ui_log("[ui] logs copied");
+            }
+            if (pid > 0 && ImGui::Button("Scan IL2CPP")) log_il2cpp_scan(pid);
+            ImGui::Text("IL2CPP: %s", rep.il2cppLib[0] ? rep.il2cppLib : "(none)");
+            ImGui::TextWrapped("%s", rep.detail);
+            ImGui::Checkbox("Log auto-scroll", &g_logScrollBottom);
             static char logText[65536];
             ui_log_copy_all(logText, sizeof(logText));
-            ImGui::BeginChild("logs", {0, 220}, true, ImGuiWindowFlags_HorizontalScrollbar);
+            ImGui::BeginChild("logs", {0, 140}, true);
             ImGui::TextUnformatted(logText);
-            if (g_logScrollBottom)
-                ImGui::SetScrollHereY(1.0f);
+            if (g_logScrollBottom) ImGui::SetScrollHereY(1.0f);
             ImGui::EndChild();
         }
     }
     ImGui::End();
-    draw_radar(fr);
 }
 
 static void handle_cmd(android_app *app, int32_t cmd) {
@@ -322,7 +318,7 @@ static void handle_cmd(android_app *app, int32_t cmd) {
             init_egl(app->window);
             ImGui_ImplAndroid_Init(app->window);
             ImGui_ImplOpenGL3_Init("#version 300 es");
-            ui_log("MLBB ESP started — open MLBB, enter match, then Resolve");
+            ui_log("MLBB ESP overlay — allow over other apps, MLBB match, Resolve");
         }
         break;
     case APP_CMD_TERM_WINDOW:
@@ -357,6 +353,7 @@ void android_main(android_app *app) {
     ImGuiIO &io = ImGui::GetIO();
     io.IniFilename = nullptr;
     ImGui::StyleColorsDark();
+    apply_menu_style();
 
     std::thread reader(reader_loop);
 
@@ -390,8 +387,10 @@ void android_main(android_app *app) {
 
         ImGui::Render();
         glViewport(0, 0, g_width, g_height);
-        glClearColor(0.08f, 0.08f, 0.1f, 1.f);
+        glClearColor(0.f, 0.f, 0.f, 0.f);
         glClear(GL_COLOR_BUFFER_BIT);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         eglSwapBuffers(g_eglDisplay, g_eglSurface);
     }
