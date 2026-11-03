@@ -49,6 +49,11 @@ struct EspResolveReport {
     uintptr_t klass = 0;
     uintptr_t statics = 0;
     uintptr_t instance = 0;
+    char il2cppLib[128] = {};
+    uintptr_t il2cppBase = 0;
+    uintptr_t il2cppDomainGet = 0;
+    uintptr_t il2cppDomainPtr = 0;
+    char il2cppNote[256] = {};
     char detail[240] = {};
 };
 

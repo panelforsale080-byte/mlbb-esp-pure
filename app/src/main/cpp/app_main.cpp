@@ -1,6 +1,8 @@
 #include "esp_engine.hpp"
 #include "proc.hpp"
 #include "ui_log.hpp"
+#include "clip_android.hpp"
+#include "remote_il2cpp.hpp"
 
 #include <android_native_app_glue.h>
 #include <EGL/egl.h>
@@ -34,6 +36,7 @@ static bool g_showEsp = true;
 static bool g_showPlayers = true;
 static bool g_showMonsters = true;
 static bool g_logScrollBottom = true;
+static android_app *g_app = nullptr;
 
 static const char *status_name(EspStatus s) {
     switch (s) {
@@ -50,12 +53,31 @@ static const char *status_name(EspStatus s) {
 
 static void log_resolve_result(const EspResolveReport &r) {
     ui_log("[resolve] %s | %s", status_name(r.status), r.detail);
+    ui_log("[il2cpp] lib=%s base=0x%llx domain_get=0x%llx domain*=0x%llx",
+           r.il2cppLib[0] ? r.il2cppLib : "(none)",
+           (unsigned long long)r.il2cppBase,
+           (unsigned long long)r.il2cppDomainGet,
+           (unsigned long long)r.il2cppDomainPtr);
+    if (r.il2cppNote[0]) ui_log("[il2cpp] %s", r.il2cppNote);
     if (r.status == EspStatus::NoRead)
         ui_log("[resolve] FIX: enable root / run app as root / same user as MLBB");
     if (r.status == EspStatus::NoBattleManager)
-        ui_log("[resolve] FIX: be IN MATCH; need BattleManager name strings (got %d)", r.bmNameStrings);
+        ui_log("[resolve] FIX: be IN MATCH; strings=%d (klass walk failed)", r.bmNameStrings);
     if (r.status == EspStatus::NoInstance)
         ui_log("[resolve] klass OK but Instance NULL — enter training/classic match then Resolve again");
+}
+
+static void log_il2cpp_scan(pid_t pid) {
+    RemoteIl2CppInfo il2{};
+    if (!remote_detect_il2cpp(pid, il2)) {
+        ui_log("[il2cpp] scan: no module exports il2cpp_domain_get");
+        return;
+    }
+    ui_log("[il2cpp] scan OK path=%s", il2.libPath);
+    ui_log("[il2cpp] base=0x%llx domain_get=0x%llx class_from_name=%d assemblies=%d",
+           (unsigned long long)il2.base, (unsigned long long)il2.sym_domain_get,
+           il2.export_class_from_name ? 1 : 0, il2.export_domain_get_assemblies ? 1 : 0);
+    ui_log("[il2cpp] %s", il2.note);
 }
 
 static void scan_and_log_processes() {
@@ -254,7 +276,19 @@ static void draw_ui() {
         if (ImGui::Button("Resolve")) g_needResolve.store(true);
         ImGui::SameLine();
         if (ImGui::Button("Clear log")) ui_log_clear();
+        ImGui::SameLine();
+        if (ImGui::Button("Copy all logs")) {
+            static char logCopy[65536];
+            ui_log_copy_all(logCopy, sizeof(logCopy));
+            if (android_copy_to_clipboard(g_app, logCopy))
+                ui_log("[ui] logs copied to clipboard");
+            else
+                ui_log("[ui] clipboard copy failed");
+        }
 
+        if (pid > 0 && ImGui::Button("Scan IL2CPP exports")) log_il2cpp_scan(pid);
+
+        ImGui::Text("IL2CPP: %s", rep.il2cppLib[0] ? rep.il2cppLib : "(not scanned)");
         ImGui::Text("Last resolve: %s", status_name(rep.status));
         ImGui::TextWrapped("%s", rep.detail);
 
@@ -314,6 +348,7 @@ static int32_t handle_input(android_app *app, AInputEvent *event) {
 }
 
 void android_main(android_app *app) {
+    g_app = app;
     app->onAppCmd = handle_cmd;
     app->onInputEvent = handle_input;
 

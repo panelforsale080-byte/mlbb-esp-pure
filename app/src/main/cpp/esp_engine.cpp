@@ -1,6 +1,7 @@
 #include "esp_engine.hpp"
 #include "offsets.hpp"
 #include "proc.hpp"
+#include "remote_il2cpp.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -183,20 +184,9 @@ static int score_bm(pid_t pid, uintptr_t bm) {
     return 0;
 }
 
-static bool elf_bm_klass(pid_t pid, const std::vector<MapsReg> &maps, uintptr_t &klass) {
+static bool elf_bm_klass_in(pid_t pid, uintptr_t base, uintptr_t soEnd, uintptr_t &klass) {
     klass = 0;
-    uintptr_t base = 0, soEnd = 0;
-    for (const auto &m : maps) {
-        if (m.path.find("liblogic.so") == std::string::npos) continue;
-        if (m.fileOff == 0 && m.perms[0] == 'r') {
-            base = m.start;
-            break;
-        }
-    }
     if (!base) return false;
-    for (const auto &m : maps)
-        if (m.path.find("liblogic.so") != std::string::npos && m.end > soEnd)
-            soEnd = m.end;
 
     Elf64_Ehdr eh{};
     if (!mem_read(pid, base, eh) || eh.e_ident[0] != 0x7f) return false;
@@ -249,6 +239,41 @@ static bool elf_bm_klass(pid_t pid, const std::vector<MapsReg> &maps, uintptr_t 
     return false;
 }
 
+static bool elf_bm_klass(pid_t pid, const std::vector<MapsReg> &maps, uintptr_t &klass) {
+    klass = 0;
+    struct Cand {
+        uintptr_t base = 0, end = 0;
+        int prio = 0;
+    };
+    std::vector<Cand> cands;
+    for (const auto &m : maps) {
+        if (m.fileOff != 0 || m.perms[0] != 'r') continue;
+        if (m.path.find(".so") == std::string::npos) continue;
+        const std::string &p = m.path;
+        int prio = 0;
+        if (p.find("liblogic") != std::string::npos) prio = 100;
+        else if (p.find("csharp") != std::string::npos) prio = 90;
+        else if (p.find("il2cpp") != std::string::npos) prio = 85;
+        else if (p.find("GameAssembly") != std::string::npos) prio = 80;
+        else continue;
+        bool merged = false;
+        for (auto &c : cands) {
+            if (c.base == m.start) {
+                c.end = std::max(c.end, m.end);
+                merged = true;
+                break;
+            }
+        }
+        if (!merged) cands.push_back({m.start, m.end, prio});
+    }
+    std::sort(cands.begin(), cands.end(),
+              [](const Cand &a, const Cand &b) { return a.prio > b.prio; });
+    for (const Cand &c : cands) {
+        if (elf_bm_klass_in(pid, c.base, c.end, klass) && klass) return true;
+    }
+    return false;
+}
+
 static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
                     uintptr_t &klass, uintptr_t &statics, uintptr_t &instance,
                     BmFindMeta *meta) {
@@ -275,6 +300,25 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
     if (meta) meta->nameStrings = (int)strs.size();
     if (strs.empty()) return false;
 
+    int bestScore = -1;
+    static const uintptr_t kNameOffs[] = {0x10, 0x18, 0x08, 0x20};
+    for (uintptr_t s : strs) {
+        for (uintptr_t nameOff : kNameOffs) {
+            const uintptr_t cand = s - nameOff;
+            uintptr_t st = 0, inst = 0;
+            if (!verify_klass(pid, cand, name, Off::InstanceStatic, st, inst)) continue;
+            int sc = inst ? score_bm(pid, inst) : (st ? 2 : 0);
+            if (sc > bestScore) {
+                bestScore = sc;
+                klass = cand;
+                statics = st;
+                instance = inst;
+            }
+            if (bestScore >= 1000) return true;
+        }
+    }
+    if (klass) return true;
+
     std::vector<const MapsReg *> order;
     for (const auto &m : maps)
         if (klass_region_prio(m) > 0) order.push_back(&m);
@@ -282,13 +326,12 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
         return klass_region_prio(*a) > klass_region_prio(*b);
     });
 
-    int bestScore = -1;
     size_t scanned = 0;
     for (const MapsReg *mp : order) {
         const MapsReg &m = *mp;
         const size_t sz = (size_t)(m.end - m.start);
-        const size_t scan = std::min(sz, (size_t)8 * 1024 * 1024);
-        if ((scanned += scan) > 64 * 1024 * 1024) break;
+        const size_t scan = std::min(sz, (size_t)12 * 1024 * 1024);
+        if ((scanned += scan) > 128 * 1024 * 1024) break;
         const size_t chunk = 256 * 1024;
         for (size_t off = 0; off < scan; off += chunk) {
             const size_t n = std::min(chunk, scan - off);
@@ -362,6 +405,15 @@ static void fill_report(EspResolveReport &r, EspStatus status, int mapsCount, bo
                   (unsigned long long)inst);
 }
 
+static void merge_il2cpp_into_report(EspResolveReport &rep, const RemoteIl2CppInfo &il2) {
+    std::snprintf(rep.il2cppLib, sizeof(rep.il2cppLib), "%s",
+                  il2.libBaseName[0] ? il2.libBaseName : "(none)");
+    rep.il2cppBase = il2.base;
+    rep.il2cppDomainGet = il2.sym_domain_get;
+    rep.il2cppDomainPtr = il2.domain_ptr;
+    std::snprintf(rep.il2cppNote, sizeof(rep.il2cppNote), "%s", il2.note);
+}
+
 EspStatus esp_resolve(EspResolveReport *reportOut) {
     std::lock_guard<std::mutex> lock(g_mu);
     EspResolveReport rep{};
@@ -384,6 +436,10 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         return rep.status;
     }
     const bool probe = proc_probe_read(g_pid);
+    RemoteIl2CppInfo il2{};
+    remote_detect_il2cpp(g_pid, il2);
+    merge_il2cpp_into_report(rep, il2);
+
     BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;
     if (!find_bm(g_pid, maps, k, st, inst, &meta)) {
