@@ -19,6 +19,7 @@ uintptr_t g_bmStatics = 0;
 uintptr_t g_bmInstance = 0;
 bool g_resolved = false;
 EspResolveReport g_lastReport{};
+const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
 
 struct BmFindMeta {
     int nameStrings = 0;
@@ -144,12 +145,25 @@ static bool statics_for(pid_t pid, uintptr_t klass, uintptr_t instOff,
     return false;
 }
 
+static bool klass_matches_name(pid_t pid, uintptr_t klass, const char *name,
+                               const std::vector<uintptr_t> *knownStrs) {
+    static const uintptr_t kOffs[] = {0x10, 0x18, 0x08, 0x20, 0x28, 0x30, 0x38};
+    for (uintptr_t off : kOffs) {
+        uintptr_t np = 0;
+        if (!mem_read(pid, klass + off, np) || !mem_ptr_ok(np)) continue;
+        if (knownStrs) {
+            for (uintptr_t s : *knownStrs)
+                if (np == s) return true;
+        }
+        if (name_at(pid, np, name)) return true;
+    }
+    return false;
+}
+
 static bool verify_klass(pid_t pid, uintptr_t klass, const char *name,
-                         uintptr_t instOff, uintptr_t &statics, uintptr_t &instance) {
-    uintptr_t namePtr = 0;
-    if (!mem_read(pid, klass + Off::KlassName, namePtr) || !mem_ptr_ok(namePtr))
-        return false;
-    if (!name_at(pid, namePtr, name)) return false;
+                         uintptr_t instOff, uintptr_t &statics, uintptr_t &instance,
+                         const std::vector<uintptr_t> *knownStrs = nullptr) {
+    if (!klass_matches_name(pid, klass, name, knownStrs)) return false;
     return statics_for(pid, klass, instOff, statics, instance);
 }
 
@@ -186,6 +200,21 @@ static int score_bm(pid_t pid, uintptr_t bm) {
     return 0;
 }
 
+static bool typeinfo_to_klass(pid_t pid, uintptr_t addr, uintptr_t &klass) {
+    klass = 0;
+    if (!addr) return false;
+    uintptr_t k = 0;
+    if (mem_read(pid, addr, k) && mem_ptr_ok(k)) {
+        klass = k;
+        return true;
+    }
+    if (mem_ptr_ok(addr)) {
+        klass = addr;
+        return true;
+    }
+    return false;
+}
+
 static bool elf_bm_klass_in(pid_t pid, uintptr_t base, uintptr_t /*soEnd*/, uintptr_t &klass) {
     klass = 0;
     if (!base) return false;
@@ -194,14 +223,20 @@ static bool elf_bm_klass_in(pid_t pid, uintptr_t base, uintptr_t /*soEnd*/, uint
     for (const char *sym : names) {
         uintptr_t addr = 0;
         if (!elf_remote_sym(pid, base, sym, addr) || !addr) continue;
-        uintptr_t k = 0;
-        if (mem_read(pid, addr, k) && mem_ptr_ok(k)) {
-            klass = k;
-            return true;
-        }
-        if (mem_ptr_ok(addr)) {
-            klass = addr;
-            return true;
+        if (typeinfo_to_klass(pid, addr, klass)) return true;
+    }
+
+    if (g_il2_for_resolve && g_il2_for_resolve->libPath[0]) {
+        ElfRemote er{};
+        if (elf_remote_bias(pid, base, er)) {
+            char matched[128] = {};
+            uintptr_t addr = 0;
+            if (elf_file_sym_contains(g_il2_for_resolve->libPath, er.load_bias, "BattleManager",
+                                      addr, matched, sizeof(matched))) {
+                ui_log("[resolve] ELF sym %s -> 0x%llx", matched,
+                       (unsigned long long)addr);
+                if (typeinfo_to_klass(pid, addr, klass)) return true;
+            }
         }
     }
     return false;
@@ -255,7 +290,7 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
     if (elf_bm_klass(pid, maps, klass)) {
         if (meta) meta->usedElf = true;
         uintptr_t st = 0, inst = 0;
-        if (verify_klass(pid, klass, name, Off::InstanceStatic, st, inst)) {
+        if (verify_klass(pid, klass, name, Off::InstanceStatic, st, inst, nullptr)) {
             statics = st;
             instance = inst;
             if (klass) return true;
@@ -274,7 +309,7 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
         for (uintptr_t nameOff : kNameOffs) {
             const uintptr_t cand = s - nameOff;
             uintptr_t st = 0, inst = 0;
-            if (!verify_klass(pid, cand, name, Off::InstanceStatic, st, inst)) continue;
+            if (!verify_klass(pid, cand, name, Off::InstanceStatic, st, inst, &strs)) continue;
             int sc = inst ? score_bm(pid, inst) : (st ? 2 : 0);
             if (sc > bestScore) {
                 bestScore = sc;
@@ -286,6 +321,65 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
         }
     }
     if (klass) return true;
+
+    for (const auto &m : maps) {
+        if (m.perms[0] != 'r' || m.perms[1] != 'w') continue;
+        const size_t sz = (size_t)(m.end - m.start);
+        if (sz > 24 * 1024 * 1024) continue;
+        const size_t chunk = 256 * 1024;
+        for (size_t off = 0; off < sz; off += chunk) {
+            const size_t n = std::min(chunk, sz - off);
+            std::vector<uint8_t> buf(n);
+            if (!mem_read(pid, m.start + off, buf.data(), n)) continue;
+            for (size_t i = 0; i + 8 <= n; i += 8) {
+                uintptr_t p = 0;
+                std::memcpy(&p, buf.data() + i, 8);
+                bool hit = false;
+                for (uintptr_t s : strs)
+                    if (p == s) { hit = true; break; }
+                if (!hit) continue;
+                for (uintptr_t nameOff : kNameOffs) {
+                    const uintptr_t cand = m.start + off + i - nameOff;
+                    uintptr_t st = 0, inst = 0;
+                    if (!verify_klass(pid, cand, name, Off::InstanceStatic, st, inst, &strs))
+                        continue;
+                    int sc = inst ? score_bm(pid, inst) : (st ? 2 : 0);
+                    if (sc > bestScore) {
+                        bestScore = sc;
+                        klass = cand;
+                        statics = st;
+                        instance = inst;
+                    }
+                }
+            }
+        }
+    }
+    if (klass) return true;
+
+    size_t bruteBudget = 0;
+    for (const auto &m : maps) {
+        if (m.perms[0] != 'r' || m.perms[1] != 'w') continue;
+        const size_t sz = (size_t)(m.end - m.start);
+        if ((bruteBudget += sz) > 40 * 1024 * 1024) break;
+        for (uintptr_t addr = m.start; addr + 0x100 < m.end; addr += 0x10) {
+            if (!klass_matches_name(pid, addr, name, &strs)) continue;
+            uintptr_t st = 0, inst = 0;
+            if (!statics_for(pid, addr, Off::InstanceStatic, st, inst)) continue;
+            int sc = inst ? score_bm(pid, inst) : 1;
+            if (sc > bestScore) {
+                bestScore = sc;
+                klass = addr;
+                statics = st;
+                instance = inst;
+            }
+            if (bestScore >= 1000) return true;
+        }
+    }
+    if (klass) {
+        ui_log("[resolve] BattleManager klass brute/static @ 0x%llx inst=0x%llx",
+               (unsigned long long)klass, (unsigned long long)instance);
+        return true;
+    }
 
     std::vector<const MapsReg *> order;
     for (const auto &m : maps)
@@ -314,7 +408,8 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
                 if (!hit) continue;
                 const uintptr_t cand = m.start + off + i - Off::KlassName;
                 uintptr_t st = 0, inst = 0;
-                if (!verify_klass(pid, cand, name, Off::InstanceStatic, st, inst)) continue;
+                if (!verify_klass(pid, cand, name, Off::InstanceStatic, st, inst, &strs))
+                    continue;
                 int sc = inst ? score_bm(pid, inst) : (st ? 2 : 0);
                 if (sc > bestScore) {
                     bestScore = sc;
@@ -406,11 +501,14 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     const bool probe = proc_probe_read(g_pid);
     RemoteIl2CppInfo il2{};
     remote_detect_il2cpp(g_pid, il2);
+    remote_refresh_domain_ptr(g_pid, il2);
     merge_il2cpp_into_report(rep, il2);
+    g_il2_for_resolve = &il2;
 
     BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;
     if (!find_bm(g_pid, maps, k, st, inst, &meta)) {
+        g_il2_for_resolve = nullptr;
         g_resolved = false;
         fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, k, st, inst);
         if (meta.nameStrings > 0) {
@@ -427,6 +525,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         if (reportOut) *reportOut = rep;
         return rep.status;
     }
+    g_il2_for_resolve = nullptr;
     g_bmKlass = k;
     g_bmStatics = st;
     g_bmInstance = inst;

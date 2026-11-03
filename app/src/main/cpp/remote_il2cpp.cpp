@@ -158,7 +158,55 @@ static bool try_module(pid_t pid, const SoModule &m, RemoteIl2CppInfo &out, int 
     return true;
 }
 
+static bool domain_looks_valid(pid_t pid, uintptr_t domain) {
+    if (!mem_ptr_ok(domain)) return false;
+    uintptr_t words[16] = {};
+    if (!mem_read(pid, domain, words, sizeof(words))) return false;
+    int ptrLike = 0;
+    for (uintptr_t w : words)
+        if (mem_ptr_ok(w)) ptrLike++;
+    return ptrLike >= 2;
+}
+
+static void domain_scan_bss(pid_t pid, const RemoteIl2CppInfo &lib, uintptr_t &domainOut) {
+    domainOut = 0;
+    if (!lib.base) return;
+    std::vector<MapsReg> maps;
+    if (!mem_maps(pid, maps)) return;
+    for (const auto &m : maps) {
+        if (m.start < lib.base || m.start > lib.end + 0x4000000ULL) continue;
+        if (m.perms[0] != 'r' || m.perms[1] != 'w') continue;
+        const size_t sz = (size_t)(m.end - m.start);
+        for (size_t off = 0; off < sz; off += 512 * sizeof(uintptr_t)) {
+            uintptr_t cand = 0;
+            if (!mem_read(pid, m.start + off, cand)) continue;
+            if (!domain_looks_valid(pid, cand)) continue;
+            domainOut = cand;
+            return;
+        }
+    }
+}
+
 } // namespace
+
+bool remote_refresh_domain_ptr(pid_t pid, RemoteIl2CppInfo &io) {
+    if (!io.sym_domain_get) return false;
+    if (domain_from_getter(pid, io.sym_domain_get, io.domain_ptr)) {
+        std::snprintf(io.note, sizeof(io.note), "domain* decoded @ 0x%llx",
+                      (unsigned long long)io.domain_ptr);
+        return true;
+    }
+    uint32_t ins[8] = {};
+    mem_read(pid, io.sym_domain_get, ins, sizeof(ins));
+    ui_log("[il2cpp] domain_get ins: %08X %08X %08X %08X", ins[0], ins[1], ins[2], ins[3]);
+    domain_scan_bss(pid, io, io.domain_ptr);
+    if (io.domain_ptr) {
+        std::snprintf(io.note, sizeof(io.note), "domain* bss scan @ 0x%llx",
+                      (unsigned long long)io.domain_ptr);
+        return true;
+    }
+    return false;
+}
 
 bool remote_detect_il2cpp(pid_t pid, RemoteIl2CppInfo &out) {
     out = RemoteIl2CppInfo{};
@@ -175,6 +223,7 @@ bool remote_detect_il2cpp(pid_t pid, RemoteIl2CppInfo &out) {
         ++tried;
         int hits = 0;
         if (try_module(pid, m, out, hits)) {
+            remote_refresh_domain_ptr(pid, out);
             ui_log("[il2cpp] OK lib=%s base=0x%llx domain_get=0x%llx apis=%d",
                    out.libBaseName, (unsigned long long)out.base,
                    (unsigned long long)out.sym_domain_get, hits);
@@ -187,6 +236,7 @@ bool remote_detect_il2cpp(pid_t pid, RemoteIl2CppInfo &out) {
         ++tried;
         int hits = 0;
         if (try_module(pid, m, out, hits)) {
+            remote_refresh_domain_ptr(pid, out);
             ui_log("[il2cpp] OK (fallback) lib=%s apis=%d", out.libBaseName, hits);
             return true;
         }
