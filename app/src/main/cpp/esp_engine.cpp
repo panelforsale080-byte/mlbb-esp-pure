@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstring>
 #include <elf.h>
+#include <atomic>
 #include <mutex>
 
 namespace {
@@ -21,6 +22,8 @@ uintptr_t g_bmStatics = 0;
 uintptr_t g_bmInstance = 0;
 uintptr_t g_bmInstancePinned = 0;
 bool g_resolved = false;
+bool g_metadataReady = false;
+std::atomic<bool> g_forceResolve{false};
 EspResolveReport g_lastReport{};
 const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
 
@@ -538,8 +541,14 @@ static void ensure_bm_statics(pid_t pid) {
     }
 }
 
+static bool bm_header_readable(pid_t pid, uintptr_t bm) {
+    if (!bm || !mem_ptr_ok(bm)) return false;
+    uintptr_t pDict = 0;
+    return mem_read(pid, bm + Off::DicPlayerShow, pDict);
+}
+
 static void try_adopt_bm(pid_t pid, uintptr_t cand) {
-    if (bm_has_player_dict(pid, cand)) g_bmInstance = cand;
+    if (cand && mem_ptr_ok(cand) && bm_header_readable(pid, cand)) g_bmInstance = cand;
 }
 
 static void refresh_instance(pid_t pid) {
@@ -549,18 +558,35 @@ static void refresh_instance(pid_t pid) {
         uintptr_t inst = 0;
         if (mem_read(pid, g_bmStatics + Off::InstanceStatic, inst) && mem_ptr_ok(inst))
             try_adopt_bm(pid, inst);
-        if (!bm_has_player_dict(pid, g_bmInstance)) {
+        if (!g_bmInstance || !bm_header_readable(pid, g_bmInstance)) {
             for (uintptr_t off = 0; off <= 0x38; off += sizeof(uintptr_t)) {
                 if (!mem_read(pid, g_bmStatics + off, inst) || !mem_ptr_ok(inst)) continue;
                 try_adopt_bm(pid, inst);
-                if (bm_has_player_dict(pid, g_bmInstance)) break;
+                if (g_bmInstance && bm_header_readable(pid, g_bmInstance)) break;
             }
         }
     }
-    if (!bm_has_player_dict(pid, g_bmInstance) && g_bmInstancePinned)
+    if ((!g_bmInstance || !bm_header_readable(pid, g_bmInstance)) && g_bmInstancePinned)
         try_adopt_bm(pid, g_bmInstancePinned);
-    if (!bm_has_player_dict(pid, g_bmInstance) && bm_has_player_dict(pid, keep))
+    if ((!g_bmInstance || !bm_header_readable(pid, g_bmInstance)) &&
+        bm_header_readable(pid, keep))
         g_bmInstance = keep;
+}
+
+static EspStatus report_from_live_instance(EspResolveReport &rep, bool probe, int mapsCount) {
+    refresh_instance(g_pid);
+    BmFindMeta meta{};
+    const EspStatus st = g_bmInstance ? EspStatus::Ready : EspStatus::NoInstance;
+    rep.status = st;
+    rep.mapsCount = mapsCount;
+    rep.readProbe = probe;
+    rep.klass = g_bmKlass;
+    rep.statics = g_bmStatics;
+    rep.instance = g_bmInstance;
+    std::snprintf(rep.detail, sizeof(rep.detail),
+                  "conRent cached resolve — Instance=0x%llx (mem refresh, no ptrace)",
+                  (unsigned long long)g_bmInstance);
+    return st;
 }
 
 } // namespace
@@ -571,6 +597,7 @@ void esp_reset() {
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
     g_bmInstancePinned = 0;
     g_resolved = false;
+    g_metadataReady = false;
     esp_camera_reset();
 }
 
@@ -580,13 +607,16 @@ EspStatus esp_attach(pid_t pid) {
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
     g_bmInstancePinned = 0;
     g_resolved = false;
+    g_metadataReady = false;
     if (pid <= 0) return EspStatus::NoProcess;
     return EspStatus::Idle;
 }
 
+void esp_request_force_resolve() { g_forceResolve.store(true); }
+
 bool esp_is_resolved() {
     std::lock_guard<std::mutex> lock(g_mu);
-    return g_resolved;
+    return g_resolved && g_metadataReady;
 }
 
 static void fill_report(EspResolveReport &r, EspStatus status, int mapsCount, bool probe,
@@ -639,6 +669,15 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         return rep.status;
     }
     const bool probe = proc_probe_read(g_pid);
+    const int mapsCount = (int)maps.size();
+    const bool force = g_forceResolve.exchange(false);
+    if (!force && g_metadataReady && g_resolved) {
+        rep.status = report_from_live_instance(rep, probe, mapsCount);
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        ui_log("[resolve] skip ptrace — using cached conRent metadata");
+        return rep.status;
+    }
     RemoteIl2CppInfo il2{};
     remote_detect_il2cpp(g_pid, il2);
     remote_refresh_domain_ptr(g_pid, il2);
@@ -646,22 +685,24 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     g_il2_for_resolve = &il2;
 
     ConrentResolve cr{};
-    const bool crOk =
-        conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.battle_manager;
+    const bool crMeta =
+        conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.metadata_ready;
     esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
                               cr.camera_w2s_method);
-    if (crOk) {
+    if (crMeta) {
         g_il2_for_resolve = nullptr;
         g_bmKlass = cr.battle_manager_klass;
         g_bmStatics = cr.battle_manager_statics;
         g_bmInstance = cr.battle_manager;
         g_bmInstancePinned = cr.battle_manager;
+        g_metadataReady = true;
         g_resolved = true;
         BmFindMeta meta{};
         meta.usedElf = false;
-        fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, cr.battle_manager_klass,
-                    0, cr.battle_manager);
+        const EspStatus st = cr.battle_manager ? EspStatus::Ready : EspStatus::NoInstance;
+        fill_report(rep, st, mapsCount, probe, meta, cr.battle_manager_klass,
+                    cr.battle_manager_statics, cr.battle_manager);
         std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1: %s", cr.detail);
         ui_log("[resolve] OK %s", cr.detail);
         g_lastReport = rep;
@@ -716,12 +757,6 @@ static void clear_match_instance_locked() {
     g_bmInstancePinned = 0;
 }
 
-static bool bm_header_readable(pid_t pid, uintptr_t bm) {
-    if (!bm || !mem_ptr_ok(bm)) return false;
-    uintptr_t pDict = 0;
-    return mem_read(pid, bm + Off::DicPlayerShow, pDict);
-}
-
 EspStatus esp_tick(EspFrame &out) {
     std::lock_guard<std::mutex> lock(g_mu);
     out = EspFrame{};
@@ -736,19 +771,14 @@ EspStatus esp_tick(EspFrame &out) {
         std::snprintf(out.hint, sizeof(out.hint), "Process died");
         return out.status;
     }
-    if (!g_resolved) {
+    if (!g_resolved || !g_metadataReady) {
         out.status = EspStatus::NoBattleManager;
-        std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (in match)");
+        std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve once (conRent-style cache)");
         return out.status;
     }
 
-    /* Build #49: Instance from ptrace Resolve is authoritative — do not static-refresh over it */
-    if (g_bmInstancePinned)
-        g_bmInstance = g_bmInstancePinned;
-    else if (!g_bmInstance && g_bmStatics)
-        refresh_instance(g_pid);
-    else if (!g_bmInstancePinned && g_bmStatics)
-        refresh_instance(g_pid);
+    /* conRent DrawOverlay: staticFieldValue(BattleManager, Instance) each tick — memory only */
+    refresh_instance(g_pid);
 
     uintptr_t bm = g_bmInstance;
     if (!bm || !mem_ptr_ok(bm)) {

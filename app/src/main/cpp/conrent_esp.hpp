@@ -7,6 +7,8 @@
 /* conRentV1 Tool/EspTab.cpp — external PID port (no inject). */
 struct ConrentResolve {
     bool runtime_ready = false;
+    /** Like conRent g_off.ready inputs: klass + W2S + statics (Instance may be 0 in lobby). */
+    bool metadata_ready = false;
     uintptr_t battle_manager = 0; /* g_off.battleManager = staticFieldValue(BattleManager, Instance) */
     uintptr_t battle_manager_klass = 0;
     uintptr_t battle_manager_statics = 0; /* Il2CppClass static_fields — mem-read Instance each tick */

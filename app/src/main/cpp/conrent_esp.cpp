@@ -251,11 +251,22 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
 
     remote_session_end(s);
 
-    if (!inst) {
+    out.metadata_ready = klass && out.battle_manager_statics && out.camera_get_main_method &&
+                         out.camera_w2s_method && out.runtime_ready;
+
+    if (!out.metadata_ready) {
         std::snprintf(out.detail, sizeof(out.detail),
-                      "staticFieldValue(BattleManager, Instance)=0 (lobby?)");
+                      "metadata incomplete (klass/statics/w2s) asm=%zu", asmCount);
         ui_log("[conrent] %s", out.detail);
         return false;
+    }
+
+    if (!inst) {
+        std::snprintf(out.detail, sizeof(out.detail),
+                      "resolve cached (lobby): klass=0x%llx Instance=0 — ESP live in match",
+                      (unsigned long long)klass);
+        ui_log("[conrent] %s", out.detail);
+        return true;
     }
 
     std::snprintf(out.detail, sizeof(out.detail),

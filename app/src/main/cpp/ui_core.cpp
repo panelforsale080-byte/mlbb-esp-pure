@@ -133,6 +133,7 @@ static void attach_pid(pid_t p, const char *why) {
     esp_attach(p);
     g_wantPid.store(p);
     if (p != prev || !esp_is_resolved()) g_needResolve.store(true);
+    else ui_log("[%s] pid=%d already resolved — instant ESP (mem refresh)", why, (int)p);
 }
 
 static void reader_loop() {
@@ -210,11 +211,14 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("Build #49: Resolve in match — BM Instance from ptrace, mem tick.");
+        ImGui::TextDisabled("conRent: Resolve once (lobby OK) — ESP auto when match starts.");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
-        if (ImGui::Button("Resolve")) g_needResolve.store(true);
+        if (ImGui::Button("Resolve")) {
+            esp_request_force_resolve();
+            g_needResolve.store(true);
+        }
         ImGui::SameLine();
         if (ImGui::Button("Find pid")) {
             pid_t p = proc_find_unity_kills();
