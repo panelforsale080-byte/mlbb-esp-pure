@@ -16,6 +16,7 @@ struct RemoteSession {
 };
 
 bool remote_session_begin(pid_t pid, RemoteSession &s);
+bool remote_session_begin_try(pid_t pid, RemoteSession &s);
 void remote_session_end(RemoteSession &s);
 
 /* Scratch slots below tracee SP (16-byte aligned). Requires active session. */

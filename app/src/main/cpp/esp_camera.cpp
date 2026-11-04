@@ -38,6 +38,8 @@ static RemoteSession g_sess{};
 static bool g_inFrame = false;
 static uintptr_t g_mainCam = 0;
 static bool g_useIl2 = false;
+static int g_w2sBudget = 0;
+constexpr int kMaxIl2W2sPerFrame = 28;
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
@@ -154,6 +156,8 @@ static bool read_vec3_from_object(pid_t pid, uintptr_t obj, float &x, float &y, 
 
 static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &outY) {
     if (!g_inFrame || !g_useIl2 || !g_rtInvoke || !g_w2sMi || g_il2Pid <= 0) return false;
+    if (g_w2sBudget <= 0) return false;
+    --g_w2sBudget;
 
     if (!mem_ptr_ok(g_mainCam)) {
         uintptr_t cam = 0;
@@ -251,8 +255,10 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH) {
     if (g_inFrame) remote_session_end(g_sess);
     g_inFrame = false;
 
+    g_w2sBudget = kMaxIl2W2sPerFrame;
+
     if (g_il2Ready && pid == g_il2Pid && g_rtInvoke) {
-        if (remote_session_begin(pid, g_sess)) {
+        if (remote_session_begin_try(pid, g_sess)) {
             g_inFrame = true;
             g_useIl2 = true;
         }

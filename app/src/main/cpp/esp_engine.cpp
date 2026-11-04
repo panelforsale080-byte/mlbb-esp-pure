@@ -23,6 +23,8 @@ bool g_resolved = false;
 EspResolveReport g_lastReport{};
 const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
 
+constexpr size_t kMaxEspTargets = 32;
+
 struct BmFindMeta {
     int nameStrings = 0;
     bool usedElf = false;
@@ -96,19 +98,19 @@ static void scan_strings(pid_t pid, const std::vector<MapsReg> &maps,
 }
 
 static bool dict_entries(pid_t pid, uintptr_t dict,
-                         std::vector<std::pair<int, uintptr_t>> &out) {
+                         std::vector<std::pair<int, uintptr_t>> &out, int maxOut = 48) {
     out.clear();
-    if (!dict) return false;
+    if (!dict || !mem_ptr_ok(dict)) return false;
     uintptr_t entries = 0;
     int count = 0;
     if (!mem_read(pid, dict + Off::DictEntries, entries) || !entries) return false;
-    if (!mem_read(pid, dict + Off::DictCount, count) || count <= 0 || count > 256)
-        return false;
+    if (!mem_read(pid, dict + Off::DictCount, count) || count <= 0 || count > 512) return false;
+    if (maxOut > 0 && count > maxOut) count = maxOut;
     int maxLength = 0;
     if (!mem_read(pid, entries + Off::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
         return false;
     const uintptr_t data = entries + Off::ArrData;
-    for (int i = 0; i < maxLength; ++i) {
+    for (int i = 0; i < maxLength && (int)out.size() < count; ++i) {
         const uintptr_t entry = data + (uintptr_t)i * Off::EntryStride;
         int hash = 0, key = 0;
         uintptr_t value = 0;
@@ -116,7 +118,6 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
         if (!mem_read(pid, entry + Off::EntryKey, key)) continue;
         if (!mem_read(pid, entry + Off::EntryValue, value) || !value) continue;
         out.emplace_back(key, value);
-        if ((int)out.size() >= count) break;
     }
     return !out.empty();
 }
@@ -660,6 +661,11 @@ const EspResolveReport &esp_last_resolve_report() {
     return g_lastReport;
 }
 
+static void invalidate_match_locked() {
+    g_bmInstance = 0;
+    g_resolved = false;
+}
+
 EspStatus esp_tick(EspFrame &out) {
     std::lock_guard<std::mutex> lock(g_mu);
     out = EspFrame{};
@@ -667,6 +673,12 @@ EspStatus esp_tick(EspFrame &out) {
     if (g_pid <= 0) {
         out.status = EspStatus::NoProcess;
         std::snprintf(out.hint, sizeof(out.hint), "No MLBB pid");
+        return out.status;
+    }
+    if (!proc_alive(g_pid) || !proc_probe_read(g_pid)) {
+        out.status = EspStatus::NoRead;
+        std::snprintf(out.hint, sizeof(out.hint), "Process unreadable");
+        invalidate_match_locked();
         return out.status;
     }
     if (!g_resolved) {
@@ -680,9 +692,18 @@ EspStatus esp_tick(EspFrame &out) {
 
     refresh_instance(g_pid);
     const uintptr_t bm = g_bmInstance;
-    if (!bm) {
+    if (!bm || !mem_ptr_ok(bm)) {
         out.status = EspStatus::NoInstance;
         std::snprintf(out.hint, sizeof(out.hint), "BattleManager null — enter match");
+        invalidate_match_locked();
+        return out.status;
+    }
+
+    uintptr_t pDictProbe = 0;
+    if (!mem_read(g_pid, bm + Off::DicPlayerShow, pDictProbe) || !mem_ptr_ok(pDictProbe)) {
+        out.status = EspStatus::NoInstance;
+        std::snprintf(out.hint, sizeof(out.hint), "End game / lobby — Resolve in next match");
+        invalidate_match_locked();
         return out.status;
     }
 
@@ -698,11 +719,14 @@ EspStatus esp_tick(EspFrame &out) {
     mem_read(g_pid, bm + Off::DicPlayerShow, pDict);
     mem_read(g_pid, bm + Off::DicMonsterShow, mDict);
     std::vector<std::pair<int, uintptr_t>> players, monsters;
-    dict_entries(g_pid, pDict, players);
-    dict_entries(g_pid, mDict, monsters);
+    dict_entries(g_pid, pDict, players, (int)kMaxEspTargets + 8);
+    dict_entries(g_pid, mDict, monsters, 20);
+
+    out.targets.reserve(kMaxEspTargets);
 
     auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
-        if (!v) return;
+        if (out.targets.size() >= kMaxEspTargets) return;
+        if (!v || !mem_ptr_ok(v)) return;
         uint8_t dead = 0, camp = 0;
         if (mem_read(g_pid, v + Off::EntityDeath, dead) && dead) return;
         if (mem_read(g_pid, v + Off::SameCamp, camp) && camp) return;
@@ -730,8 +754,12 @@ EspStatus esp_tick(EspFrame &out) {
         out.targets.push_back(t);
     };
 
-    for (const auto &kv : players) push(kv.second, 0, nullptr, kv.first);
+    for (const auto &kv : players) {
+        push(kv.second, 0, nullptr, kv.first);
+        if (out.targets.size() >= kMaxEspTargets) break;
+    }
     for (const auto &kv : monsters) {
+        if (out.targets.size() >= kMaxEspTargets) break;
         int id = kv.first;
         if (kv.second) mem_read(g_pid, kv.second + Off::EntityId, id);
         if (!monster_id(id)) continue;

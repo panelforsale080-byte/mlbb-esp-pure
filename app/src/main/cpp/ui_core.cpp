@@ -171,9 +171,22 @@ static void reader_loop() {
                 EspResolveReport rep{};
                 esp_resolve(&rep);
                 log_resolve_result(rep);
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
             }
             EspFrame f;
             esp_tick(f);
+            if (f.status == EspStatus::NoInstance && lastStatus == EspStatus::Ready)
+                g_needResolve.store(true);
+            if (f.status == EspStatus::NoInstance || f.status == EspStatus::NoRead) {
+                std::lock_guard<std::mutex> lock(g_frameMu);
+                g_frame = EspFrame{};
+                g_frame.status = f.status;
+                g_frame.pid = f.pid;
+                std::snprintf(g_frame.hint, sizeof(g_frame.hint), "%s", f.hint);
+                lastStatus = f.status;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
             if (f.status != lastStatus || pid != lastPid) {
                 ui_log("[tick] %s | %s", status_name(f.status), f.hint);
                 if (f.status == EspStatus::Ready) {

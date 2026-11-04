@@ -1,7 +1,7 @@
 #include "remote_call.hpp"
 #include "mem.hpp"
 #include <cstring>
-#include <dirent.h>
+#include <mutex>
 #include <errno.h>
 #include <sys/ptrace.h>
 #include <sys/uio.h>
@@ -17,21 +17,9 @@
 #define NT_PRSTATUS 1
 #endif
 
-static pid_t pick_tracee_tid(pid_t pid) {
-    char path[64];
-    std::snprintf(path, sizeof(path), "/proc/%d/task", (int)pid);
-    DIR *d = opendir(path);
-    if (!d) return pid;
-    pid_t tid = pid;
-    struct dirent *e;
-    while ((e = readdir(d)) != nullptr) {
-        if (e->d_name[0] < '1') continue;
-        tid = (pid_t)atoi(e->d_name);
-        break;
-    }
-    closedir(d);
-    return tid;
-}
+static std::mutex g_ptraceSessionMu;
+
+static pid_t pick_tracee_tid(pid_t pid) { return pid; }
 
 static struct user_pt_regs *saved_pt(RemoteSession &s) {
     return reinterpret_cast<struct user_pt_regs *>(s.savedRegs);
@@ -47,7 +35,7 @@ static bool set_regs(pid_t tid, const struct user_pt_regs &regs) {
     return ptrace(PTRACE_SETREGSET, tid, (void *)NT_PRSTATUS, &iov) == 0;
 }
 
-bool remote_session_begin(pid_t pid, RemoteSession &s) {
+static bool session_begin_locked(pid_t pid, RemoteSession &s) {
     s = RemoteSession{};
     s.pid = pid;
     s.tid = pick_tracee_tid(pid);
@@ -68,11 +56,34 @@ bool remote_session_begin(pid_t pid, RemoteSession &s) {
     return true;
 }
 
+bool remote_session_begin(pid_t pid, RemoteSession &s) {
+    g_ptraceSessionMu.lock();
+    if (!session_begin_locked(pid, s)) {
+        g_ptraceSessionMu.unlock();
+        return false;
+    }
+    return true;
+}
+
+bool remote_session_begin_try(pid_t pid, RemoteSession &s) {
+    if (!g_ptraceSessionMu.try_lock()) {
+        std::snprintf(s.err, sizeof(s.err), "ptrace busy");
+        return false;
+    }
+    if (!session_begin_locked(pid, s)) {
+        g_ptraceSessionMu.unlock();
+        return false;
+    }
+    return true;
+}
+
 void remote_session_end(RemoteSession &s) {
-    if (!s.attached) return;
-    set_regs(s.tid, *saved_pt(s));
-    ptrace(PTRACE_DETACH, s.tid, nullptr, nullptr);
-    s.attached = false;
+    if (s.attached) {
+        set_regs(s.tid, *saved_pt(s));
+        ptrace(PTRACE_DETACH, s.tid, nullptr, nullptr);
+        s.attached = false;
+    }
+    g_ptraceSessionMu.unlock();
 }
 
 uintptr_t remote_session_scratch(RemoteSession &s, int slot, size_t bytes) {
@@ -132,6 +143,10 @@ bool remote_call(pid_t pid, uintptr_t func, const std::vector<uintptr_t> &args, 
 #else
 
 bool remote_session_begin(pid_t, RemoteSession &s) {
+    std::snprintf(s.err, sizeof(s.err), "arm64 only");
+    return false;
+}
+bool remote_session_begin_try(pid_t, RemoteSession &s) {
     std::snprintf(s.err, sizeof(s.err), "arm64 only");
     return false;
 }

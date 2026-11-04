@@ -107,7 +107,10 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     const bool anyPlayer = feat.box || feat.line || feat.health || feat.name || feat.distance;
     const bool anyMon =
         feat.monsterBox || feat.monsterName || feat.monsterHealth;
-    if (!anyPlayer && !anyMon) return;
+    if (!anyPlayer && !anyMon) {
+        esp_camera_frame_end();
+        return;
+    }
 
     if (esp_camera_ready()) {
         draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200), "ESP W2S (conRent cam)");
@@ -116,9 +119,17 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
                       "ESP radar fallback — Resolve in match");
     }
 
+    size_t drawn = 0;
+    constexpr size_t kMaxDraw = 32;
     for (const EspTarget &t : frame.targets) {
-        if (t.kind == 0 && anyPlayer) draw_one(draw, screenW, screenH, frame, t, feat, false);
-        if (t.kind == 1 && anyMon) draw_one(draw, screenW, screenH, frame, t, feat, true);
+        if (drawn >= kMaxDraw) break;
+        if (t.kind == 0 && anyPlayer) {
+            draw_one(draw, screenW, screenH, frame, t, feat, false);
+            ++drawn;
+        } else if (t.kind == 1 && anyMon) {
+            draw_one(draw, screenW, screenH, frame, t, feat, true);
+            ++drawn;
+        }
     }
 
     esp_camera_frame_end();
