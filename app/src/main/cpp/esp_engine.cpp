@@ -1,5 +1,6 @@
 #include "esp_engine.hpp"
 #include "esp_camera.hpp"
+#include "conrent_esp.hpp"
 #include "offsets.hpp"
 #include "proc.hpp"
 #include "remote_il2cpp.hpp"
@@ -706,40 +707,65 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     }
     esp_camera_set_il2cpp_w2s(0, 0, 0, 0);
 
-    if (!find_bm(g_pid, maps, k, st, inst, &meta)) {
-        ui_log("[resolve] no BM — enter classic/training match, Resolve again (mem-only, no ptrace)");
-
+    const bool memOk = find_bm(g_pid, maps, k, st, inst, &meta);
+    if (memOk && inst) {
         g_il2_for_resolve = nullptr;
-        g_resolved = false;
-        fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, k, st, inst);
-        if (meta.nameStrings > 0) {
-            std::vector<uintptr_t> dbg;
-            scan_strings(g_pid, maps, "BattleManager", dbg);
-            for (size_t i = 0; i < dbg.size() && i < 5; ++i) {
-                char txt[64] = {};
-                mem_read(g_pid, dbg[i], txt, sizeof(txt) - 1);
-                ui_log("[resolve] BattleManager str@%llX = \"%s\"",
-                       (unsigned long long)dbg[i], txt);
-            }
-        }
-        ui_log("[resolve] klass+heap both failed — need classic match (not lobby)");
+        g_bmKlass = k;
+        g_bmStatics = st;
+        g_bmInstance = inst;
+        g_bmInstancePin = inst;
+        g_resolved = true;
+        ui_log("[resolve] mem-only BM klass=0x%llx inst=0x%llx (no ptrace)",
+               (unsigned long long)k, (unsigned long long)inst);
+        fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, k, st, inst);
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;
     }
+
+    ui_log("[resolve] mem klass walk failed — one-shot conRent IL2CPP (draw stays ptrace-free)");
+    ConrentResolve cr{};
+    const bool crRan = conrent_resolve_battle_manager(g_pid, maps, il2, cr);
+    if (cr.show_battle_camera_statics || cr.game_method_statics)
+        esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
+    if (crRan && (cr.battle_manager || cr.metadata_ready)) {
+        g_il2_for_resolve = nullptr;
+        g_bmKlass = cr.battle_manager_klass;
+        g_bmStatics = cr.battle_manager_statics;
+        g_bmInstance = cr.battle_manager;
+        g_bmInstancePin = cr.battle_manager;
+        g_resolved = true;
+        if (!sbcStatics && !gmStatics)
+            ui_log("[w2s] conRent sbc=0x%llx gm=0x%llx",
+                   (unsigned long long)cr.show_battle_camera_statics,
+                   (unsigned long long)cr.game_method_statics);
+        const EspStatus st = cr.battle_manager ? EspStatus::Ready : EspStatus::NoInstance;
+        fill_report(rep, st, (int)maps.size(), probe, meta, cr.battle_manager_klass,
+                    cr.battle_manager_statics, cr.battle_manager);
+        std::snprintf(rep.detail, sizeof(rep.detail), "conRent resolve (1x ptrace): %s", cr.detail);
+        ui_log("[resolve] %s", cr.detail);
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        return rep.status;
+    }
+
     g_il2_for_resolve = nullptr;
-    g_bmKlass = k;
-    g_bmStatics = st;
-    g_bmInstance = inst;
-    g_bmInstancePin = inst;
-    g_resolved = true;
-    const EspStatus stOut = inst ? EspStatus::Ready : EspStatus::NoInstance;
-    ui_log("[resolve] mem-only BM klass=0x%llx inst=0x%llx statics=0x%llx",
-           (unsigned long long)k, (unsigned long long)inst, (unsigned long long)st);
-    fill_report(rep, stOut, (int)maps.size(), probe, meta, k, st, inst);
+    g_resolved = false;
+    fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, k, st, inst);
+    if (meta.nameStrings > 0) {
+        std::vector<uintptr_t> dbg;
+        scan_strings(g_pid, maps, "BattleManager", dbg);
+        for (size_t i = 0; i < dbg.size() && i < 5; ++i) {
+            char txt[64] = {};
+            mem_read(g_pid, dbg[i], txt, sizeof(txt) - 1);
+            ui_log("[resolve] BattleManager str@%llX = \"%s\"", (unsigned long long)dbg[i], txt);
+        }
+    }
+    if (cr.detail[0]) ui_log("[resolve] conRent: %s", cr.detail);
+    ui_log("[resolve] failed — be in classic/training match, tap Resolve once");
     g_lastReport = rep;
     if (reportOut) *reportOut = rep;
-    return stOut;
+    return rep.status;
 }
 
 const EspResolveReport &esp_last_resolve_report() {
@@ -762,7 +788,7 @@ EspStatus esp_tick(EspFrame &out) {
     }
     if (!proc_alive(g_pid)) {
         out.status = EspStatus::NoProcess;
-        g_bmInstance = 0;
+        g_bmInstance = g_bmInstancePin = 0;
         std::snprintf(out.hint, sizeof(out.hint), "Game process gone");
         return out.status;
     }
