@@ -243,18 +243,14 @@ void esp_camera_set_static_bases(uintptr_t showBattleCameraStatics, uintptr_t ga
 
 void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t get_main_method,
                                uintptr_t w2s_method) {
-    (void)pid;
-    (void)runtime_invoke;
-    (void)get_main_method;
-    (void)w2s_method;
-    g_il2Pid = 0;
-    g_rtInvoke = 0;
-    g_getMainMi = 0;
-    g_w2sMi = 0;
-    g_il2Ready = false; /* ptrace IL2 W2S disabled — matrix / radar only */
+    g_il2Pid = pid;
+    g_rtInvoke = runtime_invoke;
+    g_getMainMi = get_main_method;
+    g_w2sMi = w2s_method;
+    g_il2Ready = runtime_invoke && get_main_method && w2s_method;
 }
 
-void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool /*allowIl2Ptrace*/) {
+void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowIl2Ptrace) {
     g_screenW = screenW;
     g_screenH = screenH;
     normalize_landscape(g_screenW, g_screenH);
@@ -267,14 +263,21 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool /*allo
 
     g_w2sBudget = kMaxIl2W2sPerFrame;
 
-    /* EspSource-style: read ShowBattleCamera / GameMethod statics only (no ptrace). */
-    if (pid > 0 && proc_alive(pid)) {
-        if (load_vp_game_method(pid))
-            g_matrixReady = true;
-        else if (load_vp_show_battle_camera(pid))
-            g_matrixReady = true;
+    /* Build #49: IL2 Camera.WorldToScreenPoint first (accurate), matrix if attach fails. */
+    if (allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
+        proc_alive(pid)) {
+        if (remote_session_begin_try(pid, g_sess)) {
+            g_inFrame = true;
+            g_useIl2 = true;
+        }
     }
 
+    if (!g_useIl2 && pid > 0 && proc_alive(pid)) {
+        if (load_vp_show_battle_camera(pid))
+            g_matrixReady = true;
+        else if (load_vp_game_method(pid))
+            g_matrixReady = true;
+    }
 }
 
 void esp_camera_frame_end() {
@@ -288,5 +291,6 @@ void esp_camera_frame_end() {
 bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
+    if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
     return matrix_w2s(wx, wy, wz, outX, outY);
 }

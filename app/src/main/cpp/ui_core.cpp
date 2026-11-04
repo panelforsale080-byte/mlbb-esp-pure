@@ -200,18 +200,11 @@ static void draw_ui() {
         fr = g_frame;
     }
     const EspResolveReport &rep = esp_last_resolve_report();
-    /* W2S must match overlay GL surface (Build #49); real metrics can differ on some devices. */
+    /* W2S must use the same size as the GL overlay surface (ImGui framebuffer). */
     float sw = (float)g_width;
     float sh = (float)g_height;
-    if (g_displayW > 0 && g_displayH > 0) {
-        const float dw = (float)g_displayW, dh = (float)g_displayH;
-        if (std::fabs(dw - sw) > 8.f || std::fabs(dh - sh) > 8.f) {
-            sw = dw;
-            sh = dh;
-        }
-    }
-    if (sw < 1.f) sw = (float)g_displayW;
-    if (sh < 1.f) sh = (float)g_displayH;
+    if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
+    if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
 
     esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
 

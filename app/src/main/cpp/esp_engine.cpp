@@ -705,8 +705,6 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         ui_log("[w2s] mem-only sbc=0x%llx gm=0x%llx (no ptrace)",
                (unsigned long long)sbcStatics, (unsigned long long)gmStatics);
     }
-    esp_camera_set_il2cpp_w2s(0, 0, 0, 0);
-
     const bool memOk = find_bm(g_pid, maps, k, st, inst, &meta);
     if (memOk && inst) {
         g_il2_for_resolve = nullptr;
@@ -735,10 +733,13 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         g_bmInstance = cr.battle_manager;
         g_bmInstancePin = cr.battle_manager;
         g_resolved = true;
-        if (!sbcStatics && !gmStatics)
-            ui_log("[w2s] conRent sbc=0x%llx gm=0x%llx",
-                   (unsigned long long)cr.show_battle_camera_statics,
-                   (unsigned long long)cr.game_method_statics);
+        esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
+                                  cr.camera_w2s_method);
+        ui_log("[w2s] conRent sbc=0x%llx gm=0x%llx il2_w2s=%d",
+               (unsigned long long)cr.show_battle_camera_statics,
+               (unsigned long long)cr.game_method_statics,
+               (cr.camera_get_main_method && cr.camera_w2s_method && il2.sym_runtime_invoke) ? 1
+                                                                                              : 0);
         const EspStatus st = cr.battle_manager ? EspStatus::Ready : EspStatus::NoInstance;
         fill_report(rep, st, (int)maps.size(), probe, meta, cr.battle_manager_klass,
                     cr.battle_manager_statics, cr.battle_manager);
