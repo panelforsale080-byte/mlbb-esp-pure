@@ -25,6 +25,8 @@ EspResolveReport g_lastReport{};
 const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
 
 constexpr size_t kMaxEspTargets = 32;
+constexpr size_t kMaxMonsterDraw = 14;
+constexpr size_t kMaxPlayerDraw = 24;
 
 struct BmFindMeta {
     int nameStrings = 0;
@@ -709,6 +711,17 @@ const EspResolveReport &esp_last_resolve_report() {
     return g_lastReport;
 }
 
+static void clear_match_instance_locked() {
+    g_bmInstance = 0;
+    g_bmInstancePinned = 0;
+}
+
+static bool bm_header_readable(pid_t pid, uintptr_t bm) {
+    if (!bm || !mem_ptr_ok(bm)) return false;
+    uintptr_t pDict = 0;
+    return mem_read(pid, bm + Off::DicPlayerShow, pDict);
+}
+
 EspStatus esp_tick(EspFrame &out) {
     std::lock_guard<std::mutex> lock(g_mu);
     out = EspFrame{};
@@ -737,15 +750,22 @@ EspStatus esp_tick(EspFrame &out) {
     else if (!g_bmInstancePinned && g_bmStatics)
         refresh_instance(g_pid);
 
-    const uintptr_t bm = g_bmInstance;
-    if (!bm) {
+    uintptr_t bm = g_bmInstance;
+    if (!bm || !mem_ptr_ok(bm)) {
+        clear_match_instance_locked();
         out.status = EspStatus::NoInstance;
         std::snprintf(out.hint, sizeof(out.hint), "BattleManager null — enter match");
         return out.status;
     }
+    if (!bm_header_readable(g_pid, bm)) {
+        clear_match_instance_locked();
+        out.status = EspStatus::NoInstance;
+        std::snprintf(out.hint, sizeof(out.hint), "Match ended — tap Resolve next game");
+        return out.status;
+    }
 
     uintptr_t local = 0;
-    mem_read(g_pid, bm + Off::LocalPlayerShow, local);
+    if (mem_read(g_pid, bm + Off::LocalPlayerShow, local) && !mem_ptr_ok(local)) local = 0;
     Vec3 self{};
     if (local) mem_read(g_pid, local + Off::LastPosition, self);
     out.selfX = self.x;
@@ -755,17 +775,24 @@ EspStatus esp_tick(EspFrame &out) {
     uintptr_t pDict = 0, mDict = 0;
     mem_read(g_pid, bm + Off::DicPlayerShow, pDict);
     mem_read(g_pid, bm + Off::DicMonsterShow, mDict);
+    if ((!pDict || !mem_ptr_ok(pDict)) && (!mDict || !mem_ptr_ok(mDict))) {
+        clear_match_instance_locked();
+        out.status = EspStatus::NoInstance;
+        std::snprintf(out.hint, sizeof(out.hint), "Match ended — tap Resolve next game");
+        return out.status;
+    }
+
     std::vector<std::pair<int, uintptr_t>> players, monsters;
-    if (pDict)
-        dict_entries(g_pid, pDict, players, (int)kMaxEspTargets + 8);
-    if (mDict)
-        dict_entries(g_pid, mDict, monsters, 20);
+    if (pDict && mem_ptr_ok(pDict))
+        dict_entries(g_pid, pDict, players, (int)kMaxPlayerDraw + 8);
+    if (mDict && mem_ptr_ok(mDict))
+        dict_entries(g_pid, mDict, monsters, (int)kMaxMonsterDraw + 8);
 
     out.targets.reserve(kMaxEspTargets);
 
     auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
         if (out.targets.size() >= kMaxEspTargets) return;
-        if (!v) return;
+        if (!v || !mem_ptr_ok(v)) return;
         uint8_t dead = 0, camp = 0;
         if (mem_read(g_pid, v + Off::EntityDeath, dead) && dead) return;
         if (mem_read(g_pid, v + Off::SameCamp, camp) && camp) return;
@@ -793,16 +820,21 @@ EspStatus esp_tick(EspFrame &out) {
         out.targets.push_back(t);
     };
 
-    for (const auto &kv : players) {
-        push(kv.second, 0, nullptr, kv.first);
-        if (out.targets.size() >= kMaxEspTargets) break;
-    }
+    /* conRent DrawOverlay: monsters first so heroes do not fill the draw budget */
+    size_t monAdded = 0;
     for (const auto &kv : monsters) {
-        if (out.targets.size() >= kMaxEspTargets) break;
+        if (out.targets.size() >= kMaxEspTargets || monAdded >= kMaxMonsterDraw) break;
+        if (!kv.second || !mem_ptr_ok(kv.second)) continue;
         int id = kv.first;
-        if (kv.second) mem_read(g_pid, kv.second + Off::EntityId, id);
+        mem_read(g_pid, kv.second + Off::EntityId, id);
         if (!monster_id(id)) continue;
+        const size_t before = out.targets.size();
         push(kv.second, 1, Off::monsterLabel(id), kv.first);
+        if (out.targets.size() > before) ++monAdded;
+    }
+    for (const auto &kv : players) {
+        if (out.targets.size() >= kMaxEspTargets) break;
+        push(kv.second, 0, nullptr, kv.first);
     }
 
     out.mapsCount = 0;
