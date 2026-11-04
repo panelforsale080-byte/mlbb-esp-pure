@@ -1,3 +1,4 @@
+#include "ui_core.hpp"
 #include "esp_engine.hpp"
 #include "esp_draw.hpp"
 #include "proc.hpp"
@@ -5,9 +6,9 @@
 #include "clip_android.hpp"
 #include "remote_il2cpp.hpp"
 
-#include <android_native_app_glue.h>
-#include <EGL/egl.h>
-#include <GLES3/gl3.h>
+#include <android/input.h>
+#include <android/log.h>
+#include <GLES2/gl2.h>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -19,13 +20,19 @@
 #include "imgui_impl_android.h"
 #include "imgui_impl_opengl3.h"
 
-static EGLDisplay g_eglDisplay = EGL_NO_DISPLAY;
-static EGLSurface g_eglSurface = EGL_NO_SURFACE;
-static EGLContext g_eglContext = EGL_NO_CONTEXT;
 static int g_width = 0, g_height = 0;
+static int g_displayW = 0, g_displayH = 0;
 ImVec2 initialScreenSize;
+ImVec2 &ui_initial_screen_size() { return initialScreenSize; }
 
-static std::atomic<bool> g_runReader{true};
+static bool g_glReady = false;
+static bool g_imguiBackend = false;
+static std::mutex g_glMu;
+static const char *g_glslVersion = "#version 100";
+
+static std::atomic<bool> g_runReader{false};
+static std::thread g_reader;
+static std::atomic<bool> g_readerStarted{false};
 static std::mutex g_frameMu;
 static EspFrame g_frame;
 static std::atomic<pid_t> g_wantPid{0};
@@ -33,10 +40,9 @@ static std::atomic<bool> g_needResolve{true};
 
 static bool g_autoFind = true;
 static bool g_fallbackPid = true;
-static bool g_showMenu = true;
+static bool g_showMenu = false;
 static bool g_logScrollBottom = true;
 static EspFeatures g_feat{};
-static android_app *g_app = nullptr;
 
 static void apply_menu_style() {
     ImGuiStyle &s = ImGui::GetStyle();
@@ -106,46 +112,8 @@ static void scan_and_log_processes() {
         ui_log("[scan] pid=%d  %s", (int)list[i].pid, list[i].cmdline);
 }
 
-static bool init_egl(ANativeWindow *window) {
-    g_eglDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-    if (g_eglDisplay == EGL_NO_DISPLAY) return false;
-    if (!eglInitialize(g_eglDisplay, nullptr, nullptr)) return false;
-
-    const EGLint attribs[] = {
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
-        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-        EGL_BLUE_SIZE, 8,
-        EGL_GREEN_SIZE, 8,
-        EGL_RED_SIZE, 8,
-        EGL_ALPHA_SIZE, 8,
-        EGL_DEPTH_SIZE, 0,
-        EGL_NONE
-    };
-    EGLConfig config = nullptr;
-    EGLint num = 0;
-    if (!eglChooseConfig(g_eglDisplay, attribs, &config, 1, &num) || num == 0)
-        return false;
-
-    const EGLint ctxAtt[] = { EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE };
-    g_eglContext = eglCreateContext(g_eglDisplay, config, EGL_NO_CONTEXT, ctxAtt);
-    g_eglSurface = eglCreateWindowSurface(g_eglDisplay, config, window, nullptr);
-    if (g_eglContext == EGL_NO_CONTEXT || g_eglSurface == EGL_NO_SURFACE) return false;
-    if (!eglMakeCurrent(g_eglDisplay, g_eglSurface, g_eglSurface, g_eglContext))
-        return false;
-    return true;
-}
-
-static void shutdown_egl() {
-    if (g_eglDisplay != EGL_NO_DISPLAY) {
-        eglMakeCurrent(g_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        if (g_eglContext != EGL_NO_CONTEXT) eglDestroyContext(g_eglDisplay, g_eglContext);
-        if (g_eglSurface != EGL_NO_SURFACE) eglDestroySurface(g_eglDisplay, g_eglSurface);
-        eglTerminate(g_eglDisplay);
-    }
-    g_eglDisplay = EGL_NO_DISPLAY;
-    g_eglContext = EGL_NO_CONTEXT;
-    g_eglSurface = EGL_NO_SURFACE;
-}
+static void reader_loop();
+static void reader_start_once();
 
 static void attach_pid(pid_t p, const char *why) {
     if (p <= 0) {
@@ -231,24 +199,12 @@ static void draw_ui() {
         fr = g_frame;
     }
     const EspResolveReport &rep = esp_last_resolve_report();
-    const float sw = (float)g_width;
-    const float sh = (float)g_height;
+    const float sw = g_displayW > 0 ? (float)g_displayW : (float)g_width;
+    const float sh = g_displayH > 0 ? (float)g_displayH : (float)g_height;
 
     esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
 
-    if (!g_showMenu) {
-        ImGui::SetNextWindowBgAlpha(0.85f);
-        ImGui::SetNextWindowPos({12.f, 12.f}, ImGuiCond_Always);
-        if (ImGui::Begin("##esp_fab", nullptr,
-                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
-                             ImGuiWindowFlags_NoMove)) {
-            if (ImGui::Button("Menu")) g_showMenu = true;
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", status_name(fr.status));
-        }
-        ImGui::End();
-        return;
-    }
+    if (!g_showMenu) return;
 
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
@@ -293,7 +249,7 @@ static void draw_ui() {
             if (ImGui::Button("Copy logs")) {
                 static char logCopy[65536];
                 ui_log_copy_all(logCopy, sizeof(logCopy));
-                if (android_copy_to_clipboard(g_app, logCopy))
+                if (android_copy_to_clipboard(logCopy))
                     ui_log("[ui] logs copied");
             }
             if (pid > 0 && ImGui::Button("Scan IL2CPP")) log_il2cpp_scan(pid);
@@ -311,87 +267,143 @@ static void draw_ui() {
     ImGui::End();
 }
 
-static void handle_cmd(android_app *app, int32_t cmd) {
-    switch (cmd) {
-    case APP_CMD_INIT_WINDOW:
-        if (app->window && g_eglDisplay == EGL_NO_DISPLAY) {
-            init_egl(app->window);
-            ImGui_ImplAndroid_Init(app->window);
-            ImGui_ImplOpenGL3_Init("#version 300 es");
-            ui_log("MLBB ESP overlay — allow over other apps, MLBB match, Resolve");
-        }
-        break;
-    case APP_CMD_TERM_WINDOW:
+static void apply_display_metrics() {
+    if (g_width < 1) g_width = 1;
+    if (g_height < 1) g_height = 1;
+    if (initialScreenSize.x <= 0.f && g_displayW > 0)
+        initialScreenSize = ImVec2((float)g_displayW, (float)g_displayH);
+    else if (initialScreenSize.x <= 0.f)
+        initialScreenSize = ImVec2((float)g_width, (float)g_height);
+    if (initialScreenSize.x < 1.f) initialScreenSize.x = (float)g_width;
+    if (initialScreenSize.y < 1.f) initialScreenSize.y = (float)g_height;
+}
+
+static bool init_imgui_backends() {
+    if (!ImGui::GetCurrentContext()) {
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO &io = ImGui::GetIO();
+        io.IniFilename = nullptr;
+        io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
+        io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
+        io.ConfigFlags &= ~ImGuiConfigFlags_DockingEnable;
+        ImGui::StyleColorsDark();
+        apply_menu_style();
+        io.Fonts->AddFontDefault();
+        ImGui::GetStyle().TouchExtraPadding = ImVec2(4.f, 4.f);
+    }
+    if (g_imguiBackend) {
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplAndroid_Shutdown();
-        shutdown_egl();
+        g_imguiBackend = false;
+    }
+    ImGui_ImplAndroid_Init(nullptr);
+    if (!ImGui_ImplOpenGL3_Init(g_glslVersion)) {
+        __android_log_print(ANDROID_LOG_ERROR, "MlbbEsp", "ImGui_ImplOpenGL3_Init failed");
+        return false;
+    }
+    g_imguiBackend = true;
+    return true;
+}
+
+static void shutdown_imgui_only() {
+    if (g_imguiBackend) {
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplAndroid_Shutdown();
+        g_imguiBackend = false;
+    }
+    if (ImGui::GetCurrentContext()) ImGui::DestroyContext();
+    g_glReady = false;
+}
+
+static void render_imgui_frame() {
+    if (!g_glReady || !g_imguiBackend) return;
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplAndroid_NewFrame(g_width, g_height);
+    ImGui::NewFrame();
+    draw_ui();
+    ImGui::Render();
+    ImDrawData *dd = ImGui::GetDrawData();
+    if (!dd || dd->DisplaySize.x <= 0.f || dd->DisplaySize.y <= 0.f) return;
+    glViewport(0, 0, g_width, g_height);
+    glClearColor(0.f, 0.f, 0.f, 0.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    ImGui_ImplOpenGL3_RenderDrawData(dd);
+}
+
+void ui_set_display_size(int width, int height) {
+    if (width > 0 && height > 0) {
+        g_displayW = width;
+        g_displayH = height;
+        if (initialScreenSize.x <= 0.f)
+            initialScreenSize = ImVec2((float)width, (float)height);
+    }
+}
+
+void ui_esp_pipeline_idle() {
+    /* no-op: keep Build #12 auto-find / resolve behavior on overlay start */
+}
+
+void ui_gl_surface_created() {
+    std::lock_guard<std::mutex> lock(g_glMu);
+    shutdown_imgui_only();
+    if (!init_imgui_backends()) return;
+    g_glReady = true;
+    reader_start_once();
+    ui_log("MLBB ESP overlay — tap ≡ for menu, touches pass to game when closed");
+}
+
+static void reader_start_once() {
+    if (g_readerStarted.exchange(true)) return;
+    g_runReader.store(true);
+    g_reader = std::thread(reader_loop);
+}
+
+void ui_gl_surface_changed(int width, int height) {
+    std::lock_guard<std::mutex> lock(g_glMu);
+    g_width = width > 0 ? width : 1;
+    g_height = height > 0 ? height : 1;
+    apply_display_metrics();
+}
+
+void ui_gl_surface_destroyed() {
+    std::lock_guard<std::mutex> lock(g_glMu);
+    g_runReader.store(false);
+    if (g_reader.joinable()) g_reader.join();
+    g_readerStarted.store(false);
+    shutdown_imgui_only();
+}
+
+void ui_gl_draw_frame() {
+    std::lock_guard<std::mutex> lock(g_glMu);
+    render_imgui_frame();
+}
+
+void ui_touch(int action, float x, float y) {
+    if (!g_glReady || !g_showMenu || !ImGui::GetCurrentContext()) return;
+    ImGuiIO &io = ImGui::GetIO();
+    io.AddMousePosEvent(x, y);
+    switch (action) {
+    case AMOTION_EVENT_ACTION_DOWN:
+    case AMOTION_EVENT_ACTION_POINTER_DOWN:
+        io.AddMouseButtonEvent(0, true);
         break;
-    case APP_CMD_WINDOW_RESIZED:
-        if (app->window) {
-            g_width = ANativeWindow_getWidth(app->window);
-            g_height = ANativeWindow_getHeight(app->window);
-            if (initialScreenSize.x <= 0.f || initialScreenSize.y <= 0.f)
-                initialScreenSize = ImVec2((float)g_width, (float)g_height);
-        }
+    case AMOTION_EVENT_ACTION_UP:
+    case AMOTION_EVENT_ACTION_POINTER_UP:
+    case AMOTION_EVENT_ACTION_CANCEL:
+        io.AddMouseButtonEvent(0, false);
+        break;
+    case AMOTION_EVENT_ACTION_MOVE:
         break;
     default:
         break;
     }
 }
 
-static int32_t handle_input(android_app *app, AInputEvent *event) {
-    return ImGui_ImplAndroid_HandleInputEvent(event);
-}
+void ui_open_menu() { g_showMenu = true; }
 
-void android_main(android_app *app) {
-    g_app = app;
-    app->onAppCmd = handle_cmd;
-    app->onInputEvent = handle_input;
+void ui_toggle_menu() { g_showMenu = !g_showMenu; }
 
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO &io = ImGui::GetIO();
-    io.IniFilename = nullptr;
-    ImGui::StyleColorsDark();
-    apply_menu_style();
-
-    std::thread reader(reader_loop);
-
-    while (true) {
-        int events = 0;
-        android_poll_source *source = nullptr;
-        while (ALooper_pollOnce(g_eglDisplay == EGL_NO_DISPLAY ? 0 : 0, nullptr, &events,
-                                (void **)&source) >= 0) {
-            if (source) source->process(app, source);
-            if (app->destroyRequested) {
-                g_runReader.store(false);
-                reader.join();
-                return;
-            }
-        }
-
-        if (g_eglDisplay == EGL_NO_DISPLAY) continue;
-
-        if (g_width <= 0 || g_height <= 0) {
-            g_width = ANativeWindow_getWidth(app->window);
-            g_height = ANativeWindow_getHeight(app->window);
-            if (initialScreenSize.x <= 0.f || initialScreenSize.y <= 0.f)
-                initialScreenSize = ImVec2((float)g_width, (float)g_height);
-        }
-
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplAndroid_NewFrame(g_width, g_height);
-        ImGui::NewFrame();
-
-        draw_ui();
-
-        ImGui::Render();
-        glViewport(0, 0, g_width, g_height);
-        glClearColor(0.f, 0.f, 0.f, 0.f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        eglSwapBuffers(g_eglDisplay, g_eglSurface);
-    }
-}
+bool ui_menu_interactive() { return g_showMenu; }

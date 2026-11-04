@@ -3,13 +3,9 @@ project(MlbbEsp)
 
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
 
-add_library(native_app_glue STATIC
-    ${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c)
-target_include_directories(native_app_glue PUBLIC
-    ${ANDROID_NDK}/sources/android/native_app_glue)
-
 add_library(MlbbEsp SHARED
-    app_main.cpp
+    ui_core.cpp
+    overlay_jni.cpp
     proc.cpp
     mem.cpp
     esp_engine.cpp
@@ -27,25 +23,19 @@ add_library(MlbbEsp SHARED
     ${IMGUI_DIR}/imgui_impl_android.cpp
     ${IMGUI_DIR}/imgui_impl_opengl3.cpp)
 
-target_include_directories(MlbbEsp PRIVATE
-    ${IMGUI_DIR}
-    ${ANDROID_NDK}/sources/android/native_app_glue)
+target_include_directories(MlbbEsp PRIVATE ${IMGUI_DIR})
 
 target_compile_definitions(MlbbEsp PRIVATE
-    IMGUI_IMPL_OPENGL_ES3
+    IMGUI_IMPL_OPENGL_ES2
     GLES_SILENCE_DEPRECATION)
 
 find_library(log-lib log)
 find_library(android-lib android)
 find_library(EGL-lib EGL)
-find_library(GLESv3-lib GLESv3)
+find_library(GLESv2-lib GLESv2)
 
 target_link_libraries(MlbbEsp
-    native_app_glue
     ${log-lib}
     ${android-lib}
     ${EGL-lib}
-    ${GLESv3-lib})
-
-target_link_options(MlbbEsp PRIVATE
-    "-Wl,-u,ANativeActivity_onCreate")
+    ${GLESv2-lib})

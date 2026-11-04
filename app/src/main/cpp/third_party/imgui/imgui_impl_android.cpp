@@ -225,11 +225,12 @@ int32_t ImGui_ImplAndroid_HandleInputEvent(const AInputEvent* input_event)
         case AMOTION_EVENT_ACTION_UP:
         {
             int tool_type = AMotionEvent_getToolType(input_event, event_pointer_index);
-            if (tool_type == AMOTION_EVENT_TOOL_TYPE_FINGER || tool_type == AMOTION_EVENT_TOOL_TYPE_UNKNOWN)
             {
                 ImVec2 currentScreenSize = io.DisplaySize;
-                float scaleX = currentScreenSize.x / initialScreenSize.x;
-                float scaleY = currentScreenSize.y / initialScreenSize.y;
+                float baseW = initialScreenSize.x > 0.f ? initialScreenSize.x : currentScreenSize.x;
+                float baseH = initialScreenSize.y > 0.f ? initialScreenSize.y : currentScreenSize.y;
+                float scaleX = baseW > 0.f ? (currentScreenSize.x / baseW) : 1.f;
+                float scaleY = baseH > 0.f ? (currentScreenSize.y / baseH) : 1.f;
                 float scaledMouseX = AMotionEvent_getX(input_event, event_pointer_index) * scaleX;
                 float scaledMouseY = AMotionEvent_getY(input_event, event_pointer_index) * scaleY;
 
@@ -251,8 +252,10 @@ int32_t ImGui_ImplAndroid_HandleInputEvent(const AInputEvent* input_event)
         case AMOTION_EVENT_ACTION_MOVE:       // Touch pointer moves while DOWN
         {
             ImVec2 currentScreenSize = io.DisplaySize;
-            float scaleX = currentScreenSize.x / initialScreenSize.x;
-            float scaleY = currentScreenSize.y / initialScreenSize.y;
+            float baseW = initialScreenSize.x > 0.f ? initialScreenSize.x : currentScreenSize.x;
+            float baseH = initialScreenSize.y > 0.f ? initialScreenSize.y : currentScreenSize.y;
+            float scaleX = baseW > 0.f ? (currentScreenSize.x / baseW) : 1.f;
+            float scaleY = baseH > 0.f ? (currentScreenSize.y / baseH) : 1.f;
             float scaledMouseX = AMotionEvent_getX(input_event, event_pointer_index) * scaleX;
             float scaledMouseY = AMotionEvent_getY(input_event, event_pointer_index) * scaleY;
 
