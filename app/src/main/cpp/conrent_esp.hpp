@@ -13,6 +13,7 @@ struct ConrentResolve {
     uintptr_t game_method_statics = 0;
     uintptr_t camera_get_main_method = 0; /* MethodInfo* */
     uintptr_t camera_w2s_method = 0;
+    bool metadata_ready = false; /* klass + Camera W2S like conRent resolveOffsets (lobby OK) */
     char method[64] = {};
     char detail[200] = {};
 };
@@ -20,3 +21,5 @@ struct ConrentResolve {
 bool conrent_runtime_ready(pid_t pid, RemoteIl2CppInfo &il2);
 bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> &maps, RemoteIl2CppInfo &il2,
                                     ConrentResolve &out);
+bool conrent_refresh_battle_instance(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t battleManagerKlass,
+                                     uintptr_t &instanceOut);

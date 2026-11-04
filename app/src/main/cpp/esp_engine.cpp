@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstring>
 #include <elf.h>
+#include <chrono>
 #include <mutex>
 
 namespace {
@@ -20,6 +21,9 @@ uintptr_t g_bmKlass = 0;
 uintptr_t g_bmStatics = 0;
 uintptr_t g_bmInstance = 0;
 bool g_resolved = false;
+bool g_metadataReady = false;
+RemoteIl2CppInfo g_cachedIl2{};
+bool g_haveCachedIl2 = false;
 EspResolveReport g_lastReport{};
 const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
 
@@ -529,6 +533,8 @@ void esp_reset() {
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
     g_resolved = false;
+    g_metadataReady = false;
+    g_haveCachedIl2 = false;
     esp_camera_reset();
 }
 
@@ -598,29 +604,33 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     g_il2_for_resolve = &il2;
 
     ConrentResolve cr{};
-    const bool crOk =
-        conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.battle_manager;
+    const bool crMeta =
+        conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.metadata_ready;
     esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
                               cr.camera_w2s_method);
-    if (crOk) {
+    if (crMeta) {
         g_il2_for_resolve = nullptr;
+        g_cachedIl2 = il2;
+        g_haveCachedIl2 = il2.sym_domain_get != 0;
+        g_metadataReady = true;
         g_bmKlass = cr.battle_manager_klass;
         g_bmStatics = 0;
         g_bmInstance = cr.battle_manager;
         g_resolved = true;
         BmFindMeta meta{};
         meta.usedElf = false;
-        fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, cr.battle_manager_klass,
-                    0, cr.battle_manager);
+        const EspStatus st =
+            cr.battle_manager ? EspStatus::Ready : EspStatus::NoInstance;
+        fill_report(rep, st, (int)maps.size(), probe, meta, cr.battle_manager_klass, 0,
+                    cr.battle_manager);
         std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1: %s", cr.detail);
-        ui_log("[resolve] OK %s", cr.detail);
+        ui_log("[resolve] %s", cr.detail);
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;
     }
-    if (!cr.battle_manager && cr.detail[0])
-        ui_log("[resolve] conRent path: %s", cr.detail);
+    if (cr.detail[0]) ui_log("[resolve] conRent path: %s", cr.detail);
 
     BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;
@@ -661,9 +671,11 @@ const EspResolveReport &esp_last_resolve_report() {
     return g_lastReport;
 }
 
-static void invalidate_match_locked() {
+static void invalidate_all_locked() {
     g_bmInstance = 0;
     g_resolved = false;
+    g_metadataReady = false;
+    g_haveCachedIl2 = false;
 }
 
 EspStatus esp_tick(EspFrame &out) {
@@ -678,32 +690,47 @@ EspStatus esp_tick(EspFrame &out) {
     if (!proc_alive(g_pid) || !proc_probe_read(g_pid)) {
         out.status = EspStatus::NoRead;
         std::snprintf(out.hint, sizeof(out.hint), "Process unreadable");
-        invalidate_match_locked();
+        invalidate_all_locked();
         return out.status;
     }
-    if (!g_resolved) {
+    if (!g_resolved || !g_metadataReady) {
         out.status = EspStatus::NoBattleManager;
-        std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (in match)");
+        std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (lobby or match)");
         return out.status;
-    }
-    if (!g_bmInstance && g_bmStatics) {
-        refresh_instance(g_pid);
     }
 
-    refresh_instance(g_pid);
-    const uintptr_t bm = g_bmInstance;
+    static auto s_lastInstRefresh = std::chrono::steady_clock::time_point{};
+    const auto nowRefresh = std::chrono::steady_clock::now();
+    const bool doInstRefresh =
+        g_bmKlass && g_haveCachedIl2 &&
+        (s_lastInstRefresh.time_since_epoch().count() == 0 ||
+         nowRefresh - s_lastInstRefresh > std::chrono::milliseconds(400));
+    if (doInstRefresh) {
+        s_lastInstRefresh = nowRefresh;
+        uintptr_t inst = 0;
+        if (conrent_refresh_battle_instance(g_pid, g_cachedIl2, g_bmKlass, inst) && inst)
+            g_bmInstance = inst;
+    }
+    if (!g_bmInstance && g_bmStatics)
+        refresh_instance(g_pid);
+    else if (!g_bmInstance)
+        refresh_instance(g_pid);
+
+    uintptr_t bm = g_bmInstance;
     if (!bm || !mem_ptr_ok(bm)) {
         out.status = EspStatus::NoInstance;
-        std::snprintf(out.hint, sizeof(out.hint), "BattleManager null — enter match");
-        invalidate_match_locked();
+        std::snprintf(out.hint, sizeof(out.hint),
+                      "Metadata cached — enter match (auto Instance refresh)");
+        out.bmKlass = g_bmKlass;
         return out.status;
     }
 
     uintptr_t pDictProbe = 0;
     if (!mem_read(g_pid, bm + Off::DicPlayerShow, pDictProbe) || !mem_ptr_ok(pDictProbe)) {
+        g_bmInstance = 0;
         out.status = EspStatus::NoInstance;
-        std::snprintf(out.hint, sizeof(out.hint), "End game / lobby — Resolve in next match");
-        invalidate_match_locked();
+        std::snprintf(out.hint, sizeof(out.hint), "Loading / end game — waiting for BM dict");
+        out.bmKlass = g_bmKlass;
         return out.status;
     }
 

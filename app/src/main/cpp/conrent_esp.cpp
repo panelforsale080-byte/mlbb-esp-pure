@@ -248,13 +248,24 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
            (unsigned long long)out.game_method_statics,
            (out.camera_get_main_method && out.camera_w2s_method) ? 1 : 0);
 
+    out.metadata_ready =
+        klass && out.camera_get_main_method && out.camera_w2s_method && out.runtime_ready;
+
     remote_session_end(s);
+
+    if (!out.metadata_ready) {
+        std::snprintf(out.detail, sizeof(out.detail),
+                      "metadata incomplete (klass/w2s/runtime) asm=%zu", asmCount);
+        ui_log("[conrent] %s", out.detail);
+        return false;
+    }
 
     if (!inst) {
         std::snprintf(out.detail, sizeof(out.detail),
-                      "staticFieldValue(BattleManager, Instance)=0 (lobby?)");
+                      "metadata OK lobby: klass=0x%llx Instance=0 (enter match) asm=%zu",
+                      (unsigned long long)klass, asmCount);
         ui_log("[conrent] %s", out.detail);
-        return false;
+        return true;
     }
 
     std::snprintf(out.detail, sizeof(out.detail),
@@ -262,4 +273,25 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
                   (unsigned long long)klass, (unsigned long long)inst, asmCount);
     ui_log("[conrent] OK %s", out.detail);
     return true;
+}
+
+bool conrent_refresh_battle_instance(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t battleManagerKlass,
+                                     uintptr_t &instanceOut) {
+    instanceOut = 0;
+    if (!battleManagerKlass || !il2.sym_domain_get || !il2.sym_field_static_get_value ||
+        !il2.sym_class_get_field_from_name)
+        return false;
+
+    RemoteSession s{};
+    if (!remote_session_begin_try(pid, s)) return false;
+
+    if (il2.sym_domain_get && il2.sym_thread_attach) {
+        uintptr_t domain = 0;
+        if (remote_session_call(s, il2.sym_domain_get, {}, domain))
+            remote_session_call(s, il2.sym_thread_attach, {domain}, domain);
+    }
+
+    instanceOut = static_field_ptr(s, pid, il2, battleManagerKlass, "Instance");
+    remote_session_end(s);
+    return mem_ptr_ok(instanceOut);
 }

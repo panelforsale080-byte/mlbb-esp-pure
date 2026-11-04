@@ -37,6 +37,10 @@ static std::mutex g_frameMu;
 static EspFrame g_frame;
 static std::atomic<pid_t> g_wantPid{0};
 static std::atomic<bool> g_needResolve{true};
+static std::atomic<bool> g_resolvePending{false};
+static std::atomic<bool> g_resolving{false};
+static std::atomic<bool> g_resolveWorkerRun{false};
+static std::thread g_resolveWorker;
 
 static bool g_autoFind = true;
 static bool g_fallbackPid = true;
@@ -114,6 +118,31 @@ static void scan_and_log_processes() {
 
 static void reader_loop();
 static void reader_start_once();
+static void resolve_worker_start_once();
+
+static void resolve_worker_loop() {
+    while (g_resolveWorkerRun.load()) {
+        if (!g_resolvePending.exchange(false)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            continue;
+        }
+        g_resolving.store(true);
+        ui_log("[resolve] worker start (background ptrace)");
+        EspResolveReport rep{};
+        esp_resolve(&rep);
+        log_resolve_result(rep);
+        g_resolving.store(false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+}
+
+static void resolve_worker_start_once() {
+    static std::atomic<bool> started{false};
+    if (started.exchange(true)) return;
+    g_resolveWorkerRun.store(true);
+    g_resolveWorker = std::thread(resolve_worker_loop);
+    g_resolveWorker.detach();
+}
 
 static void attach_pid(pid_t p, const char *why) {
     if (p <= 0) {
@@ -166,27 +195,10 @@ static void reader_loop() {
             g_needResolve.store(true);
             lastPid = 0;
         } else if (pid > 0) {
-            if (g_needResolve.exchange(false)) {
-                ui_log("[resolve] start pid=%d", (int)pid);
-                EspResolveReport rep{};
-                esp_resolve(&rep);
-                log_resolve_result(rep);
-                std::this_thread::sleep_for(std::chrono::milliseconds(300));
-            }
+            if (g_needResolve.exchange(false) && !g_resolving.load())
+                g_resolvePending.store(true);
             EspFrame f;
             esp_tick(f);
-            if (f.status == EspStatus::NoInstance && lastStatus == EspStatus::Ready)
-                g_needResolve.store(true);
-            if (f.status == EspStatus::NoInstance || f.status == EspStatus::NoRead) {
-                std::lock_guard<std::mutex> lock(g_frameMu);
-                g_frame = EspFrame{};
-                g_frame.status = f.status;
-                g_frame.pid = f.pid;
-                std::snprintf(g_frame.hint, sizeof(g_frame.hint), "%s", f.hint);
-                lastStatus = f.status;
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                continue;
-            }
             if (f.status != lastStatus || pid != lastPid) {
                 ui_log("[tick] %s | %s", status_name(f.status), f.hint);
                 if (f.status == EspStatus::Ready) {
@@ -222,11 +234,14 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("Overlay — open MLBB, allow display over apps, enter match.");
+        ImGui::TextDisabled("conRent-style: Resolve in lobby caches IL2CPP; ESP live in match.");
+        if (g_resolving.load())
+            ImGui::TextColored(ImVec4(1.f, 0.85f, 0.3f, 1.f), "Resolving (background)…");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
-        if (ImGui::Button("Resolve")) g_needResolve.store(true);
+        if (ImGui::Button("Resolve"))
+            g_needResolve.store(true);
         ImGui::SameLine();
         if (ImGui::Button("Find pid")) {
             pid_t p = proc_find_unity_kills();
@@ -370,6 +385,7 @@ void ui_gl_surface_created() {
 
 static void reader_start_once() {
     if (g_readerStarted.exchange(true)) return;
+    resolve_worker_start_once();
     g_runReader.store(true);
     g_reader = std::thread(reader_loop);
 }
@@ -383,6 +399,7 @@ void ui_gl_surface_changed(int width, int height) {
 
 void ui_gl_surface_destroyed() {
     std::lock_guard<std::mutex> lock(g_glMu);
+    g_resolveWorkerRun.store(false);
     g_runReader.store(false);
     if (g_reader.joinable()) g_reader.join();
     g_readerStarted.store(false);
