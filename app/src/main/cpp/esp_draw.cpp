@@ -100,7 +100,7 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
 void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
                       const EspFeatures &feat) {
     if (!draw || screenW < 1.f || screenH < 1.f) return;
-    if (frame.status != EspStatus::Ready) return;
+    if (!feat.espOn || frame.status != EspStatus::Ready) return;
 
     esp_camera_frame_begin(frame.pid, screenW, screenH);
 
@@ -120,8 +120,10 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     }
 
     for (const EspTarget &t : frame.targets) {
-        if (t.kind == 0 && anyPlayer) draw_one(draw, screenW, screenH, frame, t, feat, false);
         if (t.kind == 1 && anyMon) draw_one(draw, screenW, screenH, frame, t, feat, true);
+    }
+    for (const EspTarget &t : frame.targets) {
+        if (t.kind == 0 && anyPlayer) draw_one(draw, screenW, screenH, frame, t, feat, false);
     }
 
     esp_camera_frame_end();

@@ -3,6 +3,7 @@
 #include "imgui.h"
 
 struct EspFeatures {
+    bool espOn = true;
     bool box = true;
     bool line = true;
     bool health = true;
