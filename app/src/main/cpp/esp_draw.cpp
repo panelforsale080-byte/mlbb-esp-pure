@@ -119,17 +119,9 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
                       "ESP radar fallback — Resolve in match");
     }
 
-    size_t drawn = 0;
-    constexpr size_t kMaxDraw = 32;
     for (const EspTarget &t : frame.targets) {
-        if (drawn >= kMaxDraw) break;
-        if (t.kind == 0 && anyPlayer) {
-            draw_one(draw, screenW, screenH, frame, t, feat, false);
-            ++drawn;
-        } else if (t.kind == 1 && anyMon) {
-            draw_one(draw, screenW, screenH, frame, t, feat, true);
-            ++drawn;
-        }
+        if (t.kind == 0 && anyPlayer) draw_one(draw, screenW, screenH, frame, t, feat, false);
+        if (t.kind == 1 && anyMon) draw_one(draw, screenW, screenH, frame, t, feat, true);
     }
 
     esp_camera_frame_end();

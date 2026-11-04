@@ -10,8 +10,6 @@
 #include <cmath>
 #include <cstring>
 #include <elf.h>
-#include <atomic>
-#include <chrono>
 #include <mutex>
 
 namespace {
@@ -22,15 +20,8 @@ uintptr_t g_bmKlass = 0;
 uintptr_t g_bmStatics = 0;
 uintptr_t g_bmInstance = 0;
 bool g_resolved = false;
-bool g_metadataReady = false;
-RemoteIl2CppInfo g_cachedIl2{};
-bool g_haveCachedIl2 = false;
 EspResolveReport g_lastReport{};
 const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
-std::atomic<bool> g_forceFullResolve{false};
-int g_noReadStrikes = 0;
-std::chrono::steady_clock::time_point g_lastFullResolve{};
-std::chrono::steady_clock::time_point g_ptraceQuietUntil{};
 
 constexpr size_t kMaxEspTargets = 32;
 
@@ -113,7 +104,7 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
     uintptr_t entries = 0;
     int count = 0;
     if (!mem_read(pid, dict + Off::DictEntries, entries) || !entries) return false;
-    if (!mem_read(pid, dict + Off::DictCount, count) || count <= 0 || count > 512) return false;
+    if (!mem_read(pid, dict + Off::DictCount, count) || count <= 0 || count > 256) return false;
     if (maxOut > 0 && count > maxOut) count = maxOut;
     int maxLength = 0;
     if (!mem_read(pid, entries + Off::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
@@ -524,12 +515,35 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
     return klass != 0;
 }
 
+static void ensure_bm_statics(pid_t pid) {
+    if (g_bmStatics || !g_bmKlass) return;
+    for (uintptr_t off : Off::StaticFieldOffs) {
+        uintptr_t st = 0;
+        if (mem_read(pid, g_bmKlass + off, st) && mem_ptr_ok(st)) {
+            g_bmStatics = st;
+            break;
+        }
+    }
+}
+
 static void refresh_instance(pid_t pid) {
+    ensure_bm_statics(pid);
     if (!g_bmStatics) return;
     uintptr_t inst = 0;
-    if (mem_read(pid, g_bmStatics + Off::InstanceStatic, inst) && mem_ptr_ok(inst))
+    if (mem_read(pid, g_bmStatics + Off::InstanceStatic, inst) && mem_ptr_ok(inst)) {
         g_bmInstance = inst;
+        return;
+    }
+    for (uintptr_t off = 0; off <= 0x38; off += sizeof(uintptr_t)) {
+        if (!mem_read(pid, g_bmStatics + off, inst) || !mem_ptr_ok(inst)) continue;
+        if (bm_instance_sane(pid, inst)) {
+            g_bmInstance = inst;
+            return;
+        }
+    }
 }
+
+static void clear_bm_instance_only() { g_bmInstance = 0; }
 
 } // namespace
 
@@ -538,8 +552,6 @@ void esp_reset() {
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
     g_resolved = false;
-    g_metadataReady = false;
-    g_haveCachedIl2 = false;
     esp_camera_reset();
 }
 
@@ -548,15 +560,9 @@ EspStatus esp_attach(pid_t pid) {
     g_pid = pid;
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
     g_resolved = false;
-    g_metadataReady = false;
-    g_haveCachedIl2 = false;
-    g_cachedIl2 = RemoteIl2CppInfo{};
-    g_noReadStrikes = 0;
     if (pid <= 0) return EspStatus::NoProcess;
     return EspStatus::Idle;
 }
-
-void esp_request_force_resolve() { g_forceFullResolve.store(true); }
 
 static void fill_report(EspResolveReport &r, EspStatus status, int mapsCount, bool probe,
                         const BmFindMeta &meta, uintptr_t klass, uintptr_t statics,
@@ -596,22 +602,6 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         if (reportOut) *reportOut = rep;
         return rep.status;
     }
-    if (!proc_is_mlbb_unity(g_pid)) {
-        rep.status = EspStatus::NoBattleManager;
-        std::snprintf(rep.detail, sizeof(rep.detail),
-                      "wrong process pid=%d — need UnityKillsMe / liblogic (not launcher only)",
-                      (int)g_pid);
-        g_lastReport = rep;
-        if (reportOut) *reportOut = rep;
-        return rep.status;
-    }
-    const bool force = g_forceFullResolve.exchange(false);
-    const auto nowResolve = std::chrono::steady_clock::now();
-    if (!force && g_metadataReady && g_lastFullResolve.time_since_epoch().count() != 0 &&
-        nowResolve - g_lastFullResolve < std::chrono::seconds(4)) {
-        if (reportOut) *reportOut = g_lastReport;
-        return g_lastReport.status;
-    }
     std::vector<MapsReg> maps;
     if (!mem_maps(g_pid, maps)) {
         rep.status = EspStatus::NoRead;
@@ -631,48 +621,29 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     g_il2_for_resolve = &il2;
 
     ConrentResolve cr{};
-    const bool crMeta =
-        conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.metadata_ready;
+    const bool crOk =
+        conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.battle_manager;
     esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
                               cr.camera_w2s_method);
-    if (crMeta) {
+    if (crOk) {
         g_il2_for_resolve = nullptr;
-        g_cachedIl2 = il2;
-        g_haveCachedIl2 = il2.sym_domain_get != 0;
-        g_metadataReady = true;
         g_bmKlass = cr.battle_manager_klass;
-        g_bmStatics = 0;
+        g_bmStatics = cr.battle_manager_statics;
         g_bmInstance = cr.battle_manager;
         g_resolved = true;
         BmFindMeta meta{};
         meta.usedElf = false;
-        const EspStatus st =
-            cr.battle_manager ? EspStatus::Ready : EspStatus::NoInstance;
-        fill_report(rep, st, (int)maps.size(), probe, meta, cr.battle_manager_klass, 0,
-                    cr.battle_manager);
+        fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, cr.battle_manager_klass,
+                    0, cr.battle_manager);
         std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1: %s", cr.detail);
-        ui_log("[resolve] %s", cr.detail);
-        g_lastFullResolve = nowResolve;
-        g_ptraceQuietUntil = nowResolve + std::chrono::seconds(6);
+        ui_log("[resolve] OK %s", cr.detail);
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;
     }
-    if (cr.detail[0]) ui_log("[resolve] conRent path: %s", cr.detail);
-
-    if (!il2.sym_domain_get) {
-        g_il2_for_resolve = nullptr;
-        g_resolved = false;
-        BmFindMeta meta{};
-        fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, 0, 0, 0);
-        std::snprintf(rep.detail, sizeof(rep.detail),
-                      "no il2cpp in pid=%d — wait for UnityKillsMe after match load (no heap scan)",
-                      (int)g_pid);
-        g_lastReport = rep;
-        if (reportOut) *reportOut = rep;
-        return rep.status;
-    }
+    if (!cr.battle_manager && cr.detail[0])
+        ui_log("[resolve] conRent path: %s", cr.detail);
 
     BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;
@@ -704,8 +675,6 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     g_resolved = true;
     const EspStatus stOut = inst ? EspStatus::Ready : EspStatus::NoInstance;
     fill_report(rep, stOut, (int)maps.size(), probe, meta, k, st, inst);
-    g_lastFullResolve = nowResolve;
-    g_ptraceQuietUntil = nowResolve + std::chrono::seconds(6);
     g_lastReport = rep;
     if (reportOut) *reportOut = rep;
     return stOut;
@@ -713,13 +682,6 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
 
 const EspResolveReport &esp_last_resolve_report() {
     return g_lastReport;
-}
-
-static void invalidate_all_locked() {
-    g_bmInstance = 0;
-    g_resolved = false;
-    g_metadataReady = false;
-    g_haveCachedIl2 = false;
 }
 
 EspStatus esp_tick(EspFrame &out) {
@@ -733,67 +695,34 @@ EspStatus esp_tick(EspFrame &out) {
     }
     if (!proc_alive(g_pid)) {
         out.status = EspStatus::NoRead;
-        std::snprintf(out.hint, sizeof(out.hint), "Process died — waiting for UnityKillsMe");
-        invalidate_all_locked();
-        g_noReadStrikes = 0;
+        std::snprintf(out.hint, sizeof(out.hint), "Process died");
         return out.status;
     }
-    if (!proc_probe_read(g_pid)) {
-        ++g_noReadStrikes;
-        out.status = EspStatus::NoRead;
-        std::snprintf(out.hint, sizeof(out.hint),
-                      g_noReadStrikes >= 12 ? "Process unreadable" : "Brief read glitch (match load?)");
-        if (g_noReadStrikes >= 12)
-            invalidate_all_locked();
-        return out.status;
-    }
-    g_noReadStrikes = 0;
-    if (!g_resolved || !g_metadataReady) {
+    if (!g_resolved) {
         out.status = EspStatus::NoBattleManager;
-        std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (lobby or match)");
+        std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (in match)");
         return out.status;
     }
 
-    static auto s_lastInstRefresh = std::chrono::steady_clock::time_point{};
-    const auto nowRefresh = std::chrono::steady_clock::now();
-    const bool ptraceAllowed = nowRefresh >= g_ptraceQuietUntil;
-    const bool doInstRefresh =
-        ptraceAllowed && g_bmKlass && g_haveCachedIl2 &&
-        (s_lastInstRefresh.time_since_epoch().count() == 0 ||
-         nowRefresh - s_lastInstRefresh > std::chrono::milliseconds(900));
-    if (doInstRefresh) {
-        s_lastInstRefresh = nowRefresh;
-        uintptr_t inst = 0;
-        if (conrent_refresh_battle_instance(g_pid, g_cachedIl2, g_bmKlass, inst) && inst)
-            g_bmInstance = inst;
-    }
-    if (!g_bmInstance && g_bmStatics)
-        refresh_instance(g_pid);
-    else if (!g_bmInstance)
-        refresh_instance(g_pid);
-
+    /* conRent DrawOverlay: refresh Instance via memory only — no ptrace on tick */
+    refresh_instance(g_pid);
     uintptr_t bm = g_bmInstance;
     if (!bm || !mem_ptr_ok(bm)) {
         out.status = EspStatus::NoInstance;
-        std::snprintf(out.hint, sizeof(out.hint),
-                      "Metadata cached — enter match (auto Instance refresh)");
-        out.bmKlass = g_bmKlass;
-        return out.status;
-    }
-
-    uintptr_t pDictProbe = 0;
-    if (!mem_read(g_pid, bm + Off::DicPlayerShow, pDictProbe) || !mem_ptr_ok(pDictProbe)) {
-        g_bmInstance = 0;
-        out.status = EspStatus::NoInstance;
-        std::snprintf(out.hint, sizeof(out.hint), "Loading / end game — waiting for BM dict");
-        out.bmKlass = g_bmKlass;
+        std::snprintf(out.hint, sizeof(out.hint), "Waiting for BattleManager (match load)");
         return out.status;
     }
 
     uintptr_t local = 0;
     mem_read(g_pid, bm + Off::LocalPlayerShow, local);
+    if (!local || !mem_ptr_ok(local)) {
+        out.status = EspStatus::NoInstance;
+        std::snprintf(out.hint, sizeof(out.hint), "Waiting for local player (conRent gate)");
+        return out.status;
+    }
+
     Vec3 self{};
-    if (local) mem_read(g_pid, local + Off::LastPosition, self);
+    mem_read(g_pid, local + Off::LastPosition, self);
     out.selfX = self.x;
     out.selfY = self.y;
     out.selfZ = self.z;
@@ -801,9 +730,17 @@ EspStatus esp_tick(EspFrame &out) {
     uintptr_t pDict = 0, mDict = 0;
     mem_read(g_pid, bm + Off::DicPlayerShow, pDict);
     mem_read(g_pid, bm + Off::DicMonsterShow, mDict);
+    if (!pDict || !mem_ptr_ok(pDict)) {
+        clear_bm_instance_only();
+        out.status = EspStatus::NoInstance;
+        std::snprintf(out.hint, sizeof(out.hint), "End match / loading — cached resolve kept");
+        return out.status;
+    }
+
     std::vector<std::pair<int, uintptr_t>> players, monsters;
     dict_entries(g_pid, pDict, players, (int)kMaxEspTargets + 8);
-    dict_entries(g_pid, mDict, monsters, 20);
+    if (mDict && mem_ptr_ok(mDict))
+        dict_entries(g_pid, mDict, monsters, 20);
 
     out.targets.reserve(kMaxEspTargets);
 

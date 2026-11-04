@@ -60,7 +60,5 @@ struct EspResolveReport {
 void esp_reset();
 EspStatus esp_attach(pid_t pid);
 EspStatus esp_resolve(EspResolveReport *reportOut = nullptr);
-/** Next esp_resolve runs full ptrace even if metadata was resolved recently. */
-void esp_request_force_resolve();
 EspStatus esp_tick(EspFrame &out);
 const EspResolveReport &esp_last_resolve_report();
