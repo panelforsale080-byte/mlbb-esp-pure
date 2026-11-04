@@ -1,6 +1,5 @@
 #include "esp_engine.hpp"
 #include "esp_camera.hpp"
-#include "conrent_esp.hpp"
 #include "offsets.hpp"
 #include "proc.hpp"
 #include "remote_il2cpp.hpp"
@@ -18,6 +17,7 @@ static pid_t g_pid = 0;
 static uintptr_t g_bmKlass = 0;
 static uintptr_t g_bmStatics = 0;
 static uintptr_t g_bmInstance = 0;
+static uintptr_t g_bmInstancePin = 0; /* from last good resolve — avoid bad statics refresh */
 static bool g_resolved = false;
 static std::atomic<bool> g_forceResolve{false};
 static EspResolveReport g_lastReport{};
@@ -542,17 +542,75 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
     return klass != 0;
 }
 
-static void refresh_instance(pid_t pid) {
-    if (!g_bmStatics) return;
-    uintptr_t inst = 0;
-    if (mem_read(pid, g_bmStatics + Off::InstanceStatic, inst) && mem_ptr_ok(inst))
-        g_bmInstance = inst;
+/** Memory-only Il2CppClass + static_fields (EspSource / no ptrace). */
+static bool find_klass_statics(pid_t pid, const std::vector<MapsReg> &maps, const char *name,
+                               uintptr_t &klassOut, uintptr_t &staticsOut) {
+    klassOut = staticsOut = 0;
+    std::vector<uintptr_t> strs;
+    scan_strings(pid, maps, name, strs);
+    if (strs.empty()) return false;
+
+    int best = -1;
+    static const uintptr_t kNameOffs[] = {0x10, 0x18, 0x08, 0x20};
+    auto try_cand = [&](uintptr_t cand) {
+        if (!klass_matches_name(pid, cand, name, &strs)) return;
+        uintptr_t st = 0, inst = 0;
+        if (!statics_for(pid, cand, Off::InstanceStatic, st, inst)) return;
+        const int sc = st ? 10 : 1;
+        if (sc > best) {
+            best = sc;
+            klassOut = cand;
+            staticsOut = st;
+        }
+    };
+
+    for (uintptr_t s : strs) {
+        for (uintptr_t nameOff : kNameOffs)
+            try_cand(s - nameOff);
+    }
+    for (const auto &m : maps) {
+        if (m.perms[0] != 'r' || m.perms[1] != 'w') continue;
+        const size_t sz = std::min((size_t)(m.end - m.start), (size_t)8 * 1024 * 1024);
+        const size_t chunk = 256 * 1024;
+        for (size_t off = 0; off < sz; off += chunk) {
+            const size_t n = std::min(chunk, sz - off);
+            std::vector<uint8_t> buf(n);
+            if (!mem_read(pid, m.start + off, buf.data(), n)) continue;
+            for (size_t i = 0; i + 8 <= n; i += 8) {
+                uintptr_t p = 0;
+                std::memcpy(&p, buf.data() + i, 8);
+                bool hit = false;
+                for (uintptr_t s : strs)
+                    if (p == s) { hit = true; break; }
+                if (!hit) continue;
+                for (uintptr_t nameOff : kNameOffs)
+                    try_cand(m.start + off + i - nameOff);
+            }
+        }
+    }
+    return staticsOut != 0;
+}
+
+static uintptr_t pick_battle_manager_instance(pid_t pid) {
+    if (g_bmInstancePin && mem_ptr_ok(g_bmInstancePin)) {
+        if (score_bm(pid, g_bmInstancePin) >= 0) return g_bmInstancePin;
+    }
+    if (g_bmKlass) {
+        uintptr_t st = 0, inst = 0;
+        if (statics_for(pid, g_bmKlass, Off::InstanceStatic, st, inst) && mem_ptr_ok(inst)) {
+            const int sc = score_bm(pid, inst);
+            if (sc >= 0 && (!g_bmInstancePin || sc >= score_bm(pid, g_bmInstancePin)))
+                return inst;
+        }
+    }
+    return g_bmInstancePin ? g_bmInstancePin : g_bmInstance;
 }
 
 void esp_reset() {
     std::lock_guard<std::mutex> lock(g_mu);
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
+    g_bmInstancePin = 0;
     g_resolved = false;
     esp_camera_reset();
 }
@@ -561,6 +619,7 @@ EspStatus esp_attach(pid_t pid) {
     std::lock_guard<std::mutex> lock(g_mu);
     if (pid != g_pid) {
         g_bmKlass = g_bmStatics = g_bmInstance = 0;
+        g_bmInstancePin = 0;
         g_resolved = false;
     }
     g_pid = pid;
@@ -635,43 +694,20 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     merge_il2cpp_into_report(rep, il2);
     g_il2_for_resolve = &il2;
 
-    ConrentResolve cr{};
-    const bool crRan = conrent_resolve_battle_manager(g_pid, maps, il2, cr);
-    /* Always apply Build #49 camera/W2S metadata (even if BM Instance still null). */
-    esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
-    esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
-                              cr.camera_w2s_method);
-    ui_log("[w2s] sbc=0x%llx gm=0x%llx runtime_invoke=%d get_main=0x%llx w2s=0x%llx",
-           (unsigned long long)cr.show_battle_camera_statics,
-           (unsigned long long)cr.game_method_statics, il2.sym_runtime_invoke ? 1 : 0,
-           (unsigned long long)cr.camera_get_main_method,
-           (unsigned long long)cr.camera_w2s_method);
-    const bool crOk = crRan && cr.battle_manager;
-    const bool crMeta = crRan && cr.metadata_ready;
-    if (crOk || crMeta) {
-        g_il2_for_resolve = nullptr;
-        g_bmKlass = cr.battle_manager_klass;
-        g_bmStatics = cr.battle_manager_statics;
-        g_bmInstance = cr.battle_manager;
-        g_resolved = true;
-        BmFindMeta meta{};
-        meta.usedElf = false;
-        const EspStatus st = cr.battle_manager ? EspStatus::Ready : EspStatus::NoInstance;
-        fill_report(rep, st, (int)maps.size(), probe, meta, cr.battle_manager_klass,
-                    cr.battle_manager_statics, cr.battle_manager);
-        std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1: %s", cr.detail);
-        ui_log("[resolve] %s", cr.detail);
-        g_lastReport = rep;
-        if (reportOut) *reportOut = rep;
-        return rep.status;
-    }
-    if (!cr.battle_manager && cr.detail[0])
-        ui_log("[resolve] conRent path: %s", cr.detail);
-
     BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;
+    uintptr_t sbcK = 0, gmK = 0, sbcStatics = 0, gmStatics = 0;
+    find_klass_statics(g_pid, maps, "ShowBattleCamera", sbcK, sbcStatics);
+    find_klass_statics(g_pid, maps, "GameMethod", gmK, gmStatics);
+    if (sbcStatics || gmStatics) {
+        esp_camera_set_static_bases(sbcStatics, gmStatics);
+        ui_log("[w2s] mem-only sbc=0x%llx gm=0x%llx (no ptrace)",
+               (unsigned long long)sbcStatics, (unsigned long long)gmStatics);
+    }
+    esp_camera_set_il2cpp_w2s(0, 0, 0, 0);
+
     if (!find_bm(g_pid, maps, k, st, inst, &meta)) {
-        ui_log("[resolve] no klass/heap — enter classic match, tap Resolve (conRent IL2CPP only)");
+        ui_log("[resolve] no BM — enter classic/training match, Resolve again (mem-only, no ptrace)");
 
         g_il2_for_resolve = nullptr;
         g_resolved = false;
@@ -695,8 +731,11 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     g_bmKlass = k;
     g_bmStatics = st;
     g_bmInstance = inst;
+    g_bmInstancePin = inst;
     g_resolved = true;
     const EspStatus stOut = inst ? EspStatus::Ready : EspStatus::NoInstance;
+    ui_log("[resolve] mem-only BM klass=0x%llx inst=0x%llx statics=0x%llx",
+           (unsigned long long)k, (unsigned long long)inst, (unsigned long long)st);
     fill_report(rep, stOut, (int)maps.size(), probe, meta, k, st, inst);
     g_lastReport = rep;
     if (reportOut) *reportOut = rep;
@@ -728,8 +767,8 @@ EspStatus esp_tick(EspFrame &out) {
         return out.status;
     }
 
-    refresh_instance(g_pid);
-    const uintptr_t bm = g_bmInstance;
+    const uintptr_t bm = pick_battle_manager_instance(g_pid);
+    g_bmInstance = bm;
     if (!bm) {
         out.status = EspStatus::NoInstance;
         std::snprintf(out.hint, sizeof(out.hint), "BattleManager null — enter match");
