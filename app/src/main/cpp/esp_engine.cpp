@@ -608,12 +608,19 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     g_il2_for_resolve = &il2;
 
     ConrentResolve cr{};
-    const bool crOk =
-        conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.battle_manager;
+    const bool crRan = conrent_resolve_battle_manager(g_pid, maps, il2, cr);
+    /* Always apply Build #49 camera/W2S metadata (even if BM Instance still null). */
     esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
                               cr.camera_w2s_method);
-    if (crOk) {
+    ui_log("[w2s] sbc=0x%llx gm=0x%llx runtime_invoke=%d get_main=0x%llx w2s=0x%llx",
+           (unsigned long long)cr.show_battle_camera_statics,
+           (unsigned long long)cr.game_method_statics, il2.sym_runtime_invoke ? 1 : 0,
+           (unsigned long long)cr.camera_get_main_method,
+           (unsigned long long)cr.camera_w2s_method);
+    const bool crOk = crRan && cr.battle_manager;
+    const bool crMeta = crRan && cr.metadata_ready;
+    if (crOk || crMeta) {
         g_il2_for_resolve = nullptr;
         g_bmKlass = cr.battle_manager_klass;
         g_bmStatics = 0;
@@ -621,10 +628,11 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         g_resolved = true;
         BmFindMeta meta{};
         meta.usedElf = false;
-        fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, cr.battle_manager_klass,
-                    0, cr.battle_manager);
+        const EspStatus st = cr.battle_manager ? EspStatus::Ready : EspStatus::NoInstance;
+        fill_report(rep, st, (int)maps.size(), probe, meta, cr.battle_manager_klass, 0,
+                    cr.battle_manager);
         std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1: %s", cr.detail);
-        ui_log("[resolve] OK %s", cr.detail);
+        ui_log("[resolve] %s", cr.detail);
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;

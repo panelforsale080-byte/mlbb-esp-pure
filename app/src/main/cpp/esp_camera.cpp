@@ -39,7 +39,7 @@ static bool g_inFrame = false;
 static uintptr_t g_mainCam = 0;
 static bool g_useIl2 = false;
 static int g_w2sBudget = 0;
-constexpr int kMaxIl2W2sPerFrame = 28;
+constexpr int kMaxIl2W2sPerFrame = 48;
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
@@ -257,19 +257,18 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH) {
 
     g_w2sBudget = kMaxIl2W2sPerFrame;
 
-    /* Matrix first (mem-only, smooth). Il2 W2S only when matrix unavailable (Build #49 accuracy). */
-    if (pid > 0) {
-        if (load_vp_game_method(pid))
-            g_matrixReady = true;
-        else if (load_vp_show_battle_camera(pid))
-            g_matrixReady = true;
-    }
-
-    if (!g_matrixReady && g_il2Ready && pid == g_il2Pid && g_rtInvoke) {
+    if (g_il2Ready && pid == g_il2Pid && g_rtInvoke) {
         if (remote_session_begin_try(pid, g_sess)) {
             g_inFrame = true;
             g_useIl2 = true;
         }
+    }
+
+    if (!g_useIl2 && pid > 0) {
+        if (load_vp_game_method(pid))
+            g_matrixReady = true;
+        else if (load_vp_show_battle_camera(pid))
+            g_matrixReady = true;
     }
 }
 
@@ -283,12 +282,7 @@ void esp_camera_frame_end() {
 
 bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
 
-bool esp_camera_using_matrix() { return g_matrixReady; }
-
-bool esp_camera_using_il2cpp() { return g_useIl2 && !g_matrixReady; }
-
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
-    if (g_matrixReady && matrix_w2s(wx, wy, wz, outX, outY)) return true;
     if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
-    return false;
+    return matrix_w2s(wx, wy, wz, outX, outY);
 }

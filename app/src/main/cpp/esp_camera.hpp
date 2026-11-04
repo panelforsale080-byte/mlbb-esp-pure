@@ -9,6 +9,4 @@ void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t ge
 void esp_camera_frame_begin(pid_t pid, float screenW, float screenH);
 void esp_camera_frame_end();
 bool esp_camera_ready();
-bool esp_camera_using_matrix();
-bool esp_camera_using_il2cpp();
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY);

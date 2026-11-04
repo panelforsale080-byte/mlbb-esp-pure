@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <mutex>
 #include <thread>
@@ -199,8 +200,18 @@ static void draw_ui() {
         fr = g_frame;
     }
     const EspResolveReport &rep = esp_last_resolve_report();
-    const float sw = g_displayW > 0 ? (float)g_displayW : (float)g_width;
-    const float sh = g_displayH > 0 ? (float)g_displayH : (float)g_height;
+    /* W2S must match overlay GL surface (Build #49); real metrics can differ on some devices. */
+    float sw = (float)g_width;
+    float sh = (float)g_height;
+    if (g_displayW > 0 && g_displayH > 0) {
+        const float dw = (float)g_displayW, dh = (float)g_displayH;
+        if (std::fabs(dw - sw) > 8.f || std::fabs(dh - sh) > 8.f) {
+            sw = dw;
+            sh = dh;
+        }
+    }
+    if (sw < 1.f) sw = (float)g_displayW;
+    if (sh < 1.f) sh = (float)g_displayH;
 
     esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
 
@@ -209,7 +220,7 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("Overlay — open MLBB, allow display over apps, enter match.");
+        ImGui::TextDisabled("Build 46 overlay + Build 49 W2S (matrix, then IL2CPP fallback).");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 

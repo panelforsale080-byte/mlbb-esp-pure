@@ -112,15 +112,11 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
         return;
     }
 
-    if (esp_camera_using_matrix()) {
-        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200), "W2S matrix");
-    } else if (esp_camera_using_il2cpp()) {
-        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 200, 255, 200), "W2S IL2CPP (#49)");
-    } else if (esp_camera_ready()) {
-        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(180, 180, 180, 200), "W2S");
+    if (esp_camera_ready()) {
+        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200), "ESP W2S (conRent cam)");
     } else {
         draw->AddText(ImVec2(16.f, 56.f), IM_COL32(220, 160, 80, 200),
-                      "radar fallback — Resolve + UnityKillsMe");
+                      "ESP radar fallback — Resolve in match");
     }
 
     for (const EspTarget &t : frame.targets) {
