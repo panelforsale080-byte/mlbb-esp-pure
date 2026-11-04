@@ -2,6 +2,7 @@
 #include "esp_camera.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <unordered_map>
 

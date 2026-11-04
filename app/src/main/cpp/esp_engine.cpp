@@ -10,25 +10,25 @@
 #include <cmath>
 #include <cstring>
 #include <elf.h>
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <mutex>
 
-namespace {
-
-std::mutex g_mu;
-pid_t g_pid = 0;
-uintptr_t g_bmKlass = 0;
-uintptr_t g_bmStatics = 0;
-uintptr_t g_bmInstance = 0;
-bool g_resolved = false;
-bool g_metadataReady = false;
-RemoteIl2CppInfo g_cachedIl2{};
-bool g_haveCachedIl2 = false;
-EspResolveReport g_lastReport{};
-const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
-std::atomic<bool> g_forceResolve{false};
+static std::mutex g_mu;
+static pid_t g_pid = 0;
+static uintptr_t g_bmKlass = 0;
+static uintptr_t g_bmStatics = 0;
+static uintptr_t g_bmInstance = 0;
+static bool g_resolved = false;
+static bool g_metadataReady = false;
+static RemoteIl2CppInfo g_cachedIl2{};
+static bool g_haveCachedIl2 = false;
+static EspResolveReport g_lastReport{};
+static const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
+static std::atomic<bool> g_forceResolve{false};
+static EspFrame g_lastStableFrame{};
+static int g_readFailStreak = 0;
+static int g_dictFailStreak = 0;
 
 constexpr size_t kMaxEspTargets = 32;
 
@@ -166,12 +166,12 @@ static void ramp_limits(int &maxMon, int &maxHero) {
     const auto sec = std::chrono::duration_cast<std::chrono::seconds>(
                          std::chrono::steady_clock::now() - g_rampT0)
                          .count();
-    maxMon = (int)std::min<int64_t>(14, 2 + sec / 2);
+    maxMon = (int)std::min<int64_t>(14LL, 2LL + sec / 2);
     if (sec < 6) {
         maxHero = 0;
         return;
     }
-    maxHero = (int)std::min<int64_t>(10, (sec - 6) / 2);
+    maxHero = (int)std::min<int64_t>(10LL, (sec - 6) / 2);
 }
 
 static bool statics_for(pid_t pid, uintptr_t klass, uintptr_t instOff,
@@ -542,8 +542,6 @@ static void refresh_instance(pid_t pid) {
         g_bmInstance = inst;
 }
 
-} // namespace
-
 void esp_reset() {
     std::lock_guard<std::mutex> lock(g_mu);
     g_pid = 0;
@@ -713,10 +711,6 @@ static void invalidate_all_locked() {
     g_metadataReady = false;
     g_haveCachedIl2 = false;
 }
-
-static EspFrame g_lastStableFrame{};
-static int g_readFailStreak = 0;
-static int g_dictFailStreak = 0;
 
 EspStatus esp_tick(EspFrame &out) {
     std::lock_guard<std::mutex> lock(g_mu);
