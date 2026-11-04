@@ -215,13 +215,22 @@ static int score_bm_heap(pid_t pid, uintptr_t bm) {
 
 static bool map_is_game_heap(const MapsReg &m) {
     if (m.perms[0] != 'r' || m.perms[1] != 'w' || m.end <= m.start) return false;
-    if ((size_t)(m.end - m.start) < 64 * 1024) return false;
+    const size_t sz = (size_t)(m.end - m.start);
+    if (sz < 64 * 1024 || sz > 256 * 1024 * 1024) return false;
     if (m.start < 0x100000000ULL) return false;
-    if (m.path.find(".so") != std::string::npos) return false;
-    if (m.path.find("liblogic") != std::string::npos) return false;
-    if (m.path.find("il2cpp") != std::string::npos) return false;
-    return m.path.empty() || m.path[0] == '[' || m.path.find("[anon:") != std::string::npos ||
-           m.start >= 0x7400000000ULL;
+    const std::string &p = m.path;
+    if (p.find(".so") != std::string::npos) return false;
+    if (p.find("liblogic") != std::string::npos) return false;
+    if (p.find("il2cpp") != std::string::npos) return false;
+    if (p.find("stack") != std::string::npos) return false;
+    if (p.find("/dev/") == 0) return false;
+    if (m.start >= 0x7000000000ULL) return true;
+    if (p.empty() || p[0] == '[') return true;
+    if (p.find("[anon:") != std::string::npos) return true;
+    if (p.find("dalvik") != std::string::npos) return true;
+    if (p.find("gspace") != std::string::npos || p.find("GSpace") != std::string::npos)
+        return true;
+    return false;
 }
 
 static bool heap_find_battle_manager(pid_t pid, const std::vector<MapsReg> &maps,

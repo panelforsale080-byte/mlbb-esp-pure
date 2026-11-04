@@ -1,6 +1,7 @@
 #include "esp_camera.hpp"
 #include "mem.hpp"
 #include "offsets.hpp"
+#include "ui_log.hpp"
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -230,6 +231,8 @@ void esp_camera_update(pid_t pid, float screenW, float screenH) {
         g_classesSearched = true;
         find_class_statics(pid, "ShowBattleCamera", g_sbcStatics);
         find_class_statics(pid, "GameMethod", g_gmStatics);
+        ui_log("[esp] camera statics sbc=0x%llx gm=0x%llx",
+               (unsigned long long)g_sbcStatics, (unsigned long long)g_gmStatics);
     }
 
     if (load_vp_game_method(pid))

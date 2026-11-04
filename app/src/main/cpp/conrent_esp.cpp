@@ -190,8 +190,13 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
     out.runtime_ready = true;
     il2.domain_ptr = domain;
 
-    const uintptr_t klass =
-        find_class_conrent(s, pid, il2, "BattleManager", asmCount, assemblies);
+    uintptr_t klass = find_class_conrent(s, pid, il2, "BattleManager", asmCount, assemblies);
+    if (!klass && il2.sym_thread_attach) {
+        uintptr_t thr = 0;
+        remote_session_call(s, il2.sym_thread_attach, {domain}, thr);
+        klass = find_class_conrent(s, pid, il2, "BattleManager", asmCount, assemblies);
+        if (klass) ui_log("[conrent] FindClass OK on retry (thread re-attach)");
+    }
     if (!klass) {
         std::snprintf(out.detail, sizeof(out.detail),
                       "FindClass(BattleManager) failed (%zu assemblies)", asmCount);
