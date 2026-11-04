@@ -1,4 +1,5 @@
 #include "esp_engine.hpp"
+#include "esp_camera.hpp"
 #include "conrent_esp.hpp"
 #include "offsets.hpp"
 #include "proc.hpp"
@@ -498,6 +499,7 @@ void esp_reset() {
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
     g_resolved = false;
+    esp_camera_reset();
 }
 
 EspStatus esp_attach(pid_t pid) {
@@ -672,6 +674,7 @@ EspStatus esp_tick(EspFrame &out) {
     Vec3 self{};
     if (local) mem_read(g_pid, local + Off::LastPosition, self);
     out.selfX = self.x;
+    out.selfY = self.y;
     out.selfZ = self.z;
 
     uintptr_t pDict = 0, mDict = 0;
@@ -693,6 +696,7 @@ EspStatus esp_tick(EspFrame &out) {
         if (!mem_read(g_pid, v + Off::LastPosition, pos) || !pos_ok(pos)) return;
         EspTarget t{};
         t.worldX = pos.x;
+        t.worldY = pos.y;
         t.worldZ = pos.z;
         t.relX = pos.x - self.x;
         t.relZ = pos.z - self.z;

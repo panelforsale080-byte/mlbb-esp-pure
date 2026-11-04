@@ -14,7 +14,7 @@ enum class EspStatus : int {
 };
 
 struct EspTarget {
-    float worldX = 0, worldZ = 0;
+    float worldX = 0, worldY = 0, worldZ = 0;
     float relX = 0, relZ = 0;
     int meters = 0;
     int hp = 0, hpMax = 0;
@@ -26,7 +26,7 @@ struct EspFrame {
     EspStatus status = EspStatus::Idle;
     pid_t pid = 0;
     char hint[96] = {};
-    float selfX = 0, selfZ = 0;
+    float selfX = 0, selfY = 0, selfZ = 0;
     std::vector<EspTarget> targets;
     /* live read diagnostics (shown in UI log panel) */
     int mapsCount = 0;

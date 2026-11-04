@@ -1,4 +1,5 @@
 #include "esp_draw.hpp"
+#include "esp_camera.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -16,7 +17,7 @@ static void entity_box(ImDrawList *draw, const ImVec2 &a, const ImVec2 &b, ImU32
     draw->AddRect(a, b, col, r, 0, 1.6f);
 }
 
-static ImVec2 world_to_screen(float relX, float relZ, float screenW, float screenH) {
+static ImVec2 world_to_screen_pseudo(float relX, float relZ, float screenW, float screenH) {
     constexpr float kRange = 45.f;
     const float cx = screenW * 0.5f;
     const float cy = screenH * 0.48f;
@@ -29,6 +30,20 @@ static ImVec2 world_to_screen(float relX, float relZ, float screenW, float scree
     return {x, y};
 }
 
+static ImVec2 target_screen(const EspFrame &frame, const EspTarget &t, float screenW, float screenH) {
+    float sx = 0.f, sy = 0.f;
+    if (esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy))
+        return {sx, sy};
+    return world_to_screen_pseudo(t.relX, t.relZ, screenW, screenH);
+}
+
+static ImVec2 self_screen(const EspFrame &frame, float screenW, float screenH) {
+    float sx = 0.f, sy = 0.f;
+    if (esp_camera_world_to_screen(frame.selfX, frame.selfY, frame.selfZ, sx, sy))
+        return {sx, sy};
+    return {screenW * 0.5f, screenH * 0.82f};
+}
+
 static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
                      const EspTarget &t, const EspFeatures &feat, bool monster) {
     const bool anyBox = monster ? feat.monsterBox : feat.box;
@@ -36,14 +51,14 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
     const bool anyHp = monster ? feat.monsterHealth : feat.health;
     if (!anyBox && !anyName && !anyHp && !feat.line && !feat.distance) return;
 
-    const ImVec2 root = world_to_screen(t.relX, t.relZ, screenW, screenH);
+    const ImVec2 root = target_screen(frame, t, screenW, screenH);
     const float boxH = std::fabs(screenH / (monster ? 6.8f : 6.5f));
     const float boxW = boxH * (monster ? 0.55f : 0.48f);
     const ImVec2 boxStart{root.x - boxW * 0.5f, root.y - boxH};
     const ImVec2 boxEnd{boxStart.x + boxW, boxStart.y + boxH};
     const float centerX = root.x;
 
-    const ImVec2 selfAnchor(screenW * 0.5f, screenH * 0.82f);
+    const ImVec2 selfAnchor = self_screen(frame, screenW, screenH);
 
     if (feat.line && !monster) {
         draw->AddLine(selfAnchor, root, IM_COL32(255, 255, 255, 180), 1.5f);
@@ -87,10 +102,18 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     if (!draw || screenW < 1.f || screenH < 1.f) return;
     if (frame.status != EspStatus::Ready) return;
 
+    esp_camera_update(frame.pid, screenW, screenH);
+
     const bool anyPlayer = feat.box || feat.line || feat.health || feat.name || feat.distance;
     const bool anyMon =
         feat.monsterBox || feat.monsterName || feat.monsterHealth;
     if (!anyPlayer && !anyMon) return;
+
+    if (esp_camera_ready()) {
+        char dbg[48];
+        std::snprintf(dbg, sizeof(dbg), "ESP cam W2S");
+        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200), dbg);
+    }
 
     for (const EspTarget &t : frame.targets) {
         if (t.kind == 0 && anyPlayer) draw_one(draw, screenW, screenH, frame, t, feat, false);
