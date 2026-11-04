@@ -107,11 +107,14 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
         feat.monsterBox || feat.monsterName || feat.monsterHealth;
     if (!anyPlayer && !anyMon) return;
 
-    const bool allowIl2 = !frame.targets.empty();
-    esp_camera_frame_begin(frame.pid, screenW, screenH, allowIl2);
+    const bool haveSelf = std::isfinite(frame.selfX) && std::isfinite(frame.selfZ) &&
+                        (std::fabs(frame.selfX) > 0.01f || std::fabs(frame.selfZ) > 0.01f);
+    esp_camera_frame_begin(frame.pid, screenW, screenH, frame.selfX, frame.selfY, frame.selfZ,
+                           haveSelf);
 
     if (esp_camera_ready()) {
-        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200), "ESP W2S (IL2 + matrix fallback)");
+        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200),
+                      "ESP W2S (memory, no ptrace)");
     } else {
         draw->AddText(ImVec2(16.f, 56.f), IM_COL32(220, 160, 80, 200),
                       "ESP radar fallback — Resolve in match");

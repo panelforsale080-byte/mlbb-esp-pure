@@ -1,8 +1,6 @@
 #include "esp_camera.hpp"
 #include "mem.hpp"
 #include "proc.hpp"
-#include "remote_call.hpp"
-#include "ui_log.hpp"
 #include <cmath>
 
 namespace {
@@ -28,19 +26,7 @@ static bool g_matrixReady = false;
 static Matrix4x4 g_viewProj;
 static float g_screenW = 0.f;
 static float g_screenH = 0.f;
-
-static pid_t g_il2Pid = 0;
-static uintptr_t g_rtInvoke = 0;
-static uintptr_t g_getMainMi = 0;
-static uintptr_t g_w2sMi = 0;
-static bool g_il2Ready = false;
-
-static RemoteSession g_sess{};
-static bool g_inFrame = false;
-static uintptr_t g_mainCam = 0;
-static bool g_useIl2 = false;
-static int g_w2sBudget = 0;
-constexpr int kMaxIl2W2sPerFrame = 48;
+static int g_w2sMethodTag = 0; /* debug: which memory path won */
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
@@ -61,22 +47,29 @@ static void normalize_landscape(float &w, float &h) {
     }
 }
 
-static bool load_vp_game_method(pid_t pid) {
-    if (!g_gmStatics) return false;
-    uintptr_t smooth = 0;
-    if (!mem_read(pid, g_gmStatics + 0x10, smooth) || !mem_ptr_ok(smooth)) return false;
-    return mem_read(pid, smooth + 0x5C, g_viewProj);
+static bool matrix_finite(const Matrix4x4 &mat) {
+    for (float v : mat.m) {
+        if (!std::isfinite(v)) return false;
+    }
+    return true;
 }
 
-static bool load_vp_show_battle_camera(pid_t pid) {
-    if (!g_sbcStatics) return false;
-    Vec3 pos{};
-    Quat rot{};
-    int fov = 0;
-    if (!mem_read(pid, g_sbcStatics + 0x10, pos)) return false;
-    if (!mem_read(pid, g_sbcStatics + 0x58, rot)) return false;
-    mem_read(pid, g_sbcStatics + 0x8C, fov);
-    if (fov < 10 || fov > 120) fov = 40;
+static bool matrix_w2s_impl(const Matrix4x4 &vp, float wx, float wy, float wz, float sw, float sh,
+                            float &outX, float &outY) {
+    Vec3 p{wx, wy, wz};
+    float cx, cy, cz, cw;
+    vp.multiply_point(p, cx, cy, cz, cw);
+    if (cw <= 0.001f) return false;
+    const float ndcX = cx / cw;
+    const float ndcY = cy / cw;
+    outX = (ndcX + 1.f) * 0.5f * sw;
+    outY = (1.f - ndcY) * 0.5f * sh;
+    return std::isfinite(outX) && std::isfinite(outY);
+}
+
+static bool build_vp_from_pos_quat(const Vec3 &pos, const Quat &rot, int fovDeg, float aspect,
+                                   Matrix4x4 &out) {
+    if (fovDeg < 10 || fovDeg > 120) fovDeg = 40;
     if (!std::isfinite(pos.x) || !std::isfinite(rot.w)) return false;
 
     float fx, fy, fz, ux, uy, uz;
@@ -116,9 +109,8 @@ static bool load_vp_show_battle_camera(pid_t pid) {
     view.m[11] = 0;
     view.m[15] = 1;
 
-    const float aspect = (g_screenW > 0.f && g_screenH > 0.f) ? (g_screenW / g_screenH) : (16.f / 9.f);
     const float nearP = 0.3f, farP = 2000.f;
-    const float t = 1.f / std::tan((float)fov * 0.5f * 3.14159265f / 180.f);
+    const float t = 1.f / std::tan((float)fovDeg * 0.5f * 3.14159265f / 180.f);
     Matrix4x4 proj{};
     proj.m[0] = t / aspect;
     proj.m[5] = t;
@@ -136,85 +128,184 @@ static bool load_vp_show_battle_camera(pid_t pid) {
                                  proj.m[3 * 4 + row] * view.m[c * 4 + 3];
         }
     }
-    g_viewProj = vp;
+    out = vp;
+    return matrix_finite(out);
+}
+
+static bool read_sbc_fov(pid_t pid, int &fov) {
+    fov = 40;
+    if (!g_sbcStatics) return false;
+    mem_read(pid, g_sbcStatics + 0x8C, fov);
+    if (fov < 10 || fov > 120) fov = 40;
     return true;
 }
 
-static bool read_vec3_from_object(pid_t pid, uintptr_t obj, float &x, float &y, float &z) {
-    if (!mem_ptr_ok(obj)) return false;
-    for (uintptr_t off : {0x10u, 0x14u, 0x18u, 0x20u, 0x24u, 0x28u}) {
-        Vec3 v{};
-        if (!mem_read(pid, obj + off, v)) continue;
-        if (std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z)) {
-            x = v.x;
-            y = v.y;
-            z = v.z;
-            return true;
-        }
-    }
-    return false;
+static bool read_smooth_follow(pid_t pid, uintptr_t &smooth, Vec3 &pos, Quat &rot) {
+    smooth = 0;
+    if (!g_gmStatics) return false;
+    if (!mem_read(pid, g_gmStatics + 0x10, smooth) || !mem_ptr_ok(smooth)) return false;
+    if (!mem_read(pid, smooth + 0x1E4, pos)) return false;
+    if (!mem_read(pid, smooth + 0x7C, rot)) return false;
+    return std::isfinite(pos.x) && std::isfinite(rot.w);
 }
 
-static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &outY) {
-    if (!g_inFrame || !g_useIl2 || !g_rtInvoke || !g_w2sMi || g_il2Pid <= 0) return false;
-    if (g_w2sBudget <= 0) return false;
-    --g_w2sBudget;
+static bool read_sbc_camera(pid_t pid, Vec3 &pos, Quat &rot) {
+    if (!g_sbcStatics) return false;
+    if (!mem_read(pid, g_sbcStatics + 0x10, pos)) return false;
+    if (!mem_read(pid, g_sbcStatics + 0x58, rot)) return false;
+    return std::isfinite(pos.x) && std::isfinite(rot.w);
+}
 
-    if (!mem_ptr_ok(g_mainCam)) {
-        uintptr_t cam = 0;
-        if (!remote_session_call(g_sess, g_rtInvoke, {g_getMainMi, 0, 0, 0}, cam)) {
-            g_useIl2 = false;
-            return false;
+static bool resolve_camera_object(pid_t pid, uintptr_t &camObj) {
+    camObj = 0;
+    if (!g_gmStatics) return false;
+    mem_read(pid, g_gmStatics + 0x40, camObj); /* currentCameraInFight */
+    if (mem_ptr_ok(camObj)) return true;
+    mem_read(pid, g_gmStatics + 0x8, camObj); /* m_Camra */
+    if (mem_ptr_ok(camObj)) return true;
+    uintptr_t smooth = 0;
+    if (mem_read(pid, g_gmStatics + 0x10, smooth) && mem_ptr_ok(smooth))
+        mem_read(pid, smooth + 0x48, camObj); /* m_MainCamera */
+    return mem_ptr_ok(camObj);
+}
+
+static bool matrix_looks_like_clip(const Matrix4x4 &m) {
+    if (!matrix_finite(m)) return false;
+    float sum = 0.f;
+    for (float v : m.m) sum += std::fabs(v);
+    if (sum < 0.05f) return false;
+    if (std::fabs(m.m[15]) > 2.f && m.m[15] != 0.f) return false;
+    return true;
+}
+
+static float calibrate_vp_score(const Matrix4x4 &vp, float rx, float ry, float rz, float sw,
+                                float sh) {
+    float ox = 0.f, oy = 0.f;
+    if (!matrix_w2s_impl(vp, rx, ry, rz, sw, sh, ox, oy)) return 1e6f;
+    const float ex = sw * 0.5f;
+    const float ey = sh * 0.78f;
+    return std::fabs(ox - ex) + std::fabs(oy - ey);
+}
+
+struct VpCandidate {
+    Matrix4x4 vp{};
+    int tag = 0;
+};
+
+static bool try_native_clip_matrix(pid_t pid, float rx, float ry, float rz, bool haveRef,
+                                   Matrix4x4 &out, int &tag) {
+    uintptr_t camObj = 0;
+    if (!resolve_camera_object(pid, camObj)) return false;
+    uintptr_t native = 0;
+    if (!mem_read(pid, camObj + 0x10, native) || native < 0x10000) return false;
+
+    float bestScore = 1e6f;
+    Matrix4x4 best{};
+    bool found = false;
+
+    for (uintptr_t off = 0x80; off <= 0x720; off += 0x10) {
+        Matrix4x4 cand{};
+        if (!mem_read(pid, native + off, cand)) continue;
+        if (!matrix_looks_like_clip(cand)) continue;
+
+        if (haveRef) {
+            const float sc = calibrate_vp_score(cand, rx, ry, rz, g_screenW, g_screenH);
+            if (sc < bestScore) {
+                bestScore = sc;
+                best = cand;
+                found = true;
+            }
+        } else if (std::fabs(cand.m[11]) > 0.5f || std::fabs(cand.m[10]) > 0.01f) {
+            best = cand;
+            found = true;
+            break;
         }
-        g_mainCam = cam;
-    }
-    if (!mem_ptr_ok(g_mainCam)) return false;
-
-    const uintptr_t vecSlot = remote_session_scratch(g_sess, 0, 16);
-    const uintptr_t paramSlot = remote_session_scratch(g_sess, 1, 8);
-    const uintptr_t excSlot = remote_session_scratch(g_sess, 2, 8);
-    if (!vecSlot || !paramSlot || !excSlot) return false;
-
-    const float xyz[3] = {wx, wy, wz};
-    mem_write(g_il2Pid, vecSlot, xyz, sizeof(xyz));
-    mem_write(g_il2Pid, paramSlot, &vecSlot, sizeof(vecSlot));
-    uintptr_t zero = 0;
-    mem_write(g_il2Pid, excSlot, &zero, sizeof(zero));
-
-    uintptr_t ret = 0;
-    if (!remote_session_call(g_sess, g_rtInvoke, {g_w2sMi, g_mainCam, paramSlot, excSlot}, ret)) {
-        g_useIl2 = false;
-        return false;
     }
 
-    float sx = 0.f, sy = 0.f, sz = 0.f;
-    if (!read_vec3_from_object(g_il2Pid, ret, sx, sy, sz)) {
-        if (!mem_read(g_il2Pid, vecSlot, sx) || !mem_read(g_il2Pid, vecSlot + 4, sy) ||
-            !mem_read(g_il2Pid, vecSlot + 8, sz))
-            return false;
+    if (!found) return false;
+    if (haveRef && bestScore > 420.f) return false;
+    out = best;
+    tag = 4;
+    return true;
+}
+
+static bool pick_memory_vp(pid_t pid, float rx, float ry, float rz, bool haveRef) {
+    const float aspect =
+        (g_screenW > 0.f && g_screenH > 0.f) ? (g_screenW / g_screenH) : (16.f / 9.f);
+
+    int fov = 40;
+    read_sbc_fov(pid, fov);
+
+    Vec3 sbcPos{}, sfPos{};
+    Quat sbcRot{}, sfRot{};
+    const bool haveSbc = read_sbc_camera(pid, sbcPos, sbcRot);
+    uintptr_t smooth = 0;
+    const bool haveSf = read_smooth_follow(pid, smooth, sfPos, sfRot);
+
+    VpCandidate cands[6];
+    int n = 0;
+
+    auto push = [&](int tag, const Vec3 &p, const Quat &q) {
+        if (n >= 6) return;
+        if (build_vp_from_pos_quat(p, q, fov, aspect, cands[n].vp)) {
+            cands[n].tag = tag;
+            ++n;
+        }
+    };
+
+    if (haveSf) push(1, sfPos, sfRot);
+    if (haveSbc) push(2, sbcPos, sbcRot);
+    if (haveSf && haveSbc) {
+        push(3, sfPos, sbcRot);
+        push(5, sbcPos, sfRot);
     }
 
-    if (sz > 0.f) {
-        outX = sx;
-        outY = g_screenH - sy;
+    Matrix4x4 nativeVp{};
+    int nativeTag = 0;
+    if (try_native_clip_matrix(pid, rx, ry, rz, haveRef, nativeVp, nativeTag) && n < 6) {
+        cands[n].vp = nativeVp;
+        cands[n].tag = nativeTag;
+        ++n;
+    }
+
+    if (n == 0) return false;
+
+    int pick = 0;
+    if (haveRef && std::isfinite(rx) && std::isfinite(rz) &&
+        (std::fabs(rx) > 0.5f || std::fabs(rz) > 0.5f)) {
+        float best = 1e6f;
+        for (int i = 0; i < n; ++i) {
+            const float sc = calibrate_vp_score(cands[i].vp, rx, ry, rz, g_screenW, g_screenH);
+            if (sc < best) {
+                best = sc;
+                pick = i;
+            }
+        }
+        if (best > 480.f && haveSf) {
+            for (int i = 0; i < n; ++i) {
+                if (cands[i].tag == 1) {
+                    pick = i;
+                    break;
+                }
+            }
+        }
     } else {
-        outX = g_screenW - sx;
-        outY = sy;
+        for (int i = 0; i < n; ++i) {
+            if (cands[i].tag == 1) {
+                pick = i;
+                break;
+            }
+        }
     }
-    return std::isfinite(outX) && std::isfinite(outY);
+
+    g_viewProj = cands[pick].vp;
+    g_w2sMethodTag = cands[pick].tag;
+    return true;
 }
 
 static bool matrix_w2s(float wx, float wy, float wz, float &outX, float &outY) {
     if (!g_matrixReady) return false;
-    Vec3 p{wx, wy, wz};
-    float cx, cy, cz, cw;
-    g_viewProj.multiply_point(p, cx, cy, cz, cw);
-    if (cw <= 0.001f) return false;
-    const float ndcX = cx / cw;
-    const float ndcY = cy / cw;
-    outX = (ndcX + 1.f) * 0.5f * g_screenW;
-    outY = (1.f - ndcY) * 0.5f * g_screenH;
-    return std::isfinite(outX) && std::isfinite(outY);
+    return matrix_w2s_impl(g_viewProj, wx, wy, wz, g_screenW, g_screenH, outX, outY);
 }
 
 } // namespace
@@ -223,17 +314,7 @@ void esp_camera_reset() {
     g_sbcStatics = 0;
     g_gmStatics = 0;
     g_matrixReady = false;
-    g_il2Pid = 0;
-    g_rtInvoke = 0;
-    g_getMainMi = 0;
-    g_w2sMi = 0;
-    g_il2Ready = false;
-    g_useIl2 = false;
-    g_mainCam = 0;
-    if (g_inFrame) {
-        remote_session_end(g_sess);
-        g_inFrame = false;
-    }
+    g_w2sMethodTag = 0;
 }
 
 void esp_camera_set_static_bases(uintptr_t showBattleCameraStatics, uintptr_t gameMethodStatics) {
@@ -241,56 +322,28 @@ void esp_camera_set_static_bases(uintptr_t showBattleCameraStatics, uintptr_t ga
     g_gmStatics = gameMethodStatics;
 }
 
-void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t get_main_method,
-                               uintptr_t w2s_method) {
-    g_il2Pid = pid;
-    g_rtInvoke = runtime_invoke;
-    g_getMainMi = get_main_method;
-    g_w2sMi = w2s_method;
-    g_il2Ready = runtime_invoke && get_main_method && w2s_method;
+void esp_camera_set_il2cpp_w2s(pid_t, uintptr_t, uintptr_t, uintptr_t) {
+    /* IL2 ptrace W2S disabled — memory-only path (UnityKillsMe stability). */
 }
 
-void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowIl2Ptrace) {
+void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, float refWorldX,
+                            float refWorldY, float refWorldZ, bool haveRefWorldPos) {
     g_screenW = screenW;
     g_screenH = screenH;
     normalize_landscape(g_screenW, g_screenH);
     g_matrixReady = false;
-    g_useIl2 = false;
-    g_mainCam = 0;
+    g_w2sMethodTag = 0;
 
-    if (g_inFrame) remote_session_end(g_sess);
-    g_inFrame = false;
-
-    g_w2sBudget = kMaxIl2W2sPerFrame;
-
-    /* Build #49: IL2 Camera.WorldToScreenPoint first (accurate), matrix if attach fails. */
-    if (allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
-        proc_alive(pid)) {
-        if (remote_session_begin_try(pid, g_sess)) {
-            g_inFrame = true;
-            g_useIl2 = true;
-        }
-    }
-
-    if (!g_useIl2 && pid > 0 && proc_alive(pid)) {
-        if (load_vp_show_battle_camera(pid))
-            g_matrixReady = true;
-        else if (load_vp_game_method(pid))
+    if (pid > 0 && proc_alive(pid)) {
+        if (pick_memory_vp(pid, refWorldX, refWorldY, refWorldZ, haveRefWorldPos))
             g_matrixReady = true;
     }
 }
 
-void esp_camera_frame_end() {
-    if (g_inFrame) {
-        remote_session_end(g_sess);
-        g_inFrame = false;
-    }
-    g_mainCam = 0;
-}
+void esp_camera_frame_end() {}
 
-bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
+bool esp_camera_ready() { return g_matrixReady; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
-    if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
     return matrix_w2s(wx, wy, wz, outX, outY);
 }
