@@ -729,30 +729,25 @@ EspStatus esp_tick(EspFrame &out) {
         return out.status;
     }
 
-    /* conRent DrawOverlay: refresh Instance via memory only — never replace with junk static read */
-    if (!bm_has_player_dict(g_pid, g_bmInstance))
+    /* Build #49: Instance from ptrace Resolve is authoritative — do not static-refresh over it */
+    if (g_bmInstancePinned)
+        g_bmInstance = g_bmInstancePinned;
+    else if (!g_bmInstance && g_bmStatics)
         refresh_instance(g_pid);
-    uintptr_t bm = g_bmInstance;
-    if (!bm_has_player_dict(g_pid, bm) && g_bmInstancePinned) {
-        try_adopt_bm(g_pid, g_bmInstancePinned);
-        bm = g_bmInstance;
-    }
-    if (!bm || !mem_ptr_ok(bm)) {
+    else if (!g_bmInstancePinned && g_bmStatics)
+        refresh_instance(g_pid);
+
+    const uintptr_t bm = g_bmInstance;
+    if (!bm) {
         out.status = EspStatus::NoInstance;
-        std::snprintf(out.hint, sizeof(out.hint), "Waiting for BattleManager (match load)");
+        std::snprintf(out.hint, sizeof(out.hint), "BattleManager null — enter match");
         return out.status;
     }
 
     uintptr_t local = 0;
     mem_read(g_pid, bm + Off::LocalPlayerShow, local);
-    if (!local || !mem_ptr_ok(local)) {
-        out.status = EspStatus::NoInstance;
-        std::snprintf(out.hint, sizeof(out.hint), "Waiting for local player (conRent gate)");
-        return out.status;
-    }
-
     Vec3 self{};
-    mem_read(g_pid, local + Off::LastPosition, self);
+    if (local) mem_read(g_pid, local + Off::LastPosition, self);
     out.selfX = self.x;
     out.selfY = self.y;
     out.selfZ = self.z;
@@ -760,22 +755,17 @@ EspStatus esp_tick(EspFrame &out) {
     uintptr_t pDict = 0, mDict = 0;
     mem_read(g_pid, bm + Off::DicPlayerShow, pDict);
     mem_read(g_pid, bm + Off::DicMonsterShow, mDict);
-    if (!pDict || !mem_ptr_ok(pDict)) {
-        out.status = EspStatus::NoInstance;
-        std::snprintf(out.hint, sizeof(out.hint), "Player dict not ready — stay in match, wait or Resolve");
-        return out.status;
-    }
-
     std::vector<std::pair<int, uintptr_t>> players, monsters;
-    dict_entries(g_pid, pDict, players, (int)kMaxEspTargets + 8);
-    if (mDict && mem_ptr_ok(mDict))
+    if (pDict)
+        dict_entries(g_pid, pDict, players, (int)kMaxEspTargets + 8);
+    if (mDict)
         dict_entries(g_pid, mDict, monsters, 20);
 
     out.targets.reserve(kMaxEspTargets);
 
     auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
         if (out.targets.size() >= kMaxEspTargets) return;
-        if (!v || !mem_ptr_ok(v)) return;
+        if (!v) return;
         uint8_t dead = 0, camp = 0;
         if (mem_read(g_pid, v + Off::EntityDeath, dead) && dead) return;
         if (mem_read(g_pid, v + Off::SameCamp, camp) && camp) return;
