@@ -1,4 +1,5 @@
 #include "conrent_esp.hpp"
+#include "offsets.hpp"
 #include "remote_call.hpp"
 #include "ui_log.hpp"
 #include <cstring>
@@ -97,6 +98,15 @@ static uintptr_t find_class_conrent(RemoteSession &s, pid_t pid, RemoteIl2CppInf
         if (!remote_session_call(s, il2.sym_class_from_name, {image, nsPtr, namePtr}, klass))
             continue;
         if (mem_ptr_ok(klass)) return klass;
+    }
+    return 0;
+}
+
+static uintptr_t klass_static_fields(pid_t pid, uintptr_t klass) {
+    if (!klass) return 0;
+    for (uintptr_t off : Off::StaticFieldOffs) {
+        uintptr_t st = 0;
+        if (mem_read(pid, klass + off, st) && mem_ptr_ok(st)) return st;
     }
     return 0;
 }
@@ -208,6 +218,17 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
 
     const uintptr_t inst = static_field_ptr(s, pid, il2, klass, "Instance");
     out.battle_manager = inst;
+
+    const uintptr_t sbcKlass =
+        find_class_conrent(s, pid, il2, "ShowBattleCamera", asmCount, assemblies);
+    if (sbcKlass) out.show_battle_camera_statics = klass_static_fields(pid, sbcKlass);
+    const uintptr_t gmKlass =
+        find_class_conrent(s, pid, il2, "GameMethod", asmCount, assemblies);
+    if (gmKlass) out.game_method_statics = klass_static_fields(pid, gmKlass);
+    ui_log("[conrent] camera statics sbc=0x%llx gm=0x%llx",
+           (unsigned long long)out.show_battle_camera_statics,
+           (unsigned long long)out.game_method_statics);
+
     remote_session_end(s);
 
     if (!inst) {

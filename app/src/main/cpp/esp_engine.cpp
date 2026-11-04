@@ -127,6 +127,26 @@ static bool pos_ok(const Vec3 &p) {
         && std::fabs(p.x) <= 10000.f && std::fabs(p.z) <= 10000.f;
 }
 
+static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
+    if (!bm || !mem_ptr_ok(bm)) return false;
+    uintptr_t pDict = 0, mDict = 0;
+    if (!mem_read(pid, bm + Off::DicPlayerShow, pDict) || !mem_ptr_ok(pDict)) return false;
+    mem_read(pid, bm + Off::DicMonsterShow, mDict);
+    if (mDict && !mem_ptr_ok(mDict)) return false;
+    std::vector<std::pair<int, uintptr_t>> players;
+    if (!dict_entries(pid, pDict, players) || players.empty() || players.size() > 20) return false;
+    int usable = 0;
+    for (const auto &kv : players) {
+        if (!kv.second) continue;
+        uint8_t dead = 0, camp = 0;
+        if (mem_read(pid, kv.second + Off::EntityDeath, dead) && dead) continue;
+        if (mem_read(pid, kv.second + Off::SameCamp, camp) && camp) continue;
+        Vec3 pos{};
+        if (mem_read(pid, kv.second + Off::LastPosition, pos) && pos_ok(pos)) ++usable;
+    }
+    return usable > 0;
+}
+
 static bool monster_id(int id) {
     for (int m : Off::kMonsterIds)
         if (m == id) return true;
@@ -583,6 +603,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         g_bmStatics = 0;
         g_bmInstance = cr.battle_manager;
         g_resolved = true;
+        esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
         BmFindMeta meta{};
         meta.usedElf = false;
         fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, cr.battle_manager_klass,
@@ -601,12 +622,14 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     if (!find_bm(g_pid, maps, k, st, inst, &meta)) {
         int heapScore = -1;
         uintptr_t heapBm = 0;
-        if (heap_find_battle_manager(g_pid, maps, heapBm, heapScore)) {
+        if (heap_find_battle_manager(g_pid, maps, heapBm, heapScore) &&
+            bm_instance_sane(g_pid, heapBm)) {
             g_il2_for_resolve = nullptr;
             g_bmKlass = 0;
             g_bmStatics = 0;
             g_bmInstance = heapBm;
             g_resolved = true;
+            esp_camera_set_static_bases(0, 0);
             meta.usedElf = false;
             fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, 0, 0, heapBm);
             std::snprintf(rep.detail, sizeof(rep.detail),
@@ -616,6 +639,10 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
             g_lastReport = rep;
             if (reportOut) *reportOut = rep;
             return rep.status;
+        }
+        if (heapBm && heapScore >= 100) {
+            ui_log("[resolve] heap rejected (bad dict/entities) inst=0x%llx score=%d",
+                   (unsigned long long)heapBm, heapScore);
         }
 
         g_il2_for_resolve = nullptr;
