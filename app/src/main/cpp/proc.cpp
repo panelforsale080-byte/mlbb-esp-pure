@@ -55,11 +55,17 @@ pid_t proc_find_unity_kills() {
         if (e->d_name[0] < '1' || e->d_name[0] > '9') continue;
         const pid_t pid = (pid_t)std::atoi(e->d_name);
         if (pid <= 0) continue;
-        if (cmdline_has(pid, "com.mobile.legends") && cmdline_has(pid, "UnityKillsMe"))
-            best = pid;
+        if (cmdline_has(pid, "com.mobile.legends") && cmdline_has(pid, "UnityKillsMe")) {
+            if (pid > best) best = pid;
+        }
     }
     closedir(d);
     return best;
+}
+
+bool proc_is_unity_kills_me(pid_t pid) {
+    if (pid <= 0) return false;
+    return cmdline_has(pid, "com.mobile.legends") && cmdline_has(pid, "UnityKillsMe");
 }
 
 pid_t proc_find_mlbb_fallback() {

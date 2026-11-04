@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstring>
 #include <elf.h>
+#include <atomic>
 #include <chrono>
 #include <mutex>
 
@@ -26,6 +27,9 @@ RemoteIl2CppInfo g_cachedIl2{};
 bool g_haveCachedIl2 = false;
 EspResolveReport g_lastReport{};
 const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
+std::atomic<bool> g_forceFullResolve{false};
+int g_noReadStrikes = 0;
+std::chrono::steady_clock::time_point g_lastFullResolve{};
 
 constexpr size_t kMaxEspTargets = 32;
 
@@ -543,9 +547,15 @@ EspStatus esp_attach(pid_t pid) {
     g_pid = pid;
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
     g_resolved = false;
+    g_metadataReady = false;
+    g_haveCachedIl2 = false;
+    g_cachedIl2 = RemoteIl2CppInfo{};
+    g_noReadStrikes = 0;
     if (pid <= 0) return EspStatus::NoProcess;
     return EspStatus::Idle;
 }
+
+void esp_request_force_resolve() { g_forceFullResolve.store(true); }
 
 static void fill_report(EspResolveReport &r, EspStatus status, int mapsCount, bool probe,
                         const BmFindMeta &meta, uintptr_t klass, uintptr_t statics,
@@ -584,6 +594,22 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;
+    }
+    if (!proc_is_unity_kills_me(g_pid)) {
+        rep.status = EspStatus::NoBattleManager;
+        std::snprintf(rep.detail, sizeof(rep.detail),
+                      "wrong process pid=%d — need com.mobile.legends:UnityKillsMe (not launcher)",
+                      (int)g_pid);
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        return rep.status;
+    }
+    const bool force = g_forceFullResolve.exchange(false);
+    const auto nowResolve = std::chrono::steady_clock::now();
+    if (!force && g_metadataReady && g_lastFullResolve.time_since_epoch().count() != 0 &&
+        nowResolve - g_lastFullResolve < std::chrono::seconds(4)) {
+        if (reportOut) *reportOut = g_lastReport;
+        return g_lastReport.status;
     }
     std::vector<MapsReg> maps;
     if (!mem_maps(g_pid, maps)) {
@@ -626,11 +652,25 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
                     cr.battle_manager);
         std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1: %s", cr.detail);
         ui_log("[resolve] %s", cr.detail);
+        g_lastFullResolve = nowResolve;
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;
     }
     if (cr.detail[0]) ui_log("[resolve] conRent path: %s", cr.detail);
+
+    if (!il2.sym_domain_get) {
+        g_il2_for_resolve = nullptr;
+        g_resolved = false;
+        BmFindMeta meta{};
+        fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, 0, 0, 0);
+        std::snprintf(rep.detail, sizeof(rep.detail),
+                      "no il2cpp in pid=%d — wait for UnityKillsMe after match load (no heap scan)",
+                      (int)g_pid);
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        return rep.status;
+    }
 
     BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;
@@ -662,6 +702,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     g_resolved = true;
     const EspStatus stOut = inst ? EspStatus::Ready : EspStatus::NoInstance;
     fill_report(rep, stOut, (int)maps.size(), probe, meta, k, st, inst);
+    g_lastFullResolve = nowResolve;
     g_lastReport = rep;
     if (reportOut) *reportOut = rep;
     return stOut;
@@ -687,12 +728,23 @@ EspStatus esp_tick(EspFrame &out) {
         std::snprintf(out.hint, sizeof(out.hint), "No MLBB pid");
         return out.status;
     }
-    if (!proc_alive(g_pid) || !proc_probe_read(g_pid)) {
+    if (!proc_alive(g_pid)) {
         out.status = EspStatus::NoRead;
-        std::snprintf(out.hint, sizeof(out.hint), "Process unreadable");
+        std::snprintf(out.hint, sizeof(out.hint), "Process died — waiting for UnityKillsMe");
         invalidate_all_locked();
+        g_noReadStrikes = 0;
         return out.status;
     }
+    if (!proc_probe_read(g_pid)) {
+        ++g_noReadStrikes;
+        out.status = EspStatus::NoRead;
+        std::snprintf(out.hint, sizeof(out.hint),
+                      g_noReadStrikes >= 12 ? "Process unreadable" : "Brief read glitch (match load?)");
+        if (g_noReadStrikes >= 12)
+            invalidate_all_locked();
+        return out.status;
+    }
+    g_noReadStrikes = 0;
     if (!g_resolved || !g_metadataReady) {
         out.status = EspStatus::NoBattleManager;
         std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (lobby or match)");

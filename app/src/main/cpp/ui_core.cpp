@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <thread>
 
@@ -43,7 +44,7 @@ static std::atomic<bool> g_resolveWorkerRun{false};
 static std::thread g_resolveWorker;
 
 static bool g_autoFind = true;
-static bool g_fallbackPid = true;
+static bool g_fallbackPid = false;
 static bool g_showMenu = false;
 static bool g_logScrollBottom = true;
 static EspFeatures g_feat{};
@@ -85,10 +86,14 @@ static void log_resolve_result(const EspResolveReport &r) {
     if (r.il2cppNote[0]) ui_log("[il2cpp] %s", r.il2cppNote);
     if (r.status == EspStatus::NoRead)
         ui_log("[resolve] FIX: enable root / run app as root / same user as MLBB");
-    if (r.status == EspStatus::NoBattleManager)
-        ui_log("[resolve] FIX: be IN MATCH; strings=%d (klass walk failed)", r.bmNameStrings);
+    if (r.status == EspStatus::NoBattleManager) {
+        if (std::strstr(r.detail, "UnityKillsMe"))
+            ui_log("[resolve] FIX: wait for UnityKillsMe (match loading) — do not use launcher pid");
+        else
+            ui_log("[resolve] FIX: in lobby tap Resolve once; in match auto Instance refresh");
+    }
     if (r.status == EspStatus::NoInstance)
-        ui_log("[resolve] klass OK but Instance NULL — enter training/classic match then Resolve again");
+        ui_log("[resolve] metadata OK — enter match (no extra Resolve unless stuck 10s+)");
 }
 
 static void log_il2cpp_scan(pid_t pid) {
@@ -132,7 +137,7 @@ static void resolve_worker_loop() {
         esp_resolve(&rep);
         log_resolve_result(rep);
         g_resolving.store(false);
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        std::this_thread::sleep_for(std::chrono::milliseconds(450));
     }
 }
 
@@ -158,6 +163,12 @@ static void attach_pid(pid_t p, const char *why) {
     ui_log("  cmd: %s", cmd);
     if (!probe)
         ui_log("  process_vm_readv failed — need root or correct target process");
+    if (!proc_is_unity_kills_me(p) && !g_fallbackPid) {
+        ui_log("[%s] skip pid %d — not UnityKillsMe (Advanced → Fallback if needed)", why, (int)p);
+        return;
+    }
+    if (!proc_is_unity_kills_me(p))
+        ui_log("[%s] warning: pid %d is not UnityKillsMe — IL2CPP resolve will fail", why, (int)p);
     esp_attach(p);
     g_wantPid.store(p);
     g_needResolve.store(true);
@@ -189,10 +200,17 @@ static void reader_loop() {
         }
 
         if (pid > 0 && !proc_alive(pid)) {
-            ui_log("[proc] pid %d died — reset", (int)pid);
+            ui_log("[proc] pid %d died — reset (wait for new UnityKillsMe)", (int)pid);
             esp_reset();
             g_wantPid.store(0);
-            g_needResolve.store(true);
+            g_resolvePending.store(false);
+            g_needResolve.store(false);
+            lastPid = 0;
+        } else if (pid > 0 && g_autoFind && !proc_is_unity_kills_me(pid)) {
+            ui_log("[auto] pid %d is not UnityKillsMe — drop and re-scan", (int)pid);
+            esp_reset();
+            g_wantPid.store(0);
+            g_resolvePending.store(false);
             lastPid = 0;
         } else if (pid > 0) {
             if (g_needResolve.exchange(false) && !g_resolving.load())
@@ -240,8 +258,10 @@ static void draw_ui() {
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
-        if (ImGui::Button("Resolve"))
+        if (ImGui::Button("Resolve")) {
+            esp_request_force_resolve();
             g_needResolve.store(true);
+        }
         ImGui::SameLine();
         if (ImGui::Button("Find pid")) {
             pid_t p = proc_find_unity_kills();
@@ -269,7 +289,9 @@ static void draw_ui() {
         if (ImGui::CollapsingHeader("Advanced")) {
             ImGui::Checkbox("Auto find UnityKillsMe", &g_autoFind);
             ImGui::SameLine();
-            ImGui::Checkbox("Fallback MLBB pid", &g_fallbackPid);
+            ImGui::Checkbox("Fallback MLBB pid (launcher)", &g_fallbackPid);
+            if (g_fallbackPid)
+                ImGui::TextDisabled("Fallback often breaks IL2CPP — use only if Scan shows no UnityKillsMe");
             const pid_t pid = g_wantPid.load();
             ImGui::Text("PID: %d", (int)pid);
             if (ImGui::Button("Scan MLBB")) scan_and_log_processes();
