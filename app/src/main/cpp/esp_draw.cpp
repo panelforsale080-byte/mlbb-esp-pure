@@ -112,13 +112,6 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
         return;
     }
 
-    if (esp_camera_ready()) {
-        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200), "ESP W2S (conRent cam)");
-    } else {
-        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(220, 160, 80, 200),
-                      "ESP radar fallback — Resolve in match");
-    }
-
     for (const EspTarget &t : frame.targets) {
         if (t.kind == 1 && anyMon) draw_one(draw, screenW, screenH, frame, t, feat, true);
     }

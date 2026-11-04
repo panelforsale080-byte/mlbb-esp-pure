@@ -134,7 +134,7 @@ static void resolve_worker_loop() {
         esp_resolve(&rep);
         log_resolve_result(rep);
         g_resolving.store(false);
-        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
     }
 }
 
@@ -215,7 +215,7 @@ static void reader_loop() {
             g_frame = std::move(f);
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
 
@@ -394,7 +394,7 @@ void ui_gl_surface_created() {
     if (!init_imgui_backends()) return;
     g_glReady = true;
     reader_start_once();
-    ui_log("MLBB ESP overlay — tap ≡ for menu, touches pass to game when closed");
+    ui_log("MLBB ESP — conRent fast resolve + full EspTab draw (Build49 overlay)");
 }
 
 static void reader_start_once() {

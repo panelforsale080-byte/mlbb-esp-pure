@@ -537,6 +537,9 @@ void esp_reset() {
     g_resolved = false;
     g_metadataReady = false;
     g_haveCachedIl2 = false;
+    g_lastStableFrame = EspFrame{};
+    g_readFailStreak = 0;
+    g_dictFailStreak = 0;
     esp_camera_reset();
 }
 
@@ -695,6 +698,10 @@ static void invalidate_all_locked() {
     g_haveCachedIl2 = false;
 }
 
+static EspFrame g_lastStableFrame{};
+static int g_readFailStreak = 0;
+static int g_dictFailStreak = 0;
+
 EspStatus esp_tick(EspFrame &out) {
     std::lock_guard<std::mutex> lock(g_mu);
     out = EspFrame{};
@@ -704,12 +711,28 @@ EspStatus esp_tick(EspFrame &out) {
         std::snprintf(out.hint, sizeof(out.hint), "No MLBB pid");
         return out.status;
     }
-    if (!proc_alive(g_pid) || !proc_probe_read(g_pid)) {
+    if (!proc_alive(g_pid)) {
+        out.status = EspStatus::NoRead;
+        std::snprintf(out.hint, sizeof(out.hint), "Process dead");
+        invalidate_all_locked();
+        g_readFailStreak = g_dictFailStreak = 0;
+        return out.status;
+    }
+    if (!proc_probe_read(g_pid)) {
+        ++g_readFailStreak;
+        if (g_readFailStreak < 8 && g_lastStableFrame.status == EspStatus::Ready &&
+            !g_lastStableFrame.targets.empty()) {
+            out = g_lastStableFrame;
+            std::snprintf(out.hint, sizeof(out.hint), "OK  %zu targets (hold)",
+                          out.targets.size());
+            return EspStatus::Ready;
+        }
         out.status = EspStatus::NoRead;
         std::snprintf(out.hint, sizeof(out.hint), "Process unreadable");
         invalidate_all_locked();
         return out.status;
     }
+    g_readFailStreak = 0;
     if (!g_resolved || !g_metadataReady) {
         out.status = EspStatus::NoBattleManager;
         std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (lobby or match)");
@@ -721,7 +744,7 @@ EspStatus esp_tick(EspFrame &out) {
     const bool doInstRefresh =
         g_bmKlass && g_haveCachedIl2 &&
         (s_lastInstRefresh.time_since_epoch().count() == 0 ||
-         nowRefresh - s_lastInstRefresh > std::chrono::milliseconds(400));
+         nowRefresh - s_lastInstRefresh > std::chrono::milliseconds(1800));
     if (doInstRefresh) {
         s_lastInstRefresh = nowRefresh;
         uintptr_t inst = 0;
@@ -744,12 +767,22 @@ EspStatus esp_tick(EspFrame &out) {
 
     uintptr_t pDictProbe = 0;
     if (!mem_read(g_pid, bm + Off::DicPlayerShow, pDictProbe) || !mem_ptr_ok(pDictProbe)) {
-        g_bmInstance = 0;
+        ++g_dictFailStreak;
+        if (g_dictFailStreak < 10 && g_lastStableFrame.status == EspStatus::Ready &&
+            !g_lastStableFrame.targets.empty()) {
+            out = g_lastStableFrame;
+            out.bmInstance = bm;
+            std::snprintf(out.hint, sizeof(out.hint), "OK  %zu targets (hold)",
+                          out.targets.size());
+            return EspStatus::Ready;
+        }
+        if (g_dictFailStreak >= 10) g_bmInstance = 0;
         out.status = EspStatus::NoInstance;
         std::snprintf(out.hint, sizeof(out.hint), "Loading / end game — waiting for BM dict");
         out.bmKlass = g_bmKlass;
         return out.status;
     }
+    g_dictFailStreak = 0;
 
     uintptr_t local = 0;
     mem_read(g_pid, bm + Off::LocalPlayerShow, local);
@@ -823,5 +856,6 @@ EspStatus esp_tick(EspFrame &out) {
     out.status = EspStatus::Ready;
     std::snprintf(out.hint, sizeof(out.hint), "OK  %zu targets  dict P%d M%d",
                   out.targets.size(), out.dictPlayers, out.dictMonsters);
+    if (!out.targets.empty()) g_lastStableFrame = out;
     return out.status;
 }

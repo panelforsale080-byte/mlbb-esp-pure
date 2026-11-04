@@ -251,20 +251,14 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH) {
     g_matrixReady = false;
     g_useIl2 = false;
     g_mainCam = 0;
+    g_w2sBudget = 0;
 
     if (g_inFrame) remote_session_end(g_sess);
     g_inFrame = false;
 
-    g_w2sBudget = kMaxIl2W2sPerFrame;
-
-    if (g_il2Ready && pid == g_il2Pid && g_rtInvoke) {
-        if (remote_session_begin_try(pid, g_sess)) {
-            g_inFrame = true;
-            g_useIl2 = true;
-        }
-    }
-
-    if (!g_useIl2 && pid > 0) {
+    /* External overlay: matrix-only W2S (mem read). Per-frame ptrace Il2 W2S caused
+     * mixed radar/screen coords → flicker and game stutter. conRent in-process only. */
+    if (pid > 0) {
         if (load_vp_game_method(pid))
             g_matrixReady = true;
         else if (load_vp_show_battle_camera(pid))
