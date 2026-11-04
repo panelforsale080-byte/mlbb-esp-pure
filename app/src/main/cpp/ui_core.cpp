@@ -129,9 +129,10 @@ static void attach_pid(pid_t p, const char *why) {
     ui_log("  cmd: %s", cmd);
     if (!probe)
         ui_log("  process_vm_readv failed — need root or correct target process");
+    const pid_t prev = g_wantPid.load();
     esp_attach(p);
     g_wantPid.store(p);
-    g_needResolve.store(true);
+    if (p != prev || !esp_is_resolved()) g_needResolve.store(true);
 }
 
 static void reader_loop() {

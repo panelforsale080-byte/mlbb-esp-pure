@@ -61,4 +61,5 @@ void esp_reset();
 EspStatus esp_attach(pid_t pid);
 EspStatus esp_resolve(EspResolveReport *reportOut = nullptr);
 EspStatus esp_tick(EspFrame &out);
+bool esp_is_resolved();
 const EspResolveReport &esp_last_resolve_report();

@@ -19,6 +19,7 @@ pid_t g_pid = 0;
 uintptr_t g_bmKlass = 0;
 uintptr_t g_bmStatics = 0;
 uintptr_t g_bmInstance = 0;
+uintptr_t g_bmInstancePinned = 0;
 bool g_resolved = false;
 EspResolveReport g_lastReport{};
 const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
@@ -128,14 +129,23 @@ static bool pos_ok(const Vec3 &p) {
         && std::fabs(p.x) <= 10000.f && std::fabs(p.z) <= 10000.f;
 }
 
-static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
+static bool bm_has_player_dict(pid_t pid, uintptr_t bm) {
     if (!bm || !mem_ptr_ok(bm)) return false;
-    uintptr_t pDict = 0, mDict = 0;
+    uintptr_t pDict = 0;
     if (!mem_read(pid, bm + Off::DicPlayerShow, pDict) || !mem_ptr_ok(pDict)) return false;
+    std::vector<std::pair<int, uintptr_t>> players;
+    return dict_entries(pid, pDict, players, 24) && !players.empty();
+}
+
+static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
+    if (!bm_has_player_dict(pid, bm)) return false;
+    uintptr_t mDict = 0;
     mem_read(pid, bm + Off::DicMonsterShow, mDict);
     if (mDict && !mem_ptr_ok(mDict)) return false;
+    uintptr_t pDict = 0;
+    mem_read(pid, bm + Off::DicPlayerShow, pDict);
     std::vector<std::pair<int, uintptr_t>> players;
-    if (!dict_entries(pid, pDict, players) || players.empty() || players.size() > 20) return false;
+    dict_entries(pid, pDict, players, 24);
     int usable = 0;
     for (const auto &kv : players) {
         if (!kv.second) continue;
@@ -526,24 +536,30 @@ static void ensure_bm_statics(pid_t pid) {
     }
 }
 
-static void refresh_instance(pid_t pid) {
-    ensure_bm_statics(pid);
-    if (!g_bmStatics) return;
-    uintptr_t inst = 0;
-    if (mem_read(pid, g_bmStatics + Off::InstanceStatic, inst) && mem_ptr_ok(inst)) {
-        g_bmInstance = inst;
-        return;
-    }
-    for (uintptr_t off = 0; off <= 0x38; off += sizeof(uintptr_t)) {
-        if (!mem_read(pid, g_bmStatics + off, inst) || !mem_ptr_ok(inst)) continue;
-        if (bm_instance_sane(pid, inst)) {
-            g_bmInstance = inst;
-            return;
-        }
-    }
+static void try_adopt_bm(pid_t pid, uintptr_t cand) {
+    if (bm_has_player_dict(pid, cand)) g_bmInstance = cand;
 }
 
-static void clear_bm_instance_only() { g_bmInstance = 0; }
+static void refresh_instance(pid_t pid) {
+    const uintptr_t keep = g_bmInstance;
+    ensure_bm_statics(pid);
+    if (g_bmStatics) {
+        uintptr_t inst = 0;
+        if (mem_read(pid, g_bmStatics + Off::InstanceStatic, inst) && mem_ptr_ok(inst))
+            try_adopt_bm(pid, inst);
+        if (!bm_has_player_dict(pid, g_bmInstance)) {
+            for (uintptr_t off = 0; off <= 0x38; off += sizeof(uintptr_t)) {
+                if (!mem_read(pid, g_bmStatics + off, inst) || !mem_ptr_ok(inst)) continue;
+                try_adopt_bm(pid, inst);
+                if (bm_has_player_dict(pid, g_bmInstance)) break;
+            }
+        }
+    }
+    if (!bm_has_player_dict(pid, g_bmInstance) && g_bmInstancePinned)
+        try_adopt_bm(pid, g_bmInstancePinned);
+    if (!bm_has_player_dict(pid, g_bmInstance) && bm_has_player_dict(pid, keep))
+        g_bmInstance = keep;
+}
 
 } // namespace
 
@@ -551,6 +567,7 @@ void esp_reset() {
     std::lock_guard<std::mutex> lock(g_mu);
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
+    g_bmInstancePinned = 0;
     g_resolved = false;
     esp_camera_reset();
 }
@@ -559,9 +576,15 @@ EspStatus esp_attach(pid_t pid) {
     std::lock_guard<std::mutex> lock(g_mu);
     g_pid = pid;
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
+    g_bmInstancePinned = 0;
     g_resolved = false;
     if (pid <= 0) return EspStatus::NoProcess;
     return EspStatus::Idle;
+}
+
+bool esp_is_resolved() {
+    std::lock_guard<std::mutex> lock(g_mu);
+    return g_resolved;
 }
 
 static void fill_report(EspResolveReport &r, EspStatus status, int mapsCount, bool probe,
@@ -631,6 +654,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         g_bmKlass = cr.battle_manager_klass;
         g_bmStatics = cr.battle_manager_statics;
         g_bmInstance = cr.battle_manager;
+        g_bmInstancePinned = cr.battle_manager;
         g_resolved = true;
         BmFindMeta meta{};
         meta.usedElf = false;
@@ -672,6 +696,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     g_bmKlass = k;
     g_bmStatics = st;
     g_bmInstance = inst;
+    g_bmInstancePinned = inst;
     g_resolved = true;
     const EspStatus stOut = inst ? EspStatus::Ready : EspStatus::NoInstance;
     fill_report(rep, stOut, (int)maps.size(), probe, meta, k, st, inst);
@@ -704,9 +729,14 @@ EspStatus esp_tick(EspFrame &out) {
         return out.status;
     }
 
-    /* conRent DrawOverlay: refresh Instance via memory only — no ptrace on tick */
-    refresh_instance(g_pid);
+    /* conRent DrawOverlay: refresh Instance via memory only — never replace with junk static read */
+    if (!bm_has_player_dict(g_pid, g_bmInstance))
+        refresh_instance(g_pid);
     uintptr_t bm = g_bmInstance;
+    if (!bm_has_player_dict(g_pid, bm) && g_bmInstancePinned) {
+        try_adopt_bm(g_pid, g_bmInstancePinned);
+        bm = g_bmInstance;
+    }
     if (!bm || !mem_ptr_ok(bm)) {
         out.status = EspStatus::NoInstance;
         std::snprintf(out.hint, sizeof(out.hint), "Waiting for BattleManager (match load)");
@@ -731,9 +761,8 @@ EspStatus esp_tick(EspFrame &out) {
     mem_read(g_pid, bm + Off::DicPlayerShow, pDict);
     mem_read(g_pid, bm + Off::DicMonsterShow, mDict);
     if (!pDict || !mem_ptr_ok(pDict)) {
-        clear_bm_instance_only();
         out.status = EspStatus::NoInstance;
-        std::snprintf(out.hint, sizeof(out.hint), "End match / loading — cached resolve kept");
+        std::snprintf(out.hint, sizeof(out.hint), "Player dict not ready — stay in match, wait or Resolve");
         return out.status;
     }
 
