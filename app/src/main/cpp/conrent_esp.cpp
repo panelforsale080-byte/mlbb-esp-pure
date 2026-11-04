@@ -227,6 +227,7 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
         return false;
     }
     out.battle_manager_klass = klass;
+    out.battle_manager_statics = klass_static_fields(pid, klass);
 
     const uintptr_t inst = static_field_ptr(s, pid, il2, klass, "Instance");
     out.battle_manager = inst;

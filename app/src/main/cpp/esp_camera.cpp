@@ -1,5 +1,6 @@
 #include "esp_camera.hpp"
 #include "mem.hpp"
+#include "proc.hpp"
 #include "remote_call.hpp"
 #include "ui_log.hpp"
 #include <cmath>
@@ -161,7 +162,10 @@ static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &out
 
     if (!mem_ptr_ok(g_mainCam)) {
         uintptr_t cam = 0;
-        if (!remote_session_call(g_sess, g_rtInvoke, {g_getMainMi, 0, 0, 0}, cam)) return false;
+        if (!remote_session_call(g_sess, g_rtInvoke, {g_getMainMi, 0, 0, 0}, cam)) {
+            g_useIl2 = false;
+            return false;
+        }
         g_mainCam = cam;
     }
     if (!mem_ptr_ok(g_mainCam)) return false;
@@ -178,8 +182,10 @@ static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &out
     mem_write(g_il2Pid, excSlot, &zero, sizeof(zero));
 
     uintptr_t ret = 0;
-    if (!remote_session_call(g_sess, g_rtInvoke, {g_w2sMi, g_mainCam, paramSlot, excSlot}, ret))
+    if (!remote_session_call(g_sess, g_rtInvoke, {g_w2sMi, g_mainCam, paramSlot, excSlot}, ret)) {
+        g_useIl2 = false;
         return false;
+    }
 
     float sx = 0.f, sy = 0.f, sz = 0.f;
     if (!read_vec3_from_object(g_il2Pid, ret, sx, sy, sz)) {
@@ -244,7 +250,7 @@ void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t ge
     g_il2Ready = runtime_invoke && get_main_method && w2s_method;
 }
 
-void esp_camera_frame_begin(pid_t pid, float screenW, float screenH) {
+void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowIl2Ptrace) {
     g_screenW = screenW;
     g_screenH = screenH;
     normalize_landscape(g_screenW, g_screenH);
@@ -257,18 +263,20 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH) {
 
     g_w2sBudget = kMaxIl2W2sPerFrame;
 
-    if (g_il2Ready && pid == g_il2Pid && g_rtInvoke) {
-        if (remote_session_begin_try(pid, g_sess)) {
-            g_inFrame = true;
-            g_useIl2 = true;
-        }
-    }
-
-    if (!g_useIl2 && pid > 0) {
+    /* EspSource-style: read ShowBattleCamera / GameMethod statics only (no ptrace). */
+    if (pid > 0 && proc_alive(pid)) {
         if (load_vp_game_method(pid))
             g_matrixReady = true;
         else if (load_vp_show_battle_camera(pid))
             g_matrixReady = true;
+    }
+
+    if (!g_matrixReady && allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke &&
+        pid > 0 && proc_alive(pid)) {
+        if (remote_session_begin_try(pid, g_sess)) {
+            g_inFrame = true;
+            g_useIl2 = true;
+        }
     }
 }
 

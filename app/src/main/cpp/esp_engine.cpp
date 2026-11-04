@@ -121,10 +121,38 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
     return !out.empty();
 }
 
+/** EspSource m_ShowPlayers / m_ShowMonsters (Il2Cpp List). */
+static bool list_entities(pid_t pid, uintptr_t list, std::vector<uintptr_t> &out) {
+    out.clear();
+    if (!list || !mem_ptr_ok(list)) return false;
+    uintptr_t arr = 0;
+    int size = 0;
+    if (!mem_read(pid, list + Off::ListItems, arr) || !arr || !mem_ptr_ok(arr)) return false;
+    if (!mem_read(pid, list + Off::ListSize, size) || size <= 0 || size > 128) return false;
+    int maxLength = 0;
+    if (!mem_read(pid, arr + Off::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
+        return false;
+    const uintptr_t data = arr + Off::ArrData;
+    const int n = std::min(size, maxLength);
+    for (int i = 0; i < n; ++i) {
+        uintptr_t p = 0;
+        if (mem_read(pid, data + (uintptr_t)i * sizeof(uintptr_t), p) && p && mem_ptr_ok(p))
+            out.push_back(p);
+    }
+    return !out.empty();
+}
+
 static bool pos_ok(const Vec3 &p) {
     return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)
         && !(std::fabs(p.x) < 0.01f && std::fabs(p.z) < 0.01f)
         && std::fabs(p.x) <= 10000.f && std::fabs(p.z) <= 10000.f;
+}
+
+static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
+    if (mem_read(pid, ent + Off::LastPosition, pos) && pos_ok(pos)) return true;
+    if (mem_read(pid, ent + Off::CachePosition, pos) && pos_ok(pos)) return true;
+    pos = {};
+    return false;
 }
 
 static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
@@ -623,14 +651,14 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     if (crOk || crMeta) {
         g_il2_for_resolve = nullptr;
         g_bmKlass = cr.battle_manager_klass;
-        g_bmStatics = 0;
+        g_bmStatics = cr.battle_manager_statics;
         g_bmInstance = cr.battle_manager;
         g_resolved = true;
         BmFindMeta meta{};
         meta.usedElf = false;
         const EspStatus st = cr.battle_manager ? EspStatus::Ready : EspStatus::NoInstance;
-        fill_report(rep, st, (int)maps.size(), probe, meta, cr.battle_manager_klass, 0,
-                    cr.battle_manager);
+        fill_report(rep, st, (int)maps.size(), probe, meta, cr.battle_manager_klass,
+                    cr.battle_manager_statics, cr.battle_manager);
         std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1: %s", cr.detail);
         ui_log("[resolve] %s", cr.detail);
         g_lastReport = rep;
@@ -693,8 +721,11 @@ EspStatus esp_tick(EspFrame &out) {
         std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (in match)");
         return out.status;
     }
-    if (!g_bmInstance && g_bmStatics) {
-        refresh_instance(g_pid);
+    if (!proc_alive(g_pid)) {
+        out.status = EspStatus::NoProcess;
+        g_bmInstance = 0;
+        std::snprintf(out.hint, sizeof(out.hint), "Game process gone");
+        return out.status;
     }
 
     refresh_instance(g_pid);
@@ -708,7 +739,7 @@ EspStatus esp_tick(EspFrame &out) {
     uintptr_t local = 0;
     mem_read(g_pid, bm + Off::LocalPlayerShow, local);
     Vec3 self{};
-    if (local) mem_read(g_pid, local + Off::LastPosition, self);
+    if (local) read_entity_pos(g_pid, local, self);
     out.selfX = self.x;
     out.selfY = self.y;
     out.selfZ = self.z;
@@ -720,6 +751,25 @@ EspStatus esp_tick(EspFrame &out) {
     dict_entries(g_pid, pDict, players);
     dict_entries(g_pid, mDict, monsters);
 
+    if (players.empty()) {
+        uintptr_t pList = 0;
+        mem_read(g_pid, bm + Off::ListPlayerShow, pList);
+        std::vector<uintptr_t> listP;
+        if (list_entities(g_pid, pList, listP)) {
+            for (size_t i = 0; i < listP.size(); ++i)
+                players.emplace_back((int)i, listP[i]);
+        }
+    }
+    if (monsters.empty()) {
+        uintptr_t mList = 0;
+        mem_read(g_pid, bm + Off::ListMonsterShow, mList);
+        std::vector<uintptr_t> listM;
+        if (list_entities(g_pid, mList, listM)) {
+            for (size_t i = 0; i < listM.size(); ++i)
+                monsters.emplace_back((int)i, listM[i]);
+        }
+    }
+
     auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
         if (!v) return;
         uint8_t dead = 0, camp = 0;
@@ -729,7 +779,7 @@ EspStatus esp_tick(EspFrame &out) {
         mem_read(g_pid, v + Off::EntityId, id);
         if (kind == 1 && !monster_id(id)) return;
         Vec3 pos{};
-        if (!mem_read(g_pid, v + Off::LastPosition, pos) || !pos_ok(pos)) return;
+        if (!read_entity_pos(g_pid, v, pos)) return;
         EspTarget t{};
         t.worldX = pos.x;
         t.worldY = pos.y;
