@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstring>
 #include <elf.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -154,10 +155,23 @@ static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
     return usable > 0;
 }
 
-static bool monster_id(int id) {
-    for (int m : Off::kMonsterIds)
-        if (m == id) return true;
-    return false;
+static bool monster_id(int id) { return Off::monsterIdOk(id); }
+
+static std::chrono::steady_clock::time_point g_rampT0 =
+    std::chrono::steady_clock::now();
+
+static void ramp_reset() { g_rampT0 = std::chrono::steady_clock::now(); }
+
+static void ramp_limits(int &maxMon, int &maxHero) {
+    const auto sec = std::chrono::duration_cast<std::chrono::seconds>(
+                         std::chrono::steady_clock::now() - g_rampT0)
+                         .count();
+    maxMon = (int)std::min<int64_t>(14, 2 + sec / 2);
+    if (sec < 6) {
+        maxHero = 0;
+        return;
+    }
+    maxHero = (int)std::min<int64_t>(10, (sec - 6) / 2);
 }
 
 static bool statics_for(pid_t pid, uintptr_t klass, uintptr_t instOff,
@@ -540,6 +554,7 @@ void esp_reset() {
     g_lastStableFrame = EspFrame{};
     g_readFailStreak = 0;
     g_dictFailStreak = 0;
+    ramp_reset();
     esp_camera_reset();
 }
 
@@ -638,6 +653,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         g_bmStatics = 0;
         g_bmInstance = cr.battle_manager;
         g_resolved = true;
+        ramp_reset();
         BmFindMeta meta{};
         meta.usedElf = false;
         const EspStatus st =
@@ -765,8 +781,12 @@ EspStatus esp_tick(EspFrame &out) {
         return out.status;
     }
 
-    uintptr_t pDictProbe = 0;
-    if (!mem_read(g_pid, bm + Off::DicPlayerShow, pDictProbe) || !mem_ptr_ok(pDictProbe)) {
+    uintptr_t pDictProbe = 0, mDictProbe = 0;
+    mem_read(g_pid, bm + Off::DicPlayerShow, pDictProbe);
+    mem_read(g_pid, bm + Off::DicMonsterShow, mDictProbe);
+    const bool dictLive =
+        mem_ptr_ok(pDictProbe) || mem_ptr_ok(mDictProbe);
+    if (!dictLive) {
         ++g_dictFailStreak;
         if (g_dictFailStreak < 10 && g_lastStableFrame.status == EspStatus::Ready &&
             !g_lastStableFrame.targets.empty()) {
@@ -801,17 +821,26 @@ EspStatus esp_tick(EspFrame &out) {
 
     out.targets.reserve(kMaxEspTargets);
 
-    auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
-        if (out.targets.size() >= kMaxEspTargets) return;
-        if (!v || !mem_ptr_ok(v)) return;
-        uint8_t dead = 0, camp = 0;
-        if (mem_read(g_pid, v + Off::EntityDeath, dead) && dead) return;
-        if (mem_read(g_pid, v + Off::SameCamp, camp) && camp) return;
+    int maxMon = 0, maxHero = 0;
+    ramp_limits(maxMon, maxHero);
+
+    auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) -> bool {
+        if (out.targets.size() >= kMaxEspTargets) return false;
+        if (!v || !mem_ptr_ok(v)) return false;
+        uint8_t dead = 0;
+        if (mem_read(g_pid, v + Off::EntityDeath, dead) && dead) return false;
+        if (kind == 0) {
+            uint8_t camp = 0;
+            if (mem_read(g_pid, v + Off::SameCamp, camp) && camp) return false;
+        }
         int id = key;
         mem_read(g_pid, v + Off::EntityId, id);
-        if (kind == 1 && !monster_id(id)) return;
+        if (kind == 1) {
+            if (id <= 0) id = key;
+            if (!monster_id(id)) return false;
+        }
         Vec3 pos{};
-        if (!mem_read(g_pid, v + Off::LastPosition, pos) || !pos_ok(pos)) return;
+        if (!mem_read(g_pid, v + Off::LastPosition, pos) || !pos_ok(pos)) return false;
         EspTarget t{};
         t.worldX = pos.x;
         t.worldY = pos.y;
@@ -822,6 +851,7 @@ EspStatus esp_tick(EspFrame &out) {
         mem_read(g_pid, v + Off::Hp, t.hp);
         mem_read(g_pid, v + Off::HpMax, t.hpMax);
         t.kind = kind;
+        t.entityId = id;
         if (labelOverride)
             std::snprintf(t.label, sizeof(t.label), "%s", labelOverride);
         else if (kind == 1)
@@ -829,18 +859,21 @@ EspStatus esp_tick(EspFrame &out) {
         else
             std::snprintf(t.label, sizeof(t.label), "ID %d", id);
         out.targets.push_back(t);
+        return true;
     };
 
+    int monAdded = 0;
     for (const auto &kv : monsters) {
-        if (out.targets.size() >= kMaxEspTargets) break;
+        if (monAdded >= maxMon || out.targets.size() >= kMaxEspTargets) break;
         int id = kv.first;
         if (kv.second) mem_read(g_pid, kv.second + Off::EntityId, id);
-        if (!monster_id(id)) continue;
-        push(kv.second, 1, Off::monsterLabel(id), kv.first);
+        if (push(kv.second, 1, Off::monsterLabel(id > 0 ? id : kv.first), kv.first))
+            ++monAdded;
     }
+    int heroAdded = 0;
     for (const auto &kv : players) {
-        push(kv.second, 0, nullptr, kv.first);
-        if (out.targets.size() >= kMaxEspTargets) break;
+        if (heroAdded >= maxHero || out.targets.size() >= kMaxEspTargets) break;
+        if (push(kv.second, 0, nullptr, kv.first)) ++heroAdded;
     }
 
     out.mapsCount = 0;
@@ -854,8 +887,9 @@ EspStatus esp_tick(EspFrame &out) {
     out.dictMonsters = (int)monsters.size();
 
     out.status = EspStatus::Ready;
-    std::snprintf(out.hint, sizeof(out.hint), "OK  %zu targets  dict P%d M%d",
-                  out.targets.size(), out.dictPlayers, out.dictMonsters);
+    std::snprintf(out.hint, sizeof(out.hint),
+                  "OK  %zu tgt  M%d/%d H%d/%d  dict P%d M%d", out.targets.size(), monAdded,
+                  maxMon, heroAdded, maxHero, out.dictPlayers, out.dictMonsters);
     if (!out.targets.empty()) g_lastStableFrame = out;
     return out.status;
 }

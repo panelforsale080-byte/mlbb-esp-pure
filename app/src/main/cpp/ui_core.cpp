@@ -273,6 +273,7 @@ static void draw_ui() {
         ImGui::SameLine();
         ImGui::Checkbox("Distance", &g_feat.distance);
 
+        ImGui::TextDisabled("Smooth ramp: monsters first, then heroes (anti-crash).");
         ImGui::SeparatorText("Monster");
         ImGui::Checkbox("Box##m", &g_feat.monsterBox);
         ImGui::SameLine();

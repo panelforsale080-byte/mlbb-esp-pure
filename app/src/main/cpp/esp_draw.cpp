@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <unordered_map>
 
 namespace {
 
@@ -30,11 +31,30 @@ static ImVec2 world_to_screen_pseudo(float relX, float relZ, float screenW, floa
     return {x, y};
 }
 
-static ImVec2 target_screen(const EspFrame &frame, const EspTarget &t, float screenW, float screenH) {
+static uint64_t smooth_key(const EspTarget &t) {
+    return ((uint64_t)(unsigned)t.kind << 32) | (unsigned)(t.entityId > 0 ? t.entityId : t.meters);
+}
+
+static ImVec2 target_screen_smooth(const EspFrame &frame, const EspTarget &t, float screenW,
+                                    float screenH,
+                                    std::unordered_map<uint64_t, ImVec2> &smooth) {
     float sx = 0.f, sy = 0.f;
+    ImVec2 raw;
     if (esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy))
-        return {sx, sy};
-    return world_to_screen_pseudo(t.relX, t.relZ, screenW, screenH);
+        raw = {sx, sy};
+    else
+        raw = world_to_screen_pseudo(t.relX, t.relZ, screenW, screenH);
+
+    const uint64_t key = smooth_key(t);
+    auto it = smooth.find(key);
+    if (it == smooth.end()) {
+        smooth[key] = raw;
+        return raw;
+    }
+    constexpr float kAlpha = 0.28f;
+    it->second.x += (raw.x - it->second.x) * kAlpha;
+    it->second.y += (raw.y - it->second.y) * kAlpha;
+    return it->second;
 }
 
 static ImVec2 self_screen(const EspFrame &frame, float screenW, float screenH) {
@@ -45,13 +65,14 @@ static ImVec2 self_screen(const EspFrame &frame, float screenW, float screenH) {
 }
 
 static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
-                     const EspTarget &t, const EspFeatures &feat, bool monster) {
+                     const EspTarget &t, const EspFeatures &feat, bool monster,
+                     std::unordered_map<uint64_t, ImVec2> &smooth) {
     const bool anyBox = monster ? feat.monsterBox : feat.box;
     const bool anyName = monster ? feat.monsterName : feat.name;
     const bool anyHp = monster ? feat.monsterHealth : feat.health;
     if (!anyBox && !anyName && !anyHp && !feat.line && !feat.distance) return;
 
-    const ImVec2 root = target_screen(frame, t, screenW, screenH);
+    const ImVec2 root = target_screen_smooth(frame, t, screenW, screenH, smooth);
     const float boxH = std::fabs(screenH / (monster ? 6.8f : 6.5f));
     const float boxW = boxH * (monster ? 0.55f : 0.48f);
     const ImVec2 boxStart{root.x - boxW * 0.5f, root.y - boxH};
@@ -112,11 +133,15 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
         return;
     }
 
+    static std::unordered_map<uint64_t, ImVec2> s_smooth;
+    if (frame.targets.empty()) s_smooth.clear();
+
     for (const EspTarget &t : frame.targets) {
-        if (t.kind == 1 && anyMon) draw_one(draw, screenW, screenH, frame, t, feat, true);
+        if (t.kind == 1 && anyMon) draw_one(draw, screenW, screenH, frame, t, feat, true, s_smooth);
     }
     for (const EspTarget &t : frame.targets) {
-        if (t.kind == 0 && anyPlayer) draw_one(draw, screenW, screenH, frame, t, feat, false);
+        if (t.kind == 0 && anyPlayer)
+            draw_one(draw, screenW, screenH, frame, t, feat, false, s_smooth);
     }
 
     esp_camera_frame_end();

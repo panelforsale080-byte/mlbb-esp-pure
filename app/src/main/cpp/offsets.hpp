@@ -32,6 +32,14 @@ inline const int kMonsterIds[] = {
     2002, 2003, 2004, 2005, 2006, 2008, 2009, 2011, 2012, 2013, 2056, 2059, 2072
 };
 
+inline bool monsterIdOk(int id) {
+    if (id <= 0) return false;
+    for (int m : kMonsterIds)
+        if (m == id) return true;
+    /* Jungle / lord IDs vary by patch — accept known creep band from monster dict. */
+    return id >= 2000 && id < 2120;
+}
+
 inline const char *monsterLabel(int id) {
     switch (id) {
     case 2002: return "Lord";
