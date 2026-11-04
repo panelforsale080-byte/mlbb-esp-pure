@@ -597,13 +597,17 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     g_il2_for_resolve = &il2;
 
     ConrentResolve cr{};
-    if (conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.battle_manager) {
+    const bool crOk =
+        conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.battle_manager;
+    esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
+    esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
+                              cr.camera_w2s_method);
+    if (crOk) {
         g_il2_for_resolve = nullptr;
         g_bmKlass = cr.battle_manager_klass;
         g_bmStatics = 0;
         g_bmInstance = cr.battle_manager;
         g_resolved = true;
-        esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
         BmFindMeta meta{};
         meta.usedElf = false;
         fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, cr.battle_manager_klass,
@@ -614,36 +618,13 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         if (reportOut) *reportOut = rep;
         return rep.status;
     }
-    if (cr.detail[0])
+    if (!cr.battle_manager && cr.detail[0])
         ui_log("[resolve] conRent path: %s", cr.detail);
 
     BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;
     if (!find_bm(g_pid, maps, k, st, inst, &meta)) {
-        int heapScore = -1;
-        uintptr_t heapBm = 0;
-        if (heap_find_battle_manager(g_pid, maps, heapBm, heapScore) &&
-            bm_instance_sane(g_pid, heapBm)) {
-            g_il2_for_resolve = nullptr;
-            g_bmKlass = 0;
-            g_bmStatics = 0;
-            g_bmInstance = heapBm;
-            g_resolved = true;
-            esp_camera_set_static_bases(0, 0);
-            meta.usedElf = false;
-            fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, 0, 0, heapBm);
-            std::snprintf(rep.detail, sizeof(rep.detail),
-                          "heap Instance=0x%llx score=%d (no Il2CppClass; same as esp_resolve.txt)",
-                          (unsigned long long)heapBm, heapScore);
-            ui_log("[resolve] OK heap BattleManager.Instance (conRent fields via PID read)");
-            g_lastReport = rep;
-            if (reportOut) *reportOut = rep;
-            return rep.status;
-        }
-        if (heapBm && heapScore >= 100) {
-            ui_log("[resolve] heap rejected (bad dict/entities) inst=0x%llx score=%d",
-                   (unsigned long long)heapBm, heapScore);
-        }
+        ui_log("[resolve] no klass/heap — enter classic match, tap Resolve (conRent IL2CPP only)");
 
         g_il2_for_resolve = nullptr;
         g_resolved = false;

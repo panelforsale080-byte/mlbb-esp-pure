@@ -102,7 +102,7 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     if (!draw || screenW < 1.f || screenH < 1.f) return;
     if (frame.status != EspStatus::Ready) return;
 
-    esp_camera_update(frame.pid, screenW, screenH);
+    esp_camera_frame_begin(frame.pid, screenW, screenH);
 
     const bool anyPlayer = feat.box || feat.line || feat.health || feat.name || feat.distance;
     const bool anyMon =
@@ -110,13 +110,16 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     if (!anyPlayer && !anyMon) return;
 
     if (esp_camera_ready()) {
-        char dbg[48];
-        std::snprintf(dbg, sizeof(dbg), "ESP cam W2S");
-        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200), dbg);
+        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200), "ESP W2S (conRent cam)");
+    } else {
+        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(220, 160, 80, 200),
+                      "ESP radar fallback — Resolve in match");
     }
 
     for (const EspTarget &t : frame.targets) {
         if (t.kind == 0 && anyPlayer) draw_one(draw, screenW, screenH, frame, t, feat, false);
         if (t.kind == 1 && anyMon) draw_one(draw, screenW, screenH, frame, t, feat, true);
     }
+
+    esp_camera_frame_end();
 }

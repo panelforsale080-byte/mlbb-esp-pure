@@ -102,6 +102,18 @@ static uintptr_t find_class_conrent(RemoteSession &s, pid_t pid, RemoteIl2CppInf
     return 0;
 }
 
+static uintptr_t method_from_name(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
+                                  uintptr_t klass, const char *methodName, int argCount) {
+    if (!il2.sym_class_get_method_from_name || !klass) return 0;
+    const uintptr_t namePtr = find_cstring(pid, methodName);
+    if (!namePtr) return 0;
+    uintptr_t method = 0;
+    if (!remote_session_call(s, il2.sym_class_get_method_from_name,
+                             {klass, namePtr, (uintptr_t)argCount}, method))
+        return 0;
+    return mem_ptr_ok(method) ? method : 0;
+}
+
 static uintptr_t klass_static_fields(pid_t pid, uintptr_t klass) {
     if (!klass) return 0;
     for (uintptr_t off : Off::StaticFieldOffs) {
@@ -225,9 +237,16 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
     const uintptr_t gmKlass =
         find_class_conrent(s, pid, il2, "GameMethod", asmCount, assemblies);
     if (gmKlass) out.game_method_statics = klass_static_fields(pid, gmKlass);
-    ui_log("[conrent] camera statics sbc=0x%llx gm=0x%llx",
+    const uintptr_t camKlass =
+        find_class_conrent(s, pid, il2, "UnityEngine.Camera", asmCount, assemblies);
+    if (camKlass) {
+        out.camera_get_main_method = method_from_name(s, pid, il2, camKlass, "get_main", 0);
+        out.camera_w2s_method = method_from_name(s, pid, il2, camKlass, "WorldToScreenPoint", 1);
+    }
+    ui_log("[conrent] camera statics sbc=0x%llx gm=0x%llx w2s=%d",
            (unsigned long long)out.show_battle_camera_statics,
-           (unsigned long long)out.game_method_statics);
+           (unsigned long long)out.game_method_statics,
+           (out.camera_get_main_method && out.camera_w2s_method) ? 1 : 0);
 
     remote_session_end(s);
 
