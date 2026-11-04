@@ -129,11 +129,9 @@ static void attach_pid(pid_t p, const char *why) {
     ui_log("  cmd: %s", cmd);
     if (!probe)
         ui_log("  process_vm_readv failed — need root or correct target process");
-    const pid_t prev = g_wantPid.load();
     esp_attach(p);
     g_wantPid.store(p);
-    if (p != prev || !esp_is_resolved()) g_needResolve.store(true);
-    else ui_log("[%s] pid=%d already resolved — instant ESP (mem refresh)", why, (int)p);
+    if (!esp_is_resolved()) g_needResolve.store(true);
 }
 
 static void reader_loop() {
@@ -165,14 +163,14 @@ static void reader_loop() {
             ui_log("[proc] pid %d died — reset", (int)pid);
             esp_reset();
             g_wantPid.store(0);
+            g_needResolve.store(true);
             lastPid = 0;
         } else if (pid > 0) {
             if (g_needResolve.exchange(false)) {
-                ui_log("[resolve] start pid=%d (Build #49 — ptrace once, then mem-only tick)", (int)pid);
+                ui_log("[resolve] start pid=%d", (int)pid);
                 EspResolveReport rep{};
                 esp_resolve(&rep);
                 log_resolve_result(rep);
-                std::this_thread::sleep_for(std::chrono::milliseconds(350));
             }
             EspFrame f;
             esp_tick(f);
@@ -211,7 +209,7 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("conRent: Resolve once (lobby OK) — ESP auto when match starts.");
+        ImGui::TextDisabled("Overlay — open MLBB, allow display over apps, enter match.");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
