@@ -13,7 +13,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
-#include <cstring>
 #include <mutex>
 #include <thread>
 
@@ -38,10 +37,6 @@ static std::mutex g_frameMu;
 static EspFrame g_frame;
 static std::atomic<pid_t> g_wantPid{0};
 static std::atomic<bool> g_needResolve{true};
-static std::atomic<bool> g_resolvePending{false};
-static std::atomic<bool> g_resolving{false};
-static std::atomic<bool> g_resolveWorkerRun{false};
-static std::thread g_resolveWorker;
 
 static bool g_autoFind = true;
 static bool g_fallbackPid = true;
@@ -119,32 +114,6 @@ static void scan_and_log_processes() {
 
 static void reader_loop();
 static void reader_start_once();
-static void resolve_worker_start_once();
-
-static void resolve_worker_loop() {
-    while (g_resolveWorkerRun.load()) {
-        if (!g_resolvePending.exchange(false)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            continue;
-        }
-        if (g_wantPid.load() <= 0) continue;
-        g_resolving.store(true);
-        ui_log("[resolve] fast IL2CPP (background, conRent EspTab)…");
-        EspResolveReport rep{};
-        esp_resolve(&rep);
-        log_resolve_result(rep);
-        g_resolving.store(false);
-        std::this_thread::sleep_for(std::chrono::milliseconds(400));
-    }
-}
-
-static void resolve_worker_start_once() {
-    static std::atomic<bool> started{false};
-    if (started.exchange(true)) return;
-    g_resolveWorkerRun.store(true);
-    g_resolveWorker = std::thread(resolve_worker_loop);
-    g_resolveWorker.detach();
-}
 
 static void attach_pid(pid_t p, const char *why) {
     if (p <= 0) {
@@ -158,8 +127,6 @@ static void attach_pid(pid_t p, const char *why) {
     const bool probe = proc_probe_read(p);
     ui_log("[%s] pid=%d probe=%s", why, (int)p, probe ? "OK" : "FAIL");
     ui_log("  cmd: %s", cmd);
-    if (std::strstr(cmd, "UnityKillsMe") == nullptr)
-        ui_log("  warn: attach UnityKillsMe for liblogic IL2CPP (Find pid)");
     if (!probe)
         ui_log("  process_vm_readv failed — need root or correct target process");
     esp_attach(p);
@@ -177,6 +144,8 @@ static void reader_loop() {
 
         if (g_autoFind && pid <= 0) {
             pid_t p = proc_find_unity_kills();
+            if (p <= 0 && g_fallbackPid)
+                p = proc_find_mlbb_fallback();
             if (p > 0)
                 attach_pid(p, "auto");
             else {
@@ -197,8 +166,12 @@ static void reader_loop() {
             g_needResolve.store(true);
             lastPid = 0;
         } else if (pid > 0) {
-            if (g_needResolve.exchange(false) && !g_resolving.load())
-                g_resolvePending.store(true);
+            if (g_needResolve.exchange(false)) {
+                ui_log("[resolve] start pid=%d", (int)pid);
+                EspResolveReport rep{};
+                esp_resolve(&rep);
+                log_resolve_result(rep);
+            }
             EspFrame f;
             esp_tick(f);
             if (f.status != lastStatus || pid != lastPid) {
@@ -215,7 +188,7 @@ static void reader_loop() {
             g_frame = std::move(f);
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
     }
 }
 
@@ -229,28 +202,16 @@ static void draw_ui() {
     const float sw = g_displayW > 0 ? (float)g_displayW : (float)g_width;
     const float sh = g_displayH > 0 ? (float)g_displayH : (float)g_height;
 
-    if (g_feat.espOn)
-        esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
+    esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
 
     if (!g_showMenu) return;
 
-    ImGui::SetNextWindowSize({360, 460}, ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("conRent-style ESP — Resolve in lobby or match (UnityKillsMe pid).");
-        if (g_resolving.load())
-            ImGui::TextDisabled("Resolving IL2CPP…");
-        else if (esp_is_resolved())
-            ImGui::TextColored(ImVec4(0.35f, 1.f, 0.5f, 1.f), "Metadata ready");
+        ImGui::TextDisabled("Overlay — open MLBB, allow display over apps, enter match.");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
-
-        if (ImGui::Button("STOP ESP", ImVec2(100, 0))) g_feat.espOn = false;
-        ImGui::SameLine();
-        if (ImGui::Button("START ESP", ImVec2(100, 0))) {
-            if (esp_is_resolved()) g_feat.espOn = true;
-        }
-        ImGui::Separator();
 
         if (ImGui::Button("Resolve")) {
             esp_request_force_resolve();
@@ -273,7 +234,6 @@ static void draw_ui() {
         ImGui::SameLine();
         ImGui::Checkbox("Distance", &g_feat.distance);
 
-        ImGui::TextDisabled("Smooth ramp: monsters first, then heroes (anti-crash).");
         ImGui::SeparatorText("Monster");
         ImGui::Checkbox("Box##m", &g_feat.monsterBox);
         ImGui::SameLine();
@@ -395,12 +355,11 @@ void ui_gl_surface_created() {
     if (!init_imgui_backends()) return;
     g_glReady = true;
     reader_start_once();
-    ui_log("MLBB ESP — conRent fast resolve + full EspTab draw (Build49 overlay)");
+    ui_log("MLBB ESP overlay — tap ≡ for menu, touches pass to game when closed");
 }
 
 static void reader_start_once() {
     if (g_readerStarted.exchange(true)) return;
-    resolve_worker_start_once();
     g_runReader.store(true);
     g_reader = std::thread(reader_loop);
 }
@@ -414,7 +373,6 @@ void ui_gl_surface_changed(int width, int height) {
 
 void ui_gl_surface_destroyed() {
     std::lock_guard<std::mutex> lock(g_glMu);
-    g_resolveWorkerRun.store(false);
     g_runReader.store(false);
     if (g_reader.joinable()) g_reader.join();
     g_readerStarted.store(false);

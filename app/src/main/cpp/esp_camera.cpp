@@ -251,13 +251,12 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH) {
     g_matrixReady = false;
     g_useIl2 = false;
     g_mainCam = 0;
-    g_w2sBudget = 0;
 
     if (g_inFrame) remote_session_end(g_sess);
     g_inFrame = false;
+    g_w2sBudget = 0;
 
-    /* External overlay: matrix-only W2S (mem read). Per-frame ptrace Il2 W2S caused
-     * mixed radar/screen coords → flicker and game stutter. conRent in-process only. */
+    /* Build #49 matrix W2S (mem read only) — stable overlay, no per-frame ptrace Il2. */
     if (pid > 0) {
         if (load_vp_game_method(pid))
             g_matrixReady = true;

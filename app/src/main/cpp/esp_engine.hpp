@@ -19,7 +19,6 @@ struct EspTarget {
     int meters = 0;
     int hp = 0, hpMax = 0;
     int kind = 0; /* 0 player 1 monster */
-    int entityId = 0;
     char label[24] = {};
 };
 

@@ -3,15 +3,14 @@
 #include "imgui.h"
 
 struct EspFeatures {
-    bool espOn = true;
-    bool box = false;
-    bool line = false;
-    bool health = false;
-    bool name = false;
-    bool distance = false;
+    bool box = true;
+    bool line = true;
+    bool health = true;
+    bool name = true;
+    bool distance = true;
     bool monsterBox = true;
     bool monsterName = true;
-    bool monsterHealth = false;
+    bool monsterHealth = true;
 };
 
 /* conRentV1 EspTab::DrawOverlay — external pseudo W2S (same layout as libtool overlay). */

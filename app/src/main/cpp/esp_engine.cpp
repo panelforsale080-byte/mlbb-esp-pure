@@ -11,7 +11,6 @@
 #include <cstring>
 #include <elf.h>
 #include <atomic>
-#include <chrono>
 #include <mutex>
 
 static std::mutex g_mu;
@@ -20,17 +19,9 @@ static uintptr_t g_bmKlass = 0;
 static uintptr_t g_bmStatics = 0;
 static uintptr_t g_bmInstance = 0;
 static bool g_resolved = false;
-static bool g_metadataReady = false;
-static RemoteIl2CppInfo g_cachedIl2{};
-static bool g_haveCachedIl2 = false;
+static std::atomic<bool> g_forceResolve{false};
 static EspResolveReport g_lastReport{};
 static const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
-static std::atomic<bool> g_forceResolve{false};
-static EspFrame g_lastStableFrame{};
-static int g_readFailStreak = 0;
-static int g_dictFailStreak = 0;
-
-constexpr size_t kMaxEspTargets = 32;
 
 struct BmFindMeta {
     int nameStrings = 0;
@@ -105,19 +96,19 @@ static void scan_strings(pid_t pid, const std::vector<MapsReg> &maps,
 }
 
 static bool dict_entries(pid_t pid, uintptr_t dict,
-                         std::vector<std::pair<int, uintptr_t>> &out, int maxOut = 48) {
+                         std::vector<std::pair<int, uintptr_t>> &out) {
     out.clear();
-    if (!dict || !mem_ptr_ok(dict)) return false;
+    if (!dict) return false;
     uintptr_t entries = 0;
     int count = 0;
     if (!mem_read(pid, dict + Off::DictEntries, entries) || !entries) return false;
-    if (!mem_read(pid, dict + Off::DictCount, count) || count <= 0 || count > 512) return false;
-    if (maxOut > 0 && count > maxOut) count = maxOut;
+    if (!mem_read(pid, dict + Off::DictCount, count) || count <= 0 || count > 256)
+        return false;
     int maxLength = 0;
     if (!mem_read(pid, entries + Off::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
         return false;
     const uintptr_t data = entries + Off::ArrData;
-    for (int i = 0; i < maxLength && (int)out.size() < count; ++i) {
+    for (int i = 0; i < maxLength; ++i) {
         const uintptr_t entry = data + (uintptr_t)i * Off::EntryStride;
         int hash = 0, key = 0;
         uintptr_t value = 0;
@@ -125,6 +116,7 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
         if (!mem_read(pid, entry + Off::EntryKey, key)) continue;
         if (!mem_read(pid, entry + Off::EntryValue, value) || !value) continue;
         out.emplace_back(key, value);
+        if ((int)out.size() >= count) break;
     }
     return !out.empty();
 }
@@ -155,23 +147,10 @@ static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
     return usable > 0;
 }
 
-static bool monster_id(int id) { return Off::monsterIdOk(id); }
-
-static std::chrono::steady_clock::time_point g_rampT0 =
-    std::chrono::steady_clock::now();
-
-static void ramp_reset() { g_rampT0 = std::chrono::steady_clock::now(); }
-
-static void ramp_limits(int &maxMon, int &maxHero) {
-    const auto sec = std::chrono::duration_cast<std::chrono::seconds>(
-                         std::chrono::steady_clock::now() - g_rampT0)
-                         .count();
-    maxMon = (int)std::min<int64_t>(14LL, 2LL + sec / 2);
-    if (sec < 6) {
-        maxHero = 0;
-        return;
-    }
-    maxHero = (int)std::min<int64_t>(10LL, (sec - 6) / 2);
+static bool monster_id(int id) {
+    for (int m : Off::kMonsterIds)
+        if (m == id) return true;
+    return false;
 }
 
 static bool statics_for(pid_t pid, uintptr_t klass, uintptr_t instOff,
@@ -547,20 +526,7 @@ void esp_reset() {
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
     g_resolved = false;
-    g_metadataReady = false;
-    g_haveCachedIl2 = false;
-    g_lastStableFrame = EspFrame{};
-    g_readFailStreak = 0;
-    g_dictFailStreak = 0;
-    ramp_reset();
     esp_camera_reset();
-}
-
-void esp_request_force_resolve() { g_forceResolve.store(true); }
-
-bool esp_is_resolved() {
-    std::lock_guard<std::mutex> lock(g_mu);
-    return g_resolved && g_metadataReady;
 }
 
 EspStatus esp_attach(pid_t pid) {
@@ -568,12 +534,17 @@ EspStatus esp_attach(pid_t pid) {
     if (pid != g_pid) {
         g_bmKlass = g_bmStatics = g_bmInstance = 0;
         g_resolved = false;
-        g_metadataReady = false;
-        g_haveCachedIl2 = false;
     }
     g_pid = pid;
     if (pid <= 0) return EspStatus::NoProcess;
     return EspStatus::Idle;
+}
+
+void esp_request_force_resolve() { g_forceResolve.store(true); }
+
+bool esp_is_resolved() {
+    std::lock_guard<std::mutex> lock(g_mu);
+    return g_resolved;
 }
 
 static void fill_report(EspResolveReport &r, EspStatus status, int mapsCount, bool probe,
@@ -626,7 +597,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         return rep.status;
     }
     const bool probe = proc_probe_read(g_pid);
-    if (!g_forceResolve.exchange(false) && g_resolved && g_metadataReady) {
+    if (!g_forceResolve.exchange(false) && g_resolved) {
         if (reportOut) *reportOut = g_lastReport;
         return g_lastReport.status;
     }
@@ -637,34 +608,29 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     g_il2_for_resolve = &il2;
 
     ConrentResolve cr{};
-    const bool crMeta =
-        conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.metadata_ready;
+    const bool crOk =
+        conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.battle_manager;
     esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
                               cr.camera_w2s_method);
-    if (crMeta) {
+    if (crOk) {
         g_il2_for_resolve = nullptr;
-        g_cachedIl2 = il2;
-        g_haveCachedIl2 = il2.sym_domain_get != 0;
-        g_metadataReady = true;
         g_bmKlass = cr.battle_manager_klass;
         g_bmStatics = 0;
         g_bmInstance = cr.battle_manager;
         g_resolved = true;
-        ramp_reset();
         BmFindMeta meta{};
         meta.usedElf = false;
-        const EspStatus st =
-            cr.battle_manager ? EspStatus::Ready : EspStatus::NoInstance;
-        fill_report(rep, st, (int)maps.size(), probe, meta, cr.battle_manager_klass, 0,
-                    cr.battle_manager);
+        fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, cr.battle_manager_klass,
+                    0, cr.battle_manager);
         std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1: %s", cr.detail);
-        ui_log("[resolve] %s", cr.detail);
+        ui_log("[resolve] OK %s", cr.detail);
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;
     }
-    if (cr.detail[0]) ui_log("[resolve] conRent path: %s", cr.detail);
+    if (!cr.battle_manager && cr.detail[0])
+        ui_log("[resolve] conRent path: %s", cr.detail);
 
     BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;
@@ -705,13 +671,6 @@ const EspResolveReport &esp_last_resolve_report() {
     return g_lastReport;
 }
 
-static void invalidate_all_locked() {
-    g_bmInstance = 0;
-    g_resolved = false;
-    g_metadataReady = false;
-    g_haveCachedIl2 = false;
-}
-
 EspStatus esp_tick(EspFrame &out) {
     std::lock_guard<std::mutex> lock(g_mu);
     out = EspFrame{};
@@ -721,82 +680,22 @@ EspStatus esp_tick(EspFrame &out) {
         std::snprintf(out.hint, sizeof(out.hint), "No MLBB pid");
         return out.status;
     }
-    if (!proc_alive(g_pid)) {
-        out.status = EspStatus::NoRead;
-        std::snprintf(out.hint, sizeof(out.hint), "Process dead");
-        invalidate_all_locked();
-        g_readFailStreak = g_dictFailStreak = 0;
-        return out.status;
-    }
-    if (!proc_probe_read(g_pid)) {
-        ++g_readFailStreak;
-        if (g_readFailStreak < 8 && g_lastStableFrame.status == EspStatus::Ready &&
-            !g_lastStableFrame.targets.empty()) {
-            out = g_lastStableFrame;
-            std::snprintf(out.hint, sizeof(out.hint), "OK  %zu targets (hold)",
-                          out.targets.size());
-            return EspStatus::Ready;
-        }
-        out.status = EspStatus::NoRead;
-        std::snprintf(out.hint, sizeof(out.hint), "Process unreadable");
-        invalidate_all_locked();
-        return out.status;
-    }
-    g_readFailStreak = 0;
-    if (!g_resolved || !g_metadataReady) {
+    if (!g_resolved) {
         out.status = EspStatus::NoBattleManager;
-        std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (lobby or match)");
+        std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (in match)");
         return out.status;
     }
-
-    static auto s_lastInstRefresh = std::chrono::steady_clock::time_point{};
-    const auto nowRefresh = std::chrono::steady_clock::now();
-    const bool doInstRefresh =
-        g_bmKlass && g_haveCachedIl2 &&
-        (s_lastInstRefresh.time_since_epoch().count() == 0 ||
-         nowRefresh - s_lastInstRefresh > std::chrono::milliseconds(1800));
-    if (doInstRefresh) {
-        s_lastInstRefresh = nowRefresh;
-        uintptr_t inst = 0;
-        if (conrent_refresh_battle_instance(g_pid, g_cachedIl2, g_bmKlass, inst) && inst)
-            g_bmInstance = inst;
-    }
-    if (!g_bmInstance && g_bmStatics)
+    if (!g_bmInstance && g_bmStatics) {
         refresh_instance(g_pid);
-    else if (!g_bmInstance)
-        refresh_instance(g_pid);
-
-    uintptr_t bm = g_bmInstance;
-    if (!bm || !mem_ptr_ok(bm)) {
-        out.status = EspStatus::NoInstance;
-        std::snprintf(out.hint, sizeof(out.hint),
-                      "Metadata cached — enter match (auto Instance refresh)");
-        out.bmKlass = g_bmKlass;
-        return out.status;
     }
 
-    uintptr_t pDictProbe = 0, mDictProbe = 0;
-    mem_read(g_pid, bm + Off::DicPlayerShow, pDictProbe);
-    mem_read(g_pid, bm + Off::DicMonsterShow, mDictProbe);
-    const bool dictLive =
-        mem_ptr_ok(pDictProbe) || mem_ptr_ok(mDictProbe);
-    if (!dictLive) {
-        ++g_dictFailStreak;
-        if (g_dictFailStreak < 10 && g_lastStableFrame.status == EspStatus::Ready &&
-            !g_lastStableFrame.targets.empty()) {
-            out = g_lastStableFrame;
-            out.bmInstance = bm;
-            std::snprintf(out.hint, sizeof(out.hint), "OK  %zu targets (hold)",
-                          out.targets.size());
-            return EspStatus::Ready;
-        }
-        if (g_dictFailStreak >= 10) g_bmInstance = 0;
+    refresh_instance(g_pid);
+    const uintptr_t bm = g_bmInstance;
+    if (!bm) {
         out.status = EspStatus::NoInstance;
-        std::snprintf(out.hint, sizeof(out.hint), "Loading / end game — waiting for BM dict");
-        out.bmKlass = g_bmKlass;
+        std::snprintf(out.hint, sizeof(out.hint), "BattleManager null — enter match");
         return out.status;
     }
-    g_dictFailStreak = 0;
 
     uintptr_t local = 0;
     mem_read(g_pid, bm + Off::LocalPlayerShow, local);
@@ -810,31 +709,19 @@ EspStatus esp_tick(EspFrame &out) {
     mem_read(g_pid, bm + Off::DicPlayerShow, pDict);
     mem_read(g_pid, bm + Off::DicMonsterShow, mDict);
     std::vector<std::pair<int, uintptr_t>> players, monsters;
-    dict_entries(g_pid, pDict, players, (int)kMaxEspTargets + 8);
-    dict_entries(g_pid, mDict, monsters, 20);
+    dict_entries(g_pid, pDict, players);
+    dict_entries(g_pid, mDict, monsters);
 
-    out.targets.reserve(kMaxEspTargets);
-
-    int maxMon = 0, maxHero = 0;
-    ramp_limits(maxMon, maxHero);
-
-    auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) -> bool {
-        if (out.targets.size() >= kMaxEspTargets) return false;
-        if (!v || !mem_ptr_ok(v)) return false;
-        uint8_t dead = 0;
-        if (mem_read(g_pid, v + Off::EntityDeath, dead) && dead) return false;
-        if (kind == 0) {
-            uint8_t camp = 0;
-            if (mem_read(g_pid, v + Off::SameCamp, camp) && camp) return false;
-        }
+    auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
+        if (!v) return;
+        uint8_t dead = 0, camp = 0;
+        if (mem_read(g_pid, v + Off::EntityDeath, dead) && dead) return;
+        if (mem_read(g_pid, v + Off::SameCamp, camp) && camp) return;
         int id = key;
         mem_read(g_pid, v + Off::EntityId, id);
-        if (kind == 1) {
-            if (id <= 0) id = key;
-            if (!monster_id(id)) return false;
-        }
+        if (kind == 1 && !monster_id(id)) return;
         Vec3 pos{};
-        if (!mem_read(g_pid, v + Off::LastPosition, pos) || !pos_ok(pos)) return false;
+        if (!mem_read(g_pid, v + Off::LastPosition, pos) || !pos_ok(pos)) return;
         EspTarget t{};
         t.worldX = pos.x;
         t.worldY = pos.y;
@@ -845,29 +732,21 @@ EspStatus esp_tick(EspFrame &out) {
         mem_read(g_pid, v + Off::Hp, t.hp);
         mem_read(g_pid, v + Off::HpMax, t.hpMax);
         t.kind = kind;
-        t.entityId = id;
         if (labelOverride)
             std::snprintf(t.label, sizeof(t.label), "%s", labelOverride);
         else if (kind == 1)
             std::snprintf(t.label, sizeof(t.label), "%s", Off::monsterLabel(id));
         else
-            std::snprintf(t.label, sizeof(t.label), "ID %d", id);
+            std::snprintf(t.label, sizeof(t.label), "P%d", id);
         out.targets.push_back(t);
-        return true;
     };
 
-    int monAdded = 0;
+    for (const auto &kv : players) push(kv.second, 0, nullptr, kv.first);
     for (const auto &kv : monsters) {
-        if (monAdded >= maxMon || out.targets.size() >= kMaxEspTargets) break;
         int id = kv.first;
         if (kv.second) mem_read(g_pid, kv.second + Off::EntityId, id);
-        if (push(kv.second, 1, Off::monsterLabel(id > 0 ? id : kv.first), kv.first))
-            ++monAdded;
-    }
-    int heroAdded = 0;
-    for (const auto &kv : players) {
-        if (heroAdded >= maxHero || out.targets.size() >= kMaxEspTargets) break;
-        if (push(kv.second, 0, nullptr, kv.first)) ++heroAdded;
+        if (!monster_id(id)) continue;
+        push(kv.second, 1, Off::monsterLabel(id), kv.first);
     }
 
     out.mapsCount = 0;
@@ -881,9 +760,7 @@ EspStatus esp_tick(EspFrame &out) {
     out.dictMonsters = (int)monsters.size();
 
     out.status = EspStatus::Ready;
-    std::snprintf(out.hint, sizeof(out.hint),
-                  "OK  %zu tgt  M%d/%d H%d/%d  dict P%d M%d", out.targets.size(), monAdded,
-                  maxMon, heroAdded, maxHero, out.dictPlayers, out.dictMonsters);
-    if (!out.targets.empty()) g_lastStableFrame = out;
+    std::snprintf(out.hint, sizeof(out.hint), "OK  %zu targets  dict P%d M%d",
+                  out.targets.size(), out.dictPlayers, out.dictMonsters);
     return out.status;
 }

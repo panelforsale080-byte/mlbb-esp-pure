@@ -57,12 +57,8 @@ public class OverlayService extends Service {
 
     private void attachWindows() {
         root = new FrameLayout(this);
-        root.setClickable(false);
-        root.setFocusable(false);
         glView = new GlImGuiView(this);
-        glView.setClickable(false);
-        glView.setFocusable(false);
-        glView.configureOverlaySurface(false);
+        glView.configureOverlaySurface();
         glView.setOnGlReadyListener(v -> main.post(() -> {
             setMenuTouch(false);
             Log.i(TAG, "overlay ready — touches pass to game until you tap ≡");
@@ -93,12 +89,11 @@ public class OverlayService extends Service {
         fab.setBackgroundColor(0xCC0A3555);
         fab.setOnClickListener(v -> NativeBridge.nativeToggleMenu());
 
-        WindowManager.LayoutParams         fabLp = new WindowManager.LayoutParams(
+        WindowManager.LayoutParams fabLp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 overlayType,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
         fabLp.gravity = Gravity.TOP | Gravity.START;

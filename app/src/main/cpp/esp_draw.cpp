@@ -2,9 +2,7 @@
 #include "esp_camera.hpp"
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
 #include <cstdio>
-#include <unordered_map>
 
 namespace {
 
@@ -32,30 +30,11 @@ static ImVec2 world_to_screen_pseudo(float relX, float relZ, float screenW, floa
     return {x, y};
 }
 
-static uint64_t smooth_key(const EspTarget &t) {
-    return ((uint64_t)(unsigned)t.kind << 32) | (unsigned)(t.entityId > 0 ? t.entityId : t.meters);
-}
-
-static ImVec2 target_screen_smooth(const EspFrame &frame, const EspTarget &t, float screenW,
-                                    float screenH,
-                                    std::unordered_map<uint64_t, ImVec2> &smooth) {
+static ImVec2 target_screen(const EspFrame &frame, const EspTarget &t, float screenW, float screenH) {
     float sx = 0.f, sy = 0.f;
-    ImVec2 raw;
     if (esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy))
-        raw = {sx, sy};
-    else
-        raw = world_to_screen_pseudo(t.relX, t.relZ, screenW, screenH);
-
-    const uint64_t key = smooth_key(t);
-    auto it = smooth.find(key);
-    if (it == smooth.end()) {
-        smooth[key] = raw;
-        return raw;
-    }
-    constexpr float kAlpha = 0.28f;
-    it->second.x += (raw.x - it->second.x) * kAlpha;
-    it->second.y += (raw.y - it->second.y) * kAlpha;
-    return it->second;
+        return {sx, sy};
+    return world_to_screen_pseudo(t.relX, t.relZ, screenW, screenH);
 }
 
 static ImVec2 self_screen(const EspFrame &frame, float screenW, float screenH) {
@@ -66,14 +45,13 @@ static ImVec2 self_screen(const EspFrame &frame, float screenW, float screenH) {
 }
 
 static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
-                     const EspTarget &t, const EspFeatures &feat, bool monster,
-                     std::unordered_map<uint64_t, ImVec2> &smooth) {
+                     const EspTarget &t, const EspFeatures &feat, bool monster) {
     const bool anyBox = monster ? feat.monsterBox : feat.box;
     const bool anyName = monster ? feat.monsterName : feat.name;
     const bool anyHp = monster ? feat.monsterHealth : feat.health;
     if (!anyBox && !anyName && !anyHp && !feat.line && !feat.distance) return;
 
-    const ImVec2 root = target_screen_smooth(frame, t, screenW, screenH, smooth);
+    const ImVec2 root = target_screen(frame, t, screenW, screenH);
     const float boxH = std::fabs(screenH / (monster ? 6.8f : 6.5f));
     const float boxW = boxH * (monster ? 0.55f : 0.48f);
     const ImVec2 boxStart{root.x - boxW * 0.5f, root.y - boxH};
@@ -122,7 +100,7 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
 void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
                       const EspFeatures &feat) {
     if (!draw || screenW < 1.f || screenH < 1.f) return;
-    if (!feat.espOn || frame.status != EspStatus::Ready) return;
+    if (frame.status != EspStatus::Ready) return;
 
     esp_camera_frame_begin(frame.pid, screenW, screenH);
 
@@ -134,15 +112,16 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
         return;
     }
 
-    static std::unordered_map<uint64_t, ImVec2> s_smooth;
-    if (frame.targets.empty()) s_smooth.clear();
+    if (esp_camera_ready()) {
+        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200), "ESP W2S (conRent cam)");
+    } else {
+        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(220, 160, 80, 200),
+                      "ESP radar fallback — Resolve in match");
+    }
 
     for (const EspTarget &t : frame.targets) {
-        if (t.kind == 1 && anyMon) draw_one(draw, screenW, screenH, frame, t, feat, true, s_smooth);
-    }
-    for (const EspTarget &t : frame.targets) {
-        if (t.kind == 0 && anyPlayer)
-            draw_one(draw, screenW, screenH, frame, t, feat, false, s_smooth);
+        if (t.kind == 0 && anyPlayer) draw_one(draw, screenW, screenH, frame, t, feat, false);
+        if (t.kind == 1 && anyMon) draw_one(draw, screenW, screenH, frame, t, feat, true);
     }
 
     esp_camera_frame_end();

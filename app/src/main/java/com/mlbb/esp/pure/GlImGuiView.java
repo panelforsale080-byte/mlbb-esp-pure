@@ -34,10 +34,8 @@ public class GlImGuiView extends GLSurfaceView implements GLSurfaceView.Renderer
         readyListener = listener;
     }
 
-    /** @param onTop false = media overlay layer (less fight with game GL / touch). */
-    public void configureOverlaySurface(boolean onTop) {
-        setZOrderOnTop(onTop);
-        setZOrderMediaOverlay(!onTop);
+    public void configureOverlaySurface() {
+        setZOrderOnTop(true);
         getHolder().setFormat(PixelFormat.TRANSLUCENT);
     }
 
@@ -47,7 +45,7 @@ public class GlImGuiView extends GLSurfaceView implements GLSurfaceView.Renderer
         getHolder().setFormat(PixelFormat.TRANSLUCENT);
         setPreserveEGLContextOnPause(false);
         setRenderer(this);
-        setRenderMode(RENDERMODE_CONTINUOUSLY);
+        setRenderMode(RENDERMODE_WHEN_DIRTY);
     }
 
     public void releaseGl() {
@@ -77,7 +75,7 @@ public class GlImGuiView extends GLSurfaceView implements GLSurfaceView.Renderer
         try {
             NativeBridge.nativeGlSurfaceChanged(width, height);
             surfaceReady = true;
-            setRenderMode(RENDERMODE_WHEN_DIRTY);
+            setRenderMode(RENDERMODE_CONTINUOUSLY);
             requestRender();
             if (readyListener != null) readyListener.onGlReady(this);
         } catch (Throwable t) {
