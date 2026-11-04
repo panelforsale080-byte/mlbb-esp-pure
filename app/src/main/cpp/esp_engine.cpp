@@ -30,6 +30,7 @@ const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
 std::atomic<bool> g_forceFullResolve{false};
 int g_noReadStrikes = 0;
 std::chrono::steady_clock::time_point g_lastFullResolve{};
+std::chrono::steady_clock::time_point g_ptraceQuietUntil{};
 
 constexpr size_t kMaxEspTargets = 32;
 
@@ -595,10 +596,10 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         if (reportOut) *reportOut = rep;
         return rep.status;
     }
-    if (!proc_is_unity_kills_me(g_pid)) {
+    if (!proc_is_mlbb_unity(g_pid)) {
         rep.status = EspStatus::NoBattleManager;
         std::snprintf(rep.detail, sizeof(rep.detail),
-                      "wrong process pid=%d — need com.mobile.legends:UnityKillsMe (not launcher)",
+                      "wrong process pid=%d — need UnityKillsMe / liblogic (not launcher only)",
                       (int)g_pid);
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
@@ -653,6 +654,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1: %s", cr.detail);
         ui_log("[resolve] %s", cr.detail);
         g_lastFullResolve = nowResolve;
+        g_ptraceQuietUntil = nowResolve + std::chrono::seconds(6);
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;
@@ -703,6 +705,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     const EspStatus stOut = inst ? EspStatus::Ready : EspStatus::NoInstance;
     fill_report(rep, stOut, (int)maps.size(), probe, meta, k, st, inst);
     g_lastFullResolve = nowResolve;
+    g_ptraceQuietUntil = nowResolve + std::chrono::seconds(6);
     g_lastReport = rep;
     if (reportOut) *reportOut = rep;
     return stOut;
@@ -753,10 +756,11 @@ EspStatus esp_tick(EspFrame &out) {
 
     static auto s_lastInstRefresh = std::chrono::steady_clock::time_point{};
     const auto nowRefresh = std::chrono::steady_clock::now();
+    const bool ptraceAllowed = nowRefresh >= g_ptraceQuietUntil;
     const bool doInstRefresh =
-        g_bmKlass && g_haveCachedIl2 &&
+        ptraceAllowed && g_bmKlass && g_haveCachedIl2 &&
         (s_lastInstRefresh.time_since_epoch().count() == 0 ||
-         nowRefresh - s_lastInstRefresh > std::chrono::milliseconds(400));
+         nowRefresh - s_lastInstRefresh > std::chrono::milliseconds(900));
     if (doInstRefresh) {
         s_lastInstRefresh = nowRefresh;
         uintptr_t inst = 0;

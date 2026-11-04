@@ -163,12 +163,13 @@ static void attach_pid(pid_t p, const char *why) {
     ui_log("  cmd: %s", cmd);
     if (!probe)
         ui_log("  process_vm_readv failed — need root or correct target process");
-    if (!proc_is_unity_kills_me(p) && !g_fallbackPid) {
-        ui_log("[%s] skip pid %d — not UnityKillsMe (Advanced → Fallback if needed)", why, (int)p);
+    if (!proc_is_mlbb_unity(p) && !g_fallbackPid) {
+        ui_log("[%s] skip pid %d — no UnityKillsMe/liblogic (Advanced → Fallback if needed)", why,
+               (int)p);
         return;
     }
-    if (!proc_is_unity_kills_me(p))
-        ui_log("[%s] warning: pid %d is not UnityKillsMe — IL2CPP resolve will fail", why, (int)p);
+    if (!proc_is_mlbb_unity(p))
+        ui_log("[%s] warning: pid %d may not host IL2CPP", why, (int)p);
     esp_attach(p);
     g_wantPid.store(p);
     g_needResolve.store(true);
@@ -205,12 +206,6 @@ static void reader_loop() {
             g_wantPid.store(0);
             g_resolvePending.store(false);
             g_needResolve.store(false);
-            lastPid = 0;
-        } else if (pid > 0 && g_autoFind && !proc_is_unity_kills_me(pid)) {
-            ui_log("[auto] pid %d is not UnityKillsMe — drop and re-scan", (int)pid);
-            esp_reset();
-            g_wantPid.store(0);
-            g_resolvePending.store(false);
             lastPid = 0;
         } else if (pid > 0) {
             if (g_needResolve.exchange(false) && !g_resolving.load())

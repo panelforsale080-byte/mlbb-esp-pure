@@ -55,9 +55,12 @@ pid_t proc_find_unity_kills() {
         if (e->d_name[0] < '1' || e->d_name[0] > '9') continue;
         const pid_t pid = (pid_t)std::atoi(e->d_name);
         if (pid <= 0) continue;
-        if (cmdline_has(pid, "com.mobile.legends") && cmdline_has(pid, "UnityKillsMe")) {
+        if (!cmdline_has(pid, "com.mobile.legends")) continue;
+        if (cmdline_has(pid, "UnityKillsMe")) {
             if (pid > best) best = pid;
+            continue;
         }
+        if (proc_maps_has_liblogic(pid) && pid > best) best = pid;
     }
     closedir(d);
     return best;
@@ -66,6 +69,22 @@ pid_t proc_find_unity_kills() {
 bool proc_is_unity_kills_me(pid_t pid) {
     if (pid <= 0) return false;
     return cmdline_has(pid, "com.mobile.legends") && cmdline_has(pid, "UnityKillsMe");
+}
+
+bool proc_maps_has_liblogic(pid_t pid) {
+    std::vector<MapsReg> maps;
+    if (!mem_maps(pid, maps)) return false;
+    for (const auto &m : maps) {
+        if (m.path.find("liblogic") != std::string::npos) return true;
+    }
+    return false;
+}
+
+bool proc_is_mlbb_unity(pid_t pid) {
+    if (pid <= 0) return false;
+    if (!cmdline_has(pid, "com.mobile.legends")) return false;
+    if (cmdline_has(pid, "UnityKillsMe")) return true;
+    return proc_maps_has_liblogic(pid);
 }
 
 pid_t proc_find_mlbb_fallback() {
