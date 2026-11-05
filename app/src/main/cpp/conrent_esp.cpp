@@ -395,6 +395,16 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
         out.camera_get_main_native = method_native_ptr(pid, out.camera_get_main_method);
         out.camera_w2s_native = method_native_ptr(pid, out.camera_w2s_method);
     }
+
+    const uintptr_t bdKlass = find_class_fast(s, pid, il2, images, "BattleData", false);
+    if (bdKlass) {
+        const uintptr_t bridgeKlass = find_class_fast(s, pid, il2, images, "BattleBridge", false);
+        if (bridgeKlass) {
+            const uintptr_t m = method_from_name(s, pid, il2, bridgeKlass, "get_bStartBattle", 0);
+            out.get_bStartBattle_native = method_native_ptr(pid, m);
+        }
+        out.battle_bridge = static_field_ptr(s, pid, il2, bdKlass, "m_BattleBridge");
+    }
     out.metadata_ready =
         klass && out.camera_get_main_method && out.camera_w2s_method && out.runtime_ready;
 

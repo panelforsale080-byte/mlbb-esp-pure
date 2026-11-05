@@ -7,6 +7,7 @@
 #include "remote_elf.hpp"
 #include "ui_log.hpp"
 #include "esp_sdcard_log.hpp"
+#include "esp_runtime_off.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -151,8 +152,9 @@ static bool pos_ok(const Vec3 &p) {
 }
 
 static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
-    if (mem_read(pid, ent + Off::CachePosition, pos) && pos_ok(pos)) return true;
-    if (mem_read(pid, ent + Off::LastPosition, pos) && pos_ok(pos)) return true;
+    const EspRuntimeOff &R = esp_runtime_off();
+    if (mem_read(pid, ent + R.cachePosition, pos) && pos_ok(pos)) return true;
+    if (mem_read(pid, ent + R.lastPosition, pos) && pos_ok(pos)) return true;
     pos = {};
     return false;
 }
@@ -647,8 +649,8 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     const bool crRan = conrent_resolve_battle_manager(g_pid, maps, il2, cr);
     g_il2_for_resolve = nullptr;
     esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
-    esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
-                              cr.camera_w2s_method);
+    esp_camera_set_conrent_w2s(g_pid, il2.sym_runtime_invoke, cr);
+    esp_runtime_off_apply(cr);
 
     if (crRan && (cr.battle_manager || cr.battle_manager_klass || cr.metadata_ready)) {
         g_bmKlass = cr.battle_manager_klass;
@@ -707,8 +709,10 @@ EspStatus esp_tick(EspFrame &out) {
         return out.status;
     }
 
+    const EspRuntimeOff &R = esp_runtime_off();
     uintptr_t local = 0;
-    mem_read(g_pid, bm + Off::LocalPlayerShow, local);
+    mem_read(g_pid, bm + R.localPlayerShow, local);
+    out.localPlayerEnt = local;
     Vec3 self{};
     if (local) read_entity_pos(g_pid, local, self);
     out.selfX = self.x;
@@ -716,21 +720,21 @@ EspStatus esp_tick(EspFrame &out) {
     out.selfZ = self.z;
 
     uintptr_t pDict = 0, mDict = 0;
-    mem_read(g_pid, bm + Off::DicPlayerShow, pDict);
-    mem_read(g_pid, bm + Off::DicMonsterShow, mDict);
+    mem_read(g_pid, bm + R.dicPlayerShow, pDict);
+    mem_read(g_pid, bm + R.dicMonsterShow, mDict);
     std::vector<std::pair<int, uintptr_t>> players, monsters;
     dict_entries(g_pid, pDict, players);
     dict_entries(g_pid, mDict, monsters);
     if (players.empty()) {
         uintptr_t pList = 0;
-        mem_read(g_pid, bm + Off::ListPlayerShow, pList);
+        mem_read(g_pid, bm + R.listPlayerShow, pList);
         std::vector<uintptr_t> listP;
         if (list_entities(g_pid, pList, listP))
             for (size_t i = 0; i < listP.size(); ++i) players.emplace_back((int)i, listP[i]);
     }
     if (monsters.empty()) {
         uintptr_t mList = 0;
-        mem_read(g_pid, bm + Off::ListMonsterShow, mList);
+        mem_read(g_pid, bm + R.listMonsterShow, mList);
         std::vector<uintptr_t> listM;
         if (list_entities(g_pid, mList, listM))
             for (size_t i = 0; i < listM.size(); ++i) monsters.emplace_back((int)i, listM[i]);
@@ -739,10 +743,10 @@ EspStatus esp_tick(EspFrame &out) {
     auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
         if (!v) return;
         uint8_t dead = 0, camp = 0;
-        if (mem_read(g_pid, v + Off::EntityDeath, dead) && dead) return;
-        if (mem_read(g_pid, v + Off::SameCamp, camp) && camp) return;
+        if (mem_read(g_pid, v + R.entityDeath, dead) && dead) return;
+        if (mem_read(g_pid, v + R.sameCamp, camp) && camp) return;
         int id = key;
-        mem_read(g_pid, v + Off::EntityId, id);
+        mem_read(g_pid, v + R.entityId, id);
         if (kind == 1 && !monster_id(id)) return;
         Vec3 pos{};
         if (!read_entity_pos(g_pid, v, pos)) return;
@@ -754,8 +758,8 @@ EspStatus esp_tick(EspFrame &out) {
         t.relX = pos.x - self.x;
         t.relZ = pos.z - self.z;
         t.meters = (int)std::sqrt(t.relX * t.relX + t.relZ * t.relZ);
-        mem_read(g_pid, v + Off::Hp, t.hp);
-        mem_read(g_pid, v + Off::HpMax, t.hpMax);
+        mem_read(g_pid, v + R.hp, t.hp);
+        mem_read(g_pid, v + R.hpMax, t.hpMax);
         t.kind = kind;
         if (labelOverride)
             std::snprintf(t.label, sizeof(t.label), "%s", labelOverride);
@@ -769,7 +773,7 @@ EspStatus esp_tick(EspFrame &out) {
     for (const auto &kv : players) push(kv.second, 0, nullptr, kv.first);
     for (const auto &kv : monsters) {
         int id = kv.first;
-        if (kv.second) mem_read(g_pid, kv.second + Off::EntityId, id);
+        if (kv.second) mem_read(g_pid, kv.second + R.entityId, id);
         if (!monster_id(id)) continue;
         push(kv.second, 1, Off::monsterLabel(id), kv.first);
     }

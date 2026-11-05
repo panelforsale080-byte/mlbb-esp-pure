@@ -1,5 +1,6 @@
 #include "esp_sdcard_log.hpp"
 #include "offsets.hpp"
+#include "esp_runtime_off.hpp"
 #include "ui_log.hpp"
 #include <chrono>
 #include <cstdio>
@@ -103,8 +104,10 @@ static std::string build_how_esp_works() {
 static std::string build_resolve_section(pid_t pid, const EspResolveReport &rep,
                                          const ConrentResolve &cr, const RemoteIl2CppInfo &il2) {
     std::ostringstream os;
-    os << "===== RESOLVE @ pid=" << pid << " =====\n";
-    os << "status=" << (int)rep.status << " detail=" << rep.detail << "\n";
+    os << "ESP RESOLVE LOG\n";
+    os << "source=external ptrace IL2CPP (conRentV1 EspTab port) game_pid=" << pid << "\n";
+    os << "runtime_ready=" << (cr.runtime_ready ? "1" : "0") << "\n";
+    os << "overlay_pkg=" << self_package() << "\n";
     os << "maps=" << rep.mapsCount << " readProbe=" << (rep.readProbe ? "OK" : "FAIL") << "\n";
     os << "il2cpp lib=" << rep.il2cppLib << " base=";
     hex(os, rep.il2cppBase);
@@ -193,38 +196,37 @@ static std::string build_resolve_section(pid_t pid, const EspResolveReport &rep,
     return os.str();
 }
 
-static std::string build_live_section(const EspFrame &frame, bool espDrawActive) {
+static std::string build_live_section(const EspFrame &frame, bool /*espDrawActive*/,
+                                      const ConrentResolve &cr) {
     std::ostringstream os;
-    os << "===== LIVE TICK =====\n";
-    os << "esp_draw=" << (espDrawActive ? "ON" : "OFF") << " status=" << (int)frame.status
-       << " hint=" << frame.hint << "\n";
-    os << "self world=(" << frame.selfX << "," << frame.selfY << "," << frame.selfZ << ")\n";
-    os << "self screen valid=" << (frame.selfScreenValid ? "yes" : "no");
+    os << "battleManager=";
+    hex(os, frame.bmInstance);
+    os << " localPlayer=";
+    hex(os, frame.localPlayerEnt);
+    os << " self=(" << frame.selfX << "," << frame.selfY << "," << frame.selfZ << ")\n";
+    os << "selfScreen valid=" << (frame.selfScreenValid ? "yes" : "no");
     if (frame.selfScreenValid)
         os << " (" << frame.selfScreenX << "," << frame.selfScreenY << ")";
     os << "\n";
-    os << "bmInstance=";
-    hex(os, frame.bmInstance);
-    os << " playerDict=";
-    hex(os, frame.playerDict);
-    os << " monsterDict=";
-    hex(os, frame.monsterDict);
-    os << " counts P" << frame.dictPlayers << " M" << frame.dictMonsters << "\n";
-    os << "targets=" << frame.targets.size() << "\n";
-    for (size_t i = 0; i < frame.targets.size() && i < 32; ++i) {
+    os << "dict players=" << frame.dictPlayers << " monsters=" << frame.dictMonsters
+       << " drawn=" << frame.targets.size() << "\n";
+    os << "W2S: Camera.get_main + WorldToScreenPoint (conRent native ptrs)\n";
+    os << "  cameraGetMain=";
+    hex(os, cr.camera_get_main_native);
+    os << " cameraWorldToScreen=";
+    hex(os, cr.camera_w2s_native);
+    os << "\n\nENTITIES\n";
+    for (size_t i = 0; i < frame.targets.size() && i < 40; ++i) {
         const EspTarget &t = frame.targets[i];
-        os << "  [" << i << "] ent=";
-        hex(os, t.ent);
-        os << " kind=" << t.kind << " " << t.label << " hp=" << t.hp << "/" << t.hpMax
-           << " m=" << t.meters << " world=(" << t.worldX << "," << t.worldY << "," << t.worldZ
-           << ")";
+        os << "  [" << i << "] kind=" << (t.kind ? "monster" : "player") << " name=" << t.label
+           << " hp=" << t.hp << "/" << t.hpMax << " m=" << t.meters << " world=(" << t.worldX
+           << ",?," << t.worldZ << ")";
         if (t.screenValid)
             os << " screen=(" << t.screenX << "," << t.screenY << ")";
-        else
-            os << " screen=invalid";
         os << "\n";
     }
-    if (frame.targets.size() > 32) os << "  ... (" << (frame.targets.size() - 32) << " more)\n";
+    if (frame.targets.size() > 40)
+        os << "  ... " << (frame.targets.size() - 40) << " more\n";
     os << "\n";
     return os.str();
 }
@@ -266,9 +268,8 @@ void esp_sdcard_log_after_resolve(pid_t pid, const EspResolveReport &rep, const 
     g_cachedIl2 = il2;
 
     std::ostringstream body;
-    body << "MLBB ESP PURE — full diagnostic log\n";
-    body << "package=" << self_package() << "\n\n";
-    body << build_how_esp_works();
+    body << "MLBB ESP PURE — full diagnostic (conRentV1 method, external)\n";
+    body << "game_pid=" << pid << " overlay=" << self_package() << "\n\n";
     body << build_resolve_section(pid, rep, cr, il2);
     body << "===== LIVE TICK =====\n(pending — Start ESP in match)\n\n";
     publish_files(body.str(), false);
@@ -289,13 +290,13 @@ void esp_sdcard_log_after_tick(pid_t pid, const EspFrame &frame, bool espDrawAct
     const RemoteIl2CppInfo &il2 = g_cachedIl2;
 
     std::ostringstream body;
-    body << "MLBB ESP PURE — full diagnostic log\n";
-    body << "package=" << self_package() << " pid=" << pid << "\n\n";
-    body << build_how_esp_works();
+    body << "MLBB ESP PURE — full diagnostic (conRentV1 method, external)\n";
+    body << "game_pid=" << pid << " overlay=" << self_package() << "\n\n";
     if (g_cachedPid == pid && cr.battle_manager_klass)
         body << build_resolve_section(pid, rep, cr, il2);
     else
         body << build_resolve_section(pid, rep, ConrentResolve{}, il2);
-    body << build_live_section(frame, espDrawActive);
+    body << "===== LIVE TICK =====\n";
+    body << build_live_section(frame, espDrawActive, cr);
     publish_files(body.str(), true);
 }

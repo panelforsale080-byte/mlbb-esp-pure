@@ -39,6 +39,7 @@ struct EspFrame {
     uintptr_t bmKlass = 0;
     uintptr_t bmStatics = 0;
     uintptr_t bmInstance = 0;
+    uintptr_t localPlayerEnt = 0;
     uintptr_t playerDict = 0;
     uintptr_t monsterDict = 0;
     int dictPlayers = 0;

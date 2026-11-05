@@ -230,7 +230,7 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("conRent resolve + IL2 W2S; auto log: sdcard .../mlbb_esp_full_log.txt");
+        ImGui::TextDisabled("conRentV1 ESP method; log: .../mlbb_esp_full_log.txt + esp_resolve.txt");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
