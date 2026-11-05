@@ -233,7 +233,7 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("Fast conRent resolve; IL2 W2S via inject (#49); vm_read ESP draw.");
+        ImGui::TextDisabled("#149 ESP + #49 IL2 W2S; conRent fast resolve; matrix fallback.");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
@@ -448,9 +448,16 @@ bool ui_menu_interactive() { return g_showMenu; }
 
 void ui_esp_start() {
     g_espActive.store(true);
+    if (!g_feat.box && !g_feat.line && !g_feat.health && !g_feat.name && !g_feat.distance &&
+        !g_feat.monsterBox && !g_feat.monsterName && !g_feat.monsterHealth) {
+        g_feat.box = g_feat.line = g_feat.health = g_feat.name = true;
+        g_feat.monsterBox = g_feat.monsterName = true;
+    }
     const pid_t pid = esp_current_pid();
-    if (pid > 0) esp_w2s_bridge_ensure_injected(pid, nullptr);
-    ui_log("[esp] START — build #49 IL2 via inject; draw=vm_read (fast resolve kept)");
+    if (pid > 0) {
+        std::thread([pid] { esp_w2s_bridge_ensure_injected(pid, nullptr); }).detach();
+    }
+    ui_log("[esp] START — #149 draw + #49 IL2 (ptrace try / inject optional / matrix fallback)");
 }
 
 void ui_esp_stop() {

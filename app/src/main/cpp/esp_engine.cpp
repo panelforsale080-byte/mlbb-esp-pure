@@ -885,7 +885,7 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
         frame.selfZ = selfWorld.z;
     }
 
-    esp_camera_frame_begin(frame.pid, screenW, screenH, false);
+    esp_camera_frame_begin(frame.pid, screenW, screenH, true);
     float sx = 0.f, sy = 0.f;
     if (esp_camera_world_to_screen(selfWorld.x, selfWorld.y, selfWorld.z, sx, sy)) {
         frame.selfScreenX = sx;

@@ -252,7 +252,6 @@ void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t ge
 }
 
 void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowIl2Ptrace) {
-    (void)allowIl2Ptrace;
     g_screenW = screenW;
     g_screenH = screenH;
     normalize_landscape(g_screenW, g_screenH);
@@ -263,16 +262,24 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     if (g_inFrame) remote_session_end(g_sess);
     g_inFrame = false;
 
-    if (esp_w2s_bridge_active()) {
-        esp_w2s_bridge_set_screen(g_screenW, g_screenH);
-        return;
+    g_w2sBudget = kMaxIl2W2sPerFrame;
+
+    if (esp_w2s_bridge_active()) esp_w2s_bridge_set_screen(g_screenW, g_screenH);
+
+    /* Build #49: IL2 Camera.WorldToScreenPoint when ptrace attach succeeds (try_lock — no deadlock). */
+    if (allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
+        proc_alive(pid)) {
+        if (remote_session_begin_try(pid, g_sess)) {
+            g_inFrame = true;
+            g_useIl2 = true;
+        }
     }
 
-    /* No overlay ptrace on draw (crash). Matrix vm_read fallback if inject agent missing. */
+    /* Build #149: always load matrix so W2S still works when IL2/inject unavailable. */
     if (pid > 0 && proc_alive(pid)) {
-        if (load_vp_show_battle_camera(pid))
+        if (load_vp_game_method(pid))
             g_matrixReady = true;
-        else if (load_vp_game_method(pid))
+        else if (load_vp_show_battle_camera(pid))
             g_matrixReady = true;
     }
 }
@@ -286,12 +293,13 @@ void esp_camera_frame_end() {
 }
 
 bool esp_camera_ready() {
-    return esp_w2s_bridge_active() || g_matrixReady;
+    return esp_w2s_bridge_active() || g_useIl2 || g_matrixReady;
 }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
     if (g_il2Pid > 0 && esp_w2s_bridge_active() &&
         esp_w2s_bridge_world_to_screen(g_il2Pid, wx, wy, wz, outX, outY))
         return true;
+    if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
     return matrix_w2s(wx, wy, wz, outX, outY);
 }
