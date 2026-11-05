@@ -102,7 +102,8 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     if (!draw || screenW < 1.f || screenH < 1.f) return;
     if (frame.status != EspStatus::Ready) return;
 
-    esp_camera_frame_begin(frame.pid, screenW, screenH, false);
+    const bool allowIl2 = !frame.targets.empty();
+    esp_camera_frame_begin(frame.pid, screenW, screenH, allowIl2);
 
     const bool anyPlayer = feat.box || feat.line || feat.health || feat.name || feat.distance;
     const bool anyMon =
@@ -110,6 +111,14 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     if (!anyPlayer && !anyMon) {
         esp_camera_frame_end();
         return;
+    }
+
+    if (esp_camera_ready()) {
+        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200),
+                      "W2S conRentV1 IL2 (vm_read tick)");
+    } else {
+        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(220, 160, 80, 200),
+                      "ESP radar fallback — Resolve in match");
     }
 
     for (const EspTarget &t : frame.targets) {
