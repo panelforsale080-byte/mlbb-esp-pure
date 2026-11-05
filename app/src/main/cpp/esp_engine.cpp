@@ -736,6 +736,7 @@ EspStatus esp_tick(EspFrame &out) {
 
     auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
         if (!v) return;
+        if (local && v == local) return;
         uint8_t dead = 0, camp = 0;
         if (mem_read(g_pid, v + Off::EntityDeath, dead) && dead) return;
         if (mem_read(g_pid, v + Off::SameCamp, camp) && camp) return;
@@ -879,8 +880,22 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
         if (it != g_entScreen.end()) st = it->second;
 
         if (esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy)) {
+            const bool onScreen = sx >= -32.f && sx <= screenW + 32.f && sy >= -32.f &&
+                                  sy <= screenH + 32.f;
             float ox = sx, oy = sy;
-            smooth_screen_point(sx, sy, ox, oy, alpha, st.px, st.py, st.have);
+            if (t.kind == 0 && onScreen) {
+                st.px = sx;
+                st.py = sy;
+                st.have = true;
+            } else if (onScreen) {
+                ox = sx;
+                oy = sy;
+                st.px = sx;
+                st.py = sy;
+                st.have = true;
+            } else {
+                smooth_screen_point(sx, sy, ox, oy, alpha, st.px, st.py, st.have);
+            }
             st.outX = ox;
             st.outY = oy;
             st.miss = 0;
@@ -890,7 +905,7 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
             live[t.ent] = st;
             continue;
         }
-        if (st.have && st.miss < kScreenHoldFrames) {
+        if (t.kind != 0 && st.have && st.miss < kScreenHoldFrames) {
             ++st.miss;
             t.screenX = st.outX;
             t.screenY = st.outY;

@@ -263,21 +263,19 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
 
     g_w2sBudget = kMaxIl2W2sPerFrame;
 
-    /* Build #49: IL2 Camera.WorldToScreenPoint first (accurate), matrix if attach fails. */
+    if (pid > 0 && proc_alive(pid)) {
+        if (load_vp_game_method(pid))
+            g_matrixReady = true;
+        else if (load_vp_show_battle_camera(pid))
+            g_matrixReady = true;
+    }
+
     if (allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
         proc_alive(pid)) {
         if (remote_session_begin_try(pid, g_sess)) {
             g_inFrame = true;
             g_useIl2 = true;
         }
-    }
-
-    /* Always load matrix so IL2 budget/timeouts still get W2S every target. */
-    if (pid > 0 && proc_alive(pid) && !g_matrixReady) {
-        if (load_vp_game_method(pid))
-            g_matrixReady = true;
-        else if (load_vp_show_battle_camera(pid))
-            g_matrixReady = true;
     }
 }
 
@@ -292,7 +290,6 @@ void esp_camera_frame_end() {
 bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
-    /* One path per frame — mixing IL2 + matrix on different targets causes box jitter. */
-    if (g_useIl2) return il2_invoke_w2s(wx, wy, wz, outX, outY);
+    if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
     return matrix_w2s(wx, wy, wz, outX, outY);
 }

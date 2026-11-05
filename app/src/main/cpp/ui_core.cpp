@@ -180,13 +180,6 @@ static void reader_loop() {
             }
             EspFrame f;
             esp_tick(f);
-            if (g_espActive.load() && f.status == EspStatus::Ready) {
-                float sw = (float)g_width;
-                float sh = (float)g_height;
-                if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
-                if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
-                esp_project_screens(f, sw, sh);
-            }
             if (f.status != lastStatus || pid != lastPid) {
                 ui_log("[tick] %s | %s", status_name(f.status), f.hint);
                 if (f.status == EspStatus::Ready) {
@@ -218,6 +211,7 @@ static void draw_ui() {
     if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
 
     if (g_espActive.load() && fr.status == EspStatus::Ready) {
+        esp_project_screens(fr, sw, sh);
         esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
     }
 
