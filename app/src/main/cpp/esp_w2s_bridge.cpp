@@ -90,6 +90,11 @@ static bool probe_magic(pid_t pid, uintptr_t addr) {
 
 } // namespace
 
+void esp_w2s_bridge_set_agent_path(const char *absolutePath) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_agentPath = absolutePath ? absolutePath : "";
+}
+
 void esp_w2s_bridge_reset() {
     std::lock_guard<std::mutex> lock(g_mu);
     g_pid = 0;
