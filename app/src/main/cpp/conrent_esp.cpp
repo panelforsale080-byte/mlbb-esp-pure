@@ -188,6 +188,68 @@ static uintptr_t klass_static_fields(pid_t pid, uintptr_t klass) {
     return 0;
 }
 
+static uintptr_t instance_field_offset(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
+                                       uintptr_t klass, const char *fieldName) {
+    if (!klass || !fieldName || !il2.sym_class_get_field_from_name) return 0;
+    const uintptr_t namePtr = scratch_cstr(s, pid, 10, fieldName);
+    if (!namePtr) return 0;
+    uintptr_t field = 0;
+    if (!remote_session_call(s, il2.sym_class_get_field_from_name, {klass, namePtr}, field) ||
+        !field)
+        return 0;
+    if (il2.sym_field_get_offset) {
+        uintptr_t off = 0;
+        if (remote_session_call(s, il2.sym_field_get_offset, {field}, off) && off > 0 &&
+            off < 0x4000)
+            return off;
+    }
+    for (uintptr_t fo : {0x18u, 0x1Cu, 0x20u, 0x14u, 0x10u}) {
+        uint32_t o = 0;
+        if (mem_read(pid, field + fo, o) && o >= 0x08 && o < 0x2000) return o;
+    }
+    return 0;
+}
+
+static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
+                                       const ResolveImages &images, ConrentResolve &out) {
+    const uintptr_t bmKlass = out.battle_manager_klass;
+    if (bmKlass) {
+        out.runtime_fields.bm_m_LocalPlayerShow =
+            instance_field_offset(s, pid, il2, bmKlass, "m_LocalPlayerShow");
+        out.runtime_fields.bm_m_dicPlayerShow =
+            instance_field_offset(s, pid, il2, bmKlass, "m_dicPlayerShow");
+        out.runtime_fields.bm_m_dicMonsterShow =
+            instance_field_offset(s, pid, il2, bmKlass, "m_dicMonsterShow");
+        out.runtime_fields.bm_m_ShowPlayerList =
+            instance_field_offset(s, pid, il2, bmKlass, "m_ShowPlayerList");
+        if (!out.runtime_fields.bm_m_ShowPlayerList)
+            out.runtime_fields.bm_m_ShowPlayerList =
+                instance_field_offset(s, pid, il2, bmKlass, "m_listPlayerShow");
+        out.runtime_fields.bm_m_ShowMonsterList =
+            instance_field_offset(s, pid, il2, bmKlass, "m_ShowMonsterList");
+    }
+    uintptr_t seKlass = find_class_fast(s, pid, il2, images, "ShowEntity", false);
+    out.runtime_fields.show_entity_klass = seKlass;
+    if (seKlass) {
+        out.runtime_fields.se_LastPosition =
+            instance_field_offset(s, pid, il2, seKlass, "<LastPosition>k__BackingField");
+        if (!out.runtime_fields.se_LastPosition)
+            out.runtime_fields.se_LastPosition =
+                instance_field_offset(s, pid, il2, seKlass, "LastPosition");
+        out.runtime_fields.se_CachePosition =
+            instance_field_offset(s, pid, il2, seKlass, "<CachePosition>k__BackingField");
+        if (!out.runtime_fields.se_CachePosition)
+            out.runtime_fields.se_CachePosition =
+                instance_field_offset(s, pid, il2, seKlass, "CachePosition");
+        out.runtime_fields.se_m_ID = instance_field_offset(s, pid, il2, seKlass, "m_ID");
+        out.runtime_fields.se_m_bDeath = instance_field_offset(s, pid, il2, seKlass, "m_bDeath");
+        out.runtime_fields.se_m_bSameCampType =
+            instance_field_offset(s, pid, il2, seKlass, "m_bSameCampType");
+        out.runtime_fields.se_m_Hp = instance_field_offset(s, pid, il2, seKlass, "m_Hp");
+        out.runtime_fields.se_m_HpMax = instance_field_offset(s, pid, il2, seKlass, "m_HpMax");
+    }
+}
+
 static uintptr_t static_field_ptr(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
                                   uintptr_t klass, const char *fieldName) {
     if (!il2.sym_class_get_field_from_name || !il2.sym_field_static_get_value || !klass)
@@ -335,6 +397,8 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
     }
     out.metadata_ready =
         klass && out.camera_get_main_method && out.camera_w2s_method && out.runtime_ready;
+
+    fill_runtime_field_offsets(s, pid, il2, images, out);
 
     remote_session_end(s);
 

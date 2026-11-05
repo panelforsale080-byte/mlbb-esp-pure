@@ -5,8 +5,26 @@
 #include <vector>
 
 /* conRentV1 Tool/EspTab.cpp — external PID port (no inject). */
+/** IL2CPP instance field offsets (il2cpp_field_get_offset or FieldInfo decode). */
+struct ConrentRuntimeOffsets {
+    uintptr_t bm_m_LocalPlayerShow = 0;
+    uintptr_t bm_m_dicPlayerShow = 0;
+    uintptr_t bm_m_dicMonsterShow = 0;
+    uintptr_t bm_m_ShowPlayerList = 0;
+    uintptr_t bm_m_ShowMonsterList = 0;
+    uintptr_t se_LastPosition = 0;
+    uintptr_t se_CachePosition = 0;
+    uintptr_t se_m_ID = 0;
+    uintptr_t se_m_bDeath = 0;
+    uintptr_t se_m_bSameCampType = 0;
+    uintptr_t se_m_Hp = 0;
+    uintptr_t se_m_HpMax = 0;
+    uintptr_t show_entity_klass = 0;
+};
+
 struct ConrentResolve {
     bool runtime_ready = false;
+    ConrentRuntimeOffsets runtime_fields{};
     uintptr_t battle_manager = 0; /* g_off.battleManager = staticFieldValue(BattleManager, Instance) */
     uintptr_t battle_manager_klass = 0;
     uintptr_t battle_manager_statics = 0;

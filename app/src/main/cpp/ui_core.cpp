@@ -3,6 +3,7 @@
 #include "esp_draw.hpp"
 #include "proc.hpp"
 #include "ui_log.hpp"
+#include "esp_sdcard_log.hpp"
 #include "clip_android.hpp"
 #include "remote_il2cpp.hpp"
 
@@ -186,6 +187,9 @@ static void reader_loop() {
                 if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
                 if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
                 esp_project_screens(f, sw, sh);
+                esp_sdcard_log_after_tick(pid, f, true);
+            } else if (f.status == EspStatus::Ready) {
+                esp_sdcard_log_after_tick(pid, f, false);
             }
             if (f.status != lastStatus || pid != lastPid) {
                 ui_log("[tick] %s | %s", status_name(f.status), f.hint);
@@ -226,7 +230,7 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("Fast conRent resolve + IL2 W2S (conRentV1). Tick = vm_read.");
+        ImGui::TextDisabled("conRent resolve + IL2 W2S; auto log: sdcard .../mlbb_esp_full_log.txt");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 

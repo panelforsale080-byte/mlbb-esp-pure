@@ -85,6 +85,7 @@ static const char *kIl2Api[] = {
     "il2cpp_field_static_get_value",
     "il2cpp_thread_attach",
     "il2cpp_class_get_method_from_name",
+    "il2cpp_field_get_offset",
     "il2cpp_runtime_invoke",
 };
 
@@ -192,6 +193,8 @@ static bool try_module(pid_t pid, const SoModule &m, RemoteIl2CppInfo &out, int 
             out.sym_thread_attach = a;
         if (std::strcmp(api, "il2cpp_class_get_method_from_name") == 0)
             out.sym_class_get_method_from_name = a;
+        if (std::strcmp(api, "il2cpp_field_get_offset") == 0)
+            out.sym_field_get_offset = a;
         if (std::strcmp(api, "il2cpp_runtime_invoke") == 0)
             out.sym_runtime_invoke = a;
     }

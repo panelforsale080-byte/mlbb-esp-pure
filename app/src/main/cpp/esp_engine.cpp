@@ -6,6 +6,7 @@
 #include "remote_il2cpp.hpp"
 #include "remote_elf.hpp"
 #include "ui_log.hpp"
+#include "esp_sdcard_log.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -663,6 +664,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1 fast: %s", cr.detail);
         ui_log("[resolve] OK %s", cr.detail);
         g_lastReport = rep;
+        esp_sdcard_log_after_resolve(g_pid, rep, cr, il2);
         if (reportOut) *reportOut = rep;
         return rep.status;
     }
@@ -673,6 +675,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     if (cr.detail[0]) ui_log("[resolve] conRent: %s", cr.detail);
     ui_log("[resolve] failed — open classic match, tap Resolve again");
     g_lastReport = rep;
+    esp_sdcard_log_after_resolve(g_pid, rep, cr, il2);
     if (reportOut) *reportOut = rep;
     return rep.status;
 }
