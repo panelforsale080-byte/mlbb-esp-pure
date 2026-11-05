@@ -1,12 +1,15 @@
 #include "esp_camera.hpp"
-#include "external_mlbb.hpp"
 #include "mem.hpp"
 #include "proc.hpp"
 #include "remote_call.hpp"
-#include "ui_log.hpp"
 #include <cmath>
 
 namespace {
+
+/** Row-major 4x4 — same layout as EXTERNAL-MLBB Camera / WorldToScreen. */
+struct RowMat4 {
+    float m[16]{};
+};
 
 struct Matrix4x4 {
     float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
@@ -23,10 +26,17 @@ struct Quat {
     float x, y, z, w;
 };
 
+struct CamPair {
+    RowMat4 worldToCamera;
+    RowMat4 projection;
+};
+
 static uintptr_t g_sbcStatics = 0;
 static uintptr_t g_gmStatics = 0;
 static bool g_matrixReady = false;
-static Matrix4x4 g_viewProj;
+static Matrix4x4 g_viewProjLegacy;
+static RowMat4 g_viewProjExt{};
+static bool g_useExtW2sMath = false;
 static float g_screenW = 0.f;
 static float g_screenH = 0.f;
 
@@ -40,11 +50,6 @@ static RemoteSession g_sess{};
 static bool g_inFrame = false;
 static uintptr_t g_mainCam = 0;
 static bool g_useIl2 = false;
-static int g_w2sBudget = 0;
-constexpr int kMaxIl2W2sPerFrame = 48;
-
-static ExtMat4 g_extVp{};
-static bool g_useExternalW2s = false;
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
@@ -65,11 +70,29 @@ static void normalize_landscape(float &w, float &h) {
     }
 }
 
-static bool load_vp_game_method(pid_t pid) {
+static RowMat4 mul_row_mat4(const RowMat4 &proj, const RowMat4 &view) {
+    RowMat4 r{};
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            r.m[row * 4 + col] = proj.m[row * 4 + 0] * view.m[0 + col] +
+                                 proj.m[row * 4 + 1] * view.m[4 + col] +
+                                 proj.m[row * 4 + 2] * view.m[8 + col] +
+                                 proj.m[row * 4 + 3] * view.m[12 + col];
+        }
+    }
+    return r;
+}
+
+/** #107 resolve: GameMethod statics → SmoothFollow → ViewMatrix (EXTERNAL-MLBB draw path, vm_read). */
+static bool load_vp_resolved_game_camera(pid_t pid) {
     if (!g_gmStatics) return false;
     uintptr_t smooth = 0;
     if (!mem_read(pid, g_gmStatics + 0x10, smooth) || !mem_ptr_ok(smooth)) return false;
-    return mem_read(pid, smooth + 0x5C, g_viewProj);
+    CamPair cm{};
+    if (!mem_read(pid, smooth + 0x5C, cm)) return false;
+    g_viewProjExt = mul_row_mat4(cm.projection, cm.worldToCamera);
+    g_useExtW2sMath = true;
+    return true;
 }
 
 static bool load_vp_show_battle_camera(pid_t pid) {
@@ -140,79 +163,32 @@ static bool load_vp_show_battle_camera(pid_t pid) {
                                  proj.m[3 * 4 + row] * view.m[c * 4 + 3];
         }
     }
-    g_viewProj = vp;
+    g_viewProjLegacy = vp;
+    g_useExtW2sMath = false;
     return true;
 }
 
-static bool read_vec3_from_object(pid_t pid, uintptr_t obj, float &x, float &y, float &z) {
-    if (!mem_ptr_ok(obj)) return false;
-    for (uintptr_t off : {0x10u, 0x14u, 0x18u, 0x20u, 0x24u, 0x28u}) {
-        Vec3 v{};
-        if (!mem_read(pid, obj + off, v)) continue;
-        if (std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z)) {
-            x = v.x;
-            y = v.y;
-            z = v.z;
-            return true;
-        }
-    }
-    return false;
-}
+static bool external_style_w2s(float wx, float wy, float wz, float &outX, float &outY) {
+    const RowMat4 &vp = g_viewProjExt;
+    const float w = vp.m[12] * wx + vp.m[13] * wy + vp.m[14] * wz + vp.m[15];
+    if (w < 0.01f) return false;
 
-static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &outY) {
-    if (!g_inFrame || !g_useIl2 || !g_rtInvoke || !g_w2sMi || g_il2Pid <= 0) return false;
-    if (g_w2sBudget <= 0) return false;
-    --g_w2sBudget;
+    float cx = vp.m[0] * wx + vp.m[4] * wy + vp.m[8] * wz + vp.m[12];
+    float cy = vp.m[1] * wx + vp.m[5] * wy + vp.m[9] * wz + vp.m[13];
+    cx /= w;
+    cy /= w;
 
-    if (!mem_ptr_ok(g_mainCam)) {
-        uintptr_t cam = 0;
-        if (!remote_session_call(g_sess, g_rtInvoke, {g_getMainMi, 0, 0, 0}, cam)) {
-            g_useIl2 = false;
-            return false;
-        }
-        g_mainCam = cam;
-    }
-    if (!mem_ptr_ok(g_mainCam)) return false;
-
-    const uintptr_t vecSlot = remote_session_scratch(g_sess, 0, 16);
-    const uintptr_t paramSlot = remote_session_scratch(g_sess, 1, 8);
-    const uintptr_t excSlot = remote_session_scratch(g_sess, 2, 8);
-    if (!vecSlot || !paramSlot || !excSlot) return false;
-
-    const float xyz[3] = {wx, wy, wz};
-    mem_write(g_il2Pid, vecSlot, xyz, sizeof(xyz));
-    mem_write(g_il2Pid, paramSlot, &vecSlot, sizeof(vecSlot));
-    uintptr_t zero = 0;
-    mem_write(g_il2Pid, excSlot, &zero, sizeof(zero));
-
-    uintptr_t ret = 0;
-    if (!remote_session_call(g_sess, g_rtInvoke, {g_w2sMi, g_mainCam, paramSlot, excSlot}, ret)) {
-        g_useIl2 = false;
-        return false;
-    }
-
-    float sx = 0.f, sy = 0.f, sz = 0.f;
-    if (!read_vec3_from_object(g_il2Pid, ret, sx, sy, sz)) {
-        if (!mem_read(g_il2Pid, vecSlot, sx) || !mem_read(g_il2Pid, vecSlot + 4, sy) ||
-            !mem_read(g_il2Pid, vecSlot + 8, sz))
-            return false;
-    }
-
-    if (sz > 0.f) {
-        outX = sx;
-        outY = g_screenH - sy;
-    } else {
-        outX = g_screenW - sx;
-        outY = sy;
-    }
+    const float sx = (cx + 1.f) * 0.5f;
+    const float sy = (cy + 1.f) * 0.5f;
+    outX = sx * g_screenW;
+    outY = g_screenH - (sy * g_screenH);
     return std::isfinite(outX) && std::isfinite(outY);
 }
 
-static bool matrix_w2s(float wx, float wy, float wz, float &outX, float &outY) {
-    if (!g_matrixReady) return false;
+static bool legacy_matrix_w2s(float wx, float wy, float wz, float &outX, float &outY) {
     Vec3 p{wx, wy, wz};
     float cx, cy, cz, cw;
-    g_viewProj.multiply_point(p, cx, cy, cz, cw);
+    g_viewProjLegacy.multiply_point(p, cx, cy, cz, cw);
     if (cw <= 0.001f) return false;
     const float ndcX = cx / cw;
     const float ndcY = cy / cw;
@@ -227,6 +203,7 @@ void esp_camera_reset() {
     g_sbcStatics = 0;
     g_gmStatics = 0;
     g_matrixReady = false;
+    g_useExtW2sMath = false;
     g_il2Pid = 0;
     g_rtInvoke = 0;
     g_getMainMi = 0;
@@ -234,8 +211,6 @@ void esp_camera_reset() {
     g_il2Ready = false;
     g_useIl2 = false;
     g_mainCam = 0;
-    g_useExternalW2s = false;
-    external_mlbb_reset();
     if (g_inFrame) {
         remote_session_end(g_sess);
         g_inFrame = false;
@@ -262,24 +237,17 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool /*allo
     normalize_landscape(g_screenW, g_screenH);
     g_matrixReady = false;
     g_useIl2 = false;
-    g_useExternalW2s = false;
+    g_useExtW2sMath = false;
     g_mainCam = 0;
 
     if (g_inFrame) remote_session_end(g_sess);
     g_inFrame = false;
 
-    /* EXTERNAL-MLBB (2): vm_read matrix W2S only — no ptrace on draw (no UnityKillsMe crash). */
-    if (pid > 0 && proc_alive(pid) &&
-        external_mlbb_update_matrix(pid, g_screenW, g_screenH, g_extVp)) {
-        g_useExternalW2s = true;
-        g_matrixReady = true;
-        return;
-    }
-
+    /* EXTERNAL-MLBB draw math + #107 conRent camera statics (no libcsharp RVAs, no draw ptrace). */
     if (pid > 0 && proc_alive(pid)) {
-        if (load_vp_show_battle_camera(pid))
+        if (load_vp_resolved_game_camera(pid))
             g_matrixReady = true;
-        else if (load_vp_game_method(pid))
+        else if (load_vp_show_battle_camera(pid))
             g_matrixReady = true;
     }
 }
@@ -292,12 +260,10 @@ void esp_camera_frame_end() {
     g_mainCam = 0;
 }
 
-bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
+bool esp_camera_ready() { return g_matrixReady; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
-    if (g_useExternalW2s)
-        return external_mlbb_world_to_screen(g_extVp, wx, wy, wz, g_screenW, g_screenH, outX,
-                                             outY);
-    if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
-    return matrix_w2s(wx, wy, wz, outX, outY);
+    if (!g_matrixReady) return false;
+    if (g_useExtW2sMath) return external_style_w2s(wx, wy, wz, outX, outY);
+    return legacy_matrix_w2s(wx, wy, wz, outX, outY);
 }

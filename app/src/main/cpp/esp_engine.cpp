@@ -1,6 +1,5 @@
 #include "esp_engine.hpp"
 #include "esp_camera.hpp"
-#include "external_mlbb.hpp"
 #include "conrent_esp.hpp"
 #include "offsets.hpp"
 #include "proc.hpp"
@@ -566,7 +565,6 @@ EspStatus esp_attach(pid_t pid) {
     }
     g_pid = pid;
     if (pid <= 0) return EspStatus::NoProcess;
-    external_mlbb_attach(pid);
     return EspStatus::Idle;
 }
 
@@ -686,19 +684,13 @@ EspStatus esp_tick(EspFrame &out) {
         std::snprintf(out.hint, sizeof(out.hint), "No MLBB pid");
         return out.status;
     }
-    uintptr_t extBm = external_mlbb_battle_instance(g_pid);
-    if (!g_resolved && extBm) {
-        g_resolved = true;
-        g_bmInstancePin = extBm;
-    }
     if (!g_resolved) {
         out.status = EspStatus::NoBattleManager;
         std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (in match)");
         return out.status;
     }
     refresh_instance(g_pid);
-    if (extBm) g_bmInstancePin = extBm;
-    const uintptr_t bm = extBm ? extBm : (g_bmInstancePin ? g_bmInstancePin : g_bmInstance);
+    const uintptr_t bm = g_bmInstancePin ? g_bmInstancePin : g_bmInstance;
     if (bm) g_bmInstance = bm;
     if (!bm) {
         out.status = EspStatus::NoInstance;
