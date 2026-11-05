@@ -273,9 +273,9 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     }
 
     if (!g_useIl2 && pid > 0 && proc_alive(pid)) {
-        if (load_vp_show_battle_camera(pid))
+        if (load_vp_game_method(pid))
             g_matrixReady = true;
-        else if (load_vp_game_method(pid))
+        else if (load_vp_show_battle_camera(pid))
             g_matrixReady = true;
     }
 }

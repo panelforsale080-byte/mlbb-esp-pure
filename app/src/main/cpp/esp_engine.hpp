@@ -16,6 +16,8 @@ enum class EspStatus : int {
 struct EspTarget {
     float worldX = 0, worldY = 0, worldZ = 0;
     float relX = 0, relZ = 0;
+    float screenX = 0.f, screenY = 0.f;
+    bool screenValid = false;
     int meters = 0;
     int hp = 0, hpMax = 0;
     int kind = 0; /* 0 player 1 monster */
@@ -27,6 +29,8 @@ struct EspFrame {
     pid_t pid = 0;
     char hint[96] = {};
     float selfX = 0, selfY = 0, selfZ = 0;
+    float selfScreenX = 0.f, selfScreenY = 0.f;
+    bool selfScreenValid = false;
     std::vector<EspTarget> targets;
     /* live read diagnostics (shown in UI log panel) */
     int mapsCount = 0;
@@ -63,4 +67,6 @@ EspStatus esp_resolve(EspResolveReport *reportOut = nullptr);
 void esp_request_force_resolve();
 bool esp_is_resolved();
 EspStatus esp_tick(EspFrame &out);
+/** conRent IL2 W2S on reader thread (not GL) — fills screen* fields. */
+void esp_project_screens(EspFrame &frame, float screenW, float screenH);
 const EspResolveReport &esp_last_resolve_report();

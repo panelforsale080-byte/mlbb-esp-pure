@@ -784,3 +784,28 @@ EspStatus esp_tick(EspFrame &out) {
                   out.targets.size(), out.dictPlayers, out.dictMonsters);
     return out.status;
 }
+
+void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
+    frame.selfScreenValid = false;
+    for (EspTarget &t : frame.targets) {
+        t.screenValid = false;
+    }
+    if (frame.status != EspStatus::Ready || frame.pid <= 0 || screenW < 1.f || screenH < 1.f)
+        return;
+
+    esp_camera_frame_begin(frame.pid, screenW, screenH, true);
+    float sx = 0.f, sy = 0.f;
+    if (esp_camera_world_to_screen(frame.selfX, frame.selfY, frame.selfZ, sx, sy)) {
+        frame.selfScreenX = sx;
+        frame.selfScreenY = sy;
+        frame.selfScreenValid = true;
+    }
+    for (EspTarget &t : frame.targets) {
+        if (esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy)) {
+            t.screenX = sx;
+            t.screenY = sy;
+            t.screenValid = true;
+        }
+    }
+    esp_camera_frame_end();
+}
