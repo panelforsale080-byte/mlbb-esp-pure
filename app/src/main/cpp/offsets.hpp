@@ -8,7 +8,12 @@ constexpr uintptr_t DicPlayerShow   = 0x60;
 constexpr uintptr_t DicMonsterShow  = 0x68;
 constexpr uintptr_t InstanceStatic  = 0x0;
 
-constexpr uintptr_t LastPosition = 0x3F4;
+constexpr uintptr_t LastPosition  = 0x3F4;
+constexpr uintptr_t CachePosition = 0x28C;
+constexpr uintptr_t ListPlayerShow  = 0x70;
+constexpr uintptr_t ListMonsterShow = 0x78;
+constexpr uintptr_t ListItems = 0x10;
+constexpr uintptr_t ListSize  = 0x18;
 constexpr uintptr_t EntityId     = 0x18C;
 constexpr uintptr_t EntityDeath  = 0xC5;
 constexpr uintptr_t SameCamp     = 0x2A9;

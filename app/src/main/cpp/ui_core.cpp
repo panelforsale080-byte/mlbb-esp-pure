@@ -188,7 +188,7 @@ static void reader_loop() {
             g_frame = std::move(f);
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
 }
 
@@ -199,8 +199,10 @@ static void draw_ui() {
         fr = g_frame;
     }
     const EspResolveReport &rep = esp_last_resolve_report();
-    const float sw = g_displayW > 0 ? (float)g_displayW : (float)g_width;
-    const float sh = g_displayH > 0 ? (float)g_displayH : (float)g_height;
+    float sw = (float)g_width;
+    float sh = (float)g_height;
+    if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
+    if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
 
     esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
 
@@ -209,7 +211,7 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("Build #87 — Resolve may use ptrace once; ESP draw = vm_read only.");
+        ImGui::TextDisabled("Fast conRent resolve + IL2 W2S (conRentV1). Tick = vm_read.");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
