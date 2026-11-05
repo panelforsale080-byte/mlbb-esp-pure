@@ -140,6 +140,11 @@ static std::string build_resolve_section(pid_t pid, const EspResolveReport &rep,
     os << " native=";
     hex(os, cr.camera_w2s_native);
     os << "\n";
+    os << "BattleBridge ptr=";
+    hex(os, cr.battle_bridge);
+    os << " get_bStartBattle native=";
+    hex(os, cr.get_bStartBattle_native);
+    os << "\n";
     os << "metadata_ready=" << (cr.metadata_ready ? "yes" : "no") << "\n\n";
 
     const ConrentRuntimeOffsets &rt = cr.runtime_fields;

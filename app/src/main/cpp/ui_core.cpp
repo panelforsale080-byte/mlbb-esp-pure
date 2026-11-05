@@ -445,7 +445,7 @@ bool ui_menu_interactive() { return g_showMenu; }
 
 void ui_esp_start() {
     g_espActive.store(true);
-    ui_log("[esp] START — conRent IL2 W2S on reader thread (GL draw only)");
+    ui_log("[esp] START — conRentV1 method (runtime offsets + Camera W2S, GL draw only)");
 }
 
 void ui_esp_stop() {
