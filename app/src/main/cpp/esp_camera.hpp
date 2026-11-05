@@ -12,6 +12,7 @@ struct EspCameraRuntime {
     uintptr_t camera_projection_matrix_method = 0;
     uintptr_t matrix_lib_base = 0;
     uintptr_t matrix_main_camera_rva = 0;
+    uintptr_t main_camera_global_slot_va = 0;
     uintptr_t game_method_main_camera_obj = 0;
 };
 

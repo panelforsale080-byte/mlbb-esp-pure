@@ -45,6 +45,9 @@ struct ConrentResolve {
     uintptr_t auto_rva_main_camera_root = 0;
     /** Module base where auto_rva_main_camera_root applies (often libcsharp.so). */
     uintptr_t main_camera_matrix_lib_base = 0;
+    /** Resolve-time absolute VA of global pointer slots (ESP reads here; no hardcoded RVA at draw). */
+    uintptr_t bm_global_slot_va = 0;
+    uintptr_t main_camera_global_slot_va = 0;
     uintptr_t camera_get_main_method = 0; /* MethodInfo* */
     uintptr_t camera_w2s_method = 0;
     uintptr_t camera_world_to_camera_method = 0;

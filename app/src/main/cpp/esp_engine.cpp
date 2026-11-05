@@ -661,6 +661,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     camRt.camera_projection_matrix_method = cr.camera_projection_matrix_method;
     camRt.matrix_lib_base = cr.main_camera_matrix_lib_base;
     camRt.matrix_main_camera_rva = cr.auto_rva_main_camera_root;
+    camRt.main_camera_global_slot_va = cr.main_camera_global_slot_va;
     camRt.game_method_main_camera_obj = cr.game_method_main_camera_obj;
     esp_camera_set_runtime(camRt);
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,

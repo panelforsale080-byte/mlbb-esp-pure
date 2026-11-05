@@ -25,6 +25,7 @@ static bool g_matrixReady = false;
 static bool g_matrixFromVmRead = false;
 static uintptr_t g_matrixLibBase = 0;
 static uintptr_t g_matrixMainCamRva = 0;
+static uintptr_t g_mainCameraSlotVa = 0;
 static Matrix4x4 g_viewProj;
 static int g_matrixPathLog = 0;
 static int g_matrixFailLog = 0;
@@ -96,10 +97,15 @@ static bool load_vp_matrices_at_main_cam3(pid_t pid, uintptr_t mainCam3) {
     return false;
 }
 
-static bool load_vp_from_lib_main_camera_rva(pid_t pid) {
-    if (!g_matrixLibBase || !g_matrixMainCamRva) return false;
+static bool load_vp_from_discovered_main_camera_slot(pid_t pid) {
     uintptr_t root = 0;
-    if (!mem_read(pid, g_matrixLibBase + g_matrixMainCamRva, root)) return false;
+    if (g_mainCameraSlotVa) {
+        if (!mem_read(pid, g_mainCameraSlotVa, root)) return false;
+    } else if (g_matrixLibBase && g_matrixMainCamRva) {
+        if (!mem_read(pid, g_matrixLibBase + g_matrixMainCamRva, root)) return false;
+    } else {
+        return false;
+    }
     const LibMainCamChain chain = camera_resolve_lib_main_cam_chain(pid, root);
     if (!chain.cam3 || !chain.vpOk) return false;
     return load_vp_matrices_at_main_cam3(pid, chain.cam3);
@@ -299,6 +305,7 @@ void esp_camera_reset() {
     g_matrixFromVmRead = false;
     g_matrixLibBase = 0;
     g_matrixMainCamRva = 0;
+    g_mainCameraSlotVa = 0;
     g_matrixPathLog = 0;
     g_matrixFailLog = 0;
     g_il2Pid = 0;
@@ -325,6 +332,7 @@ void esp_camera_set_runtime(const EspCameraRuntime &runtime) {
     g_rt = runtime;
     g_matrixLibBase = runtime.matrix_lib_base;
     g_matrixMainCamRva = runtime.matrix_main_camera_rva;
+    g_mainCameraSlotVa = runtime.main_camera_global_slot_va;
 }
 
 void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t get_main_method,
@@ -350,6 +358,7 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     g_projectionMi = g_rt.camera_projection_matrix_method;
     g_matrixLibBase = g_rt.matrix_lib_base;
     g_matrixMainCamRva = g_rt.matrix_main_camera_rva;
+    g_mainCameraSlotVa = g_rt.main_camera_global_slot_va;
 
     if (g_inFrame) remote_session_end(g_sess);
     g_inFrame = false;
@@ -360,12 +369,13 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
                          proc_alive(pid);
 
     if (pid > 0 && proc_alive(pid)) {
-        if (load_vp_from_lib_main_camera_rva(pid)) {
+        if (load_vp_from_discovered_main_camera_slot(pid)) {
             g_matrixReady = true;
             g_matrixFromVmRead = true;
             if (g_matrixPathLog == 0) {
                 g_matrixPathLog = 1;
-                ui_log("[esp] W2S matrix: lib+0x%llx chain + ViewMatrix (accurate RVA path)",
+                ui_log("[esp] W2S matrix: slot_va=0x%llx rva=0x%llx + ViewMatrix (discovered)",
+                       (unsigned long long)g_mainCameraSlotVa,
                        (unsigned long long)g_matrixMainCamRva);
             }
         } else if (load_vp_from_game_method_smooth(pid)) {
