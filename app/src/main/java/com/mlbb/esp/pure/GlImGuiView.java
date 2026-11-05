@@ -34,11 +34,6 @@ public class GlImGuiView extends GLSurfaceView implements GLSurfaceView.Renderer
         readyListener = listener;
     }
 
-    public void setContinuousRendering(boolean continuous) {
-        setRenderMode(continuous ? RENDERMODE_CONTINUOUSLY : RENDERMODE_WHEN_DIRTY);
-        requestRender();
-    }
-
     public void configureOverlaySurface() {
         setZOrderOnTop(true);
         getHolder().setFormat(PixelFormat.TRANSLUCENT);
@@ -80,7 +75,7 @@ public class GlImGuiView extends GLSurfaceView implements GLSurfaceView.Renderer
         try {
             NativeBridge.nativeGlSurfaceChanged(width, height);
             surfaceReady = true;
-            setRenderMode(RENDERMODE_WHEN_DIRTY);
+            setRenderMode(RENDERMODE_CONTINUOUSLY);
             requestRender();
             if (readyListener != null) readyListener.onGlReady(this);
         } catch (Throwable t) {

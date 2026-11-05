@@ -107,20 +107,14 @@ public class OverlayService extends Service {
         ((TextView) fabStart).setTextSize(13f);
         ((TextView) fabStart).setPadding(22, 14, 22, 14);
         fabStart.setBackgroundColor(0xCC1B5E20);
-        fabStart.setOnClickListener(v -> {
-            NativeBridge.nativeStartEsp();
-            setContinuousRender(true);
-        });
+        fabStart.setOnClickListener(v -> NativeBridge.nativeStartEsp());
 
         fabStop = new TextView(this);
         ((TextView) fabStop).setText("Stop ESP");
         ((TextView) fabStop).setTextSize(13f);
         ((TextView) fabStop).setPadding(22, 14, 22, 14);
         fabStop.setBackgroundColor(0xCC8B1A1A);
-        fabStop.setOnClickListener(v -> {
-            NativeBridge.nativeStopEsp();
-            setContinuousRender(NativeBridge.nativeWantsContinuousRender());
-        });
+        fabStop.setOnClickListener(v -> NativeBridge.nativeStopEsp());
 
         WindowManager.LayoutParams startLp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -148,13 +142,6 @@ public class OverlayService extends Service {
         wm.addView(fab, fabLp);
         wm.addView(fabStart, startLp);
         wm.addView(fabStop, stopLp);
-    }
-
-    void setContinuousRender(boolean continuous) {
-        main.post(() -> {
-            if (glView == null) return;
-            glView.setContinuousRendering(continuous);
-        });
     }
 
     void setMenuTouch(boolean interactive) {

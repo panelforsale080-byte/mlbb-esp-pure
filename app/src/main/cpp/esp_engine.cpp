@@ -23,8 +23,6 @@ static bool g_resolved = false;
 static std::atomic<bool> g_forceResolve{false};
 static EspResolveReport g_lastReport{};
 static const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
-static pid_t g_il2CachePid = 0;
-static RemoteIl2CppInfo g_il2Cache{};
 
 struct BmFindMeta {
     int nameStrings = 0;
@@ -556,8 +554,6 @@ void esp_reset() {
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
     g_resolved = false;
-    g_il2CachePid = 0;
-    g_il2Cache = RemoteIl2CppInfo{};
     esp_camera_reset();
 }
 
@@ -566,8 +562,6 @@ EspStatus esp_attach(pid_t pid) {
     if (pid != g_pid) {
         g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
         g_resolved = false;
-        g_il2CachePid = 0;
-        g_il2Cache = RemoteIl2CppInfo{};
     }
     g_pid = pid;
     if (pid <= 0) return EspStatus::NoProcess;
@@ -631,21 +625,13 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         return rep.status;
     }
     const bool probe = proc_probe_read(g_pid);
-    const bool forceNew = g_forceResolve.exchange(false);
-    if (!forceNew && g_resolved) {
+    if (!g_forceResolve.exchange(false) && g_resolved) {
         if (reportOut) *reportOut = g_lastReport;
         return g_lastReport.status;
     }
     RemoteIl2CppInfo il2{};
-    if (!forceNew && g_pid == g_il2CachePid && g_il2Cache.sym_domain_get) {
-        il2 = g_il2Cache;
-    } else {
-        remote_detect_il2cpp(g_pid, il2);
-        if (il2.sym_domain_get) {
-            g_il2Cache = il2;
-            g_il2CachePid = g_pid;
-        }
-    }
+    remote_detect_il2cpp(g_pid, il2);
+    remote_refresh_domain_ptr(g_pid, il2);
     merge_il2cpp_into_report(rep, il2);
     g_il2_for_resolve = &il2;
 
@@ -767,7 +753,6 @@ EspStatus esp_tick(EspFrame &out) {
             std::snprintf(t.label, sizeof(t.label), "%s", Off::monsterLabel(id));
         else
             std::snprintf(t.label, sizeof(t.label), "P%d", id);
-        if (out.targets.size() >= 24) return;
         out.targets.push_back(t);
     };
 
@@ -780,7 +765,7 @@ EspStatus esp_tick(EspFrame &out) {
     }
 
     out.mapsCount = 0;
-    out.readProbe = g_lastReport.readProbe;
+    out.readProbe = proc_probe_read(g_pid);
     out.bmKlass = g_bmKlass;
     out.bmStatics = g_bmStatics;
     out.bmInstance = bm;

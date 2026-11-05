@@ -33,8 +33,8 @@ static const char *g_glslVersion = "#version 100";
 static std::atomic<bool> g_runReader{false};
 static std::thread g_reader;
 static std::atomic<bool> g_readerStarted{false};
-static EspFrame g_frames[2];
-static std::atomic<int> g_frameFront{0};
+static std::mutex g_frameMu;
+static EspFrame g_frame;
 static std::atomic<pid_t> g_wantPid{0};
 static std::atomic<bool> g_needResolve{true};
 
@@ -186,19 +186,20 @@ static void reader_loop() {
                 lastStatus = f.status;
                 lastPid = pid;
             }
-            const int back = 1 - g_frameFront.load(std::memory_order_relaxed);
-            g_frames[back] = std::move(f);
-            g_frameFront.store(back, std::memory_order_release);
+            std::lock_guard<std::mutex> lock(g_frameMu);
+            g_frame = std::move(f);
         }
 
-        const int sleepMs = (g_espActive.load() && pid > 0) ? 16 : 28;
-        std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
 }
 
 static void draw_ui() {
-    const int front = g_frameFront.load(std::memory_order_acquire);
-    const EspFrame &fr = g_frames[front];
+    EspFrame fr;
+    {
+        std::lock_guard<std::mutex> lock(g_frameMu);
+        fr = g_frame;
+    }
     const EspResolveReport &rep = esp_last_resolve_report();
     float sw = (float)g_width;
     float sh = (float)g_height;
@@ -266,7 +267,7 @@ static void draw_ui() {
             if (ImGui::Button("Scan MLBB")) scan_and_log_processes();
             ImGui::SameLine();
             if (ImGui::Button("Copy logs")) {
-                static char logCopy[4096];
+                static char logCopy[65536];
                 ui_log_copy_all(logCopy, sizeof(logCopy));
                 if (android_copy_to_clipboard(logCopy))
                     ui_log("[ui] logs copied");
@@ -275,14 +276,9 @@ static void draw_ui() {
             ImGui::Text("IL2CPP: %s", rep.il2cppLib[0] ? rep.il2cppLib : "(none)");
             ImGui::TextWrapped("%s", rep.detail);
             ImGui::Checkbox("Log auto-scroll", &g_logScrollBottom);
-            static char logText[4096];
-            static double logRefreshAt = 0.0;
-            const double now = ImGui::GetTime();
-            if (now - logRefreshAt > 0.35) {
-                logRefreshAt = now;
-                ui_log_copy_all(logText, sizeof(logText));
-            }
-            ImGui::BeginChild("logs", {0, 120}, true);
+            static char logText[65536];
+            ui_log_copy_all(logText, sizeof(logText));
+            ImGui::BeginChild("logs", {0, 140}, true);
             ImGui::TextUnformatted(logText);
             if (g_logScrollBottom) ImGui::SetScrollHereY(1.0f);
             ImGui::EndChild();
@@ -433,18 +429,8 @@ void ui_toggle_menu() { g_showMenu = !g_showMenu; }
 bool ui_menu_interactive() { return g_showMenu; }
 
 void ui_esp_start() {
-    if (!g_feat.box && !g_feat.line && !g_feat.health && !g_feat.name && !g_feat.distance &&
-        !g_feat.monsterBox && !g_feat.monsterName && !g_feat.monsterHealth) {
-        g_feat.box = true;
-        g_feat.line = true;
-    }
     g_espActive.store(true);
-    const int front = g_frameFront.load(std::memory_order_acquire);
-    const EspFrame &fr = g_frames[front];
-    if (fr.status == EspStatus::Ready)
-        ui_log("[esp] START — %zu targets, matrix W2S", fr.targets.size());
-    else
-        ui_log("[esp] START — wait Ready (Find pid + Resolve in match)");
+    ui_log("[esp] START — drawing on world (vm_read/IL2 W2S)");
 }
 
 void ui_esp_stop() {
@@ -453,7 +439,3 @@ void ui_esp_stop() {
 }
 
 bool ui_esp_is_active() { return g_espActive.load(); }
-
-bool ui_wants_continuous_render() {
-    return g_showMenu || g_espActive.load();
-}

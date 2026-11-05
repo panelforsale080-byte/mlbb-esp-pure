@@ -5,15 +5,6 @@
 static JavaVM *g_vm = nullptr;
 static jclass g_bridgeCls = nullptr;
 static jmethodID g_setMenuTouch = nullptr;
-static jmethodID g_setContinuousRender = nullptr;
-
-static void notify_continuous_render(bool on) {
-    if (!g_vm || !g_bridgeCls || !g_setContinuousRender) return;
-    JNIEnv *env = nullptr;
-    if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
-    env->CallStaticVoidMethod(g_bridgeCls, g_setContinuousRender, on ? JNI_TRUE : JNI_FALSE);
-    if (env->ExceptionCheck()) env->ExceptionClear();
-}
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
     g_vm = vm;
@@ -33,9 +24,6 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeInit(JNIEnv *env, jclass clazz) {
     if (!g_bridgeCls) g_bridgeCls = (jclass)env->NewGlobalRef(clazz);
     if (!g_setMenuTouch)
         g_setMenuTouch = env->GetStaticMethodID(clazz, "applyMenuTouch", "(Z)V");
-    if (!g_setContinuousRender)
-        g_setContinuousRender =
-            env->GetStaticMethodID(clazz, "applyContinuousRender", "(Z)V");
     ui_esp_pipeline_idle();
 }
 
@@ -68,16 +56,10 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeGlDrawFrame(JNIEnv *, jclass) {
     ui_gl_draw_frame();
     static bool lastMenu = false;
-    const bool nowMenu = ui_menu_interactive();
-    if (nowMenu != lastMenu) {
-        lastMenu = nowMenu;
-        notify_menu_touch(nowMenu);
-    }
-    static bool lastCont = true;
-    const bool nowCont = ui_wants_continuous_render();
-    if (nowCont != lastCont) {
-        lastCont = nowCont;
-        notify_continuous_render(nowCont);
+    const bool now = ui_menu_interactive();
+    if (now != lastMenu) {
+        lastMenu = now;
+        notify_menu_touch(now);
     }
 }
 
@@ -111,9 +93,4 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeStartEsp(JNIEnv *, jclass) {
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeStopEsp(JNIEnv *, jclass) {
     ui_esp_stop();
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_mlbb_esp_pure_NativeBridge_nativeWantsContinuousRender(JNIEnv *, jclass) {
-    return ui_wants_continuous_render() ? JNI_TRUE : JNI_FALSE;
 }
