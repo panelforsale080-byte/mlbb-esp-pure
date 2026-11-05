@@ -1,4 +1,5 @@
 #include "esp_camera.hpp"
+#include "matrix4x4.hpp"
 #include "mem.hpp"
 #include "proc.hpp"
 #include "remote_call.hpp"
@@ -7,15 +8,10 @@
 
 namespace {
 
-struct Matrix4x4 {
-    float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-
-    void multiply_point(const Vec3 &p, float &cx, float &cy, float &cz, float &cw) const {
-        cx = m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12];
-        cy = m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13];
-        cz = m[2] * p.x + m[6] * p.y + m[10] * p.z + m[14];
-        cw = m[3] * p.x + m[7] * p.y + m[11] * p.z + m[15];
-    }
+/** EspSource Offsets::Camera::ViewMatrix — worldToCamera then projection. */
+struct BattleCameraMatrices {
+    Matrix4x4 worldToCameraMatrix;
+    Matrix4x4 projectionMatrix;
 };
 
 struct Quat {
@@ -25,6 +21,8 @@ struct Quat {
 static uintptr_t g_sbcStatics = 0;
 static uintptr_t g_gmStatics = 0;
 static bool g_matrixReady = false;
+/** True when VP came from SmoothFollow+0x5C (EspSource path). */
+static bool g_matrixEspSource = false;
 static Matrix4x4 g_viewProj;
 static float g_screenW = 0.f;
 static float g_screenH = 0.f;
@@ -65,7 +63,11 @@ static bool load_vp_game_method(pid_t pid) {
     if (!g_gmStatics) return false;
     uintptr_t smooth = 0;
     if (!mem_read(pid, g_gmStatics + 0x10, smooth) || !mem_ptr_ok(smooth)) return false;
-    return mem_read(pid, smooth + 0x5C, g_viewProj);
+    BattleCameraMatrices cam{};
+    if (!mem_read(pid, smooth + 0x5C, cam)) return false;
+    g_viewProj = cam.projectionMatrix * cam.worldToCameraMatrix;
+    g_matrixEspSource = true;
+    return true;
 }
 
 static bool load_vp_show_battle_camera(pid_t pid) {
@@ -98,45 +100,22 @@ static bool load_vp_show_battle_camera(pid_t pid) {
     s.z /= sl;
     u = {s.y * f.z - s.z * f.y, s.z * f.x - s.x * f.z, s.x * f.y - s.y * f.x};
 
-    Matrix4x4 view{};
-    view.m[0] = s.x;
-    view.m[4] = s.y;
-    view.m[8] = s.z;
-    view.m[12] = -(s.x * pos.x + s.y * pos.y + s.z * pos.z);
-    view.m[1] = u.x;
-    view.m[5] = u.y;
-    view.m[9] = u.z;
-    view.m[13] = -(u.x * pos.x + u.y * pos.y + u.z * pos.z);
-    view.m[2] = -f.x;
-    view.m[6] = -f.y;
-    view.m[10] = -f.z;
-    view.m[14] = (f.x * pos.x + f.y * pos.y + f.z * pos.z);
-    view.m[3] = 0;
-    view.m[7] = 0;
-    view.m[11] = 0;
-    view.m[15] = 1;
+    const float tx = -(s.x * pos.x + s.y * pos.y + s.z * pos.z);
+    const float ty = -(u.x * pos.x + u.y * pos.y + u.z * pos.z);
+    const float tz = (f.x * pos.x + f.y * pos.y + f.z * pos.z);
+    const Matrix4x4 view(s.x, s.y, s.z, 0.f, u.x, u.y, u.z, 0.f, -f.x, -f.y, -f.z, 0.f, tx, ty, tz,
+                         1.f);
 
     const float aspect = (g_screenW > 0.f && g_screenH > 0.f) ? (g_screenW / g_screenH) : (16.f / 9.f);
     const float nearP = 0.3f, farP = 2000.f;
     const float t = 1.f / std::tan((float)fov * 0.5f * 3.14159265f / 180.f);
-    Matrix4x4 proj{};
-    proj.m[0] = t / aspect;
-    proj.m[5] = t;
-    proj.m[10] = (farP + nearP) / (nearP - farP);
-    proj.m[11] = -1.f;
-    proj.m[14] = (2.f * farP * nearP) / (nearP - farP);
-    proj.m[15] = 0.f;
+    const float a = (farP + nearP) / (nearP - farP);
+    const float b = (2.f * farP * nearP) / (nearP - farP);
+    const Matrix4x4 proj(t / aspect, 0.f, 0.f, 0.f, 0.f, t, 0.f, 0.f, 0.f, 0.f, a, b, 0.f, 0.f, -1.f,
+                         0.f);
 
-    Matrix4x4 vp{};
-    for (int c = 0; c < 4; ++c) {
-        for (int row = 0; row < 4; ++row) {
-            vp.m[c * 4 + row] = proj.m[0 * 4 + row] * view.m[c * 4 + 0] +
-                                 proj.m[1 * 4 + row] * view.m[c * 4 + 1] +
-                                 proj.m[2 * 4 + row] * view.m[c * 4 + 2] +
-                                 proj.m[3 * 4 + row] * view.m[c * 4 + 3];
-        }
-    }
-    g_viewProj = vp;
+    g_viewProj = proj * view;
+    g_matrixEspSource = false;
     return true;
 }
 
@@ -206,14 +185,16 @@ static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &out
 
 static bool matrix_w2s(float wx, float wy, float wz, float &outX, float &outY) {
     if (!g_matrixReady) return false;
-    Vec3 p{wx, wy, wz};
-    float cx, cy, cz, cw;
-    g_viewProj.multiply_point(p, cx, cy, cz, cw);
-    if (cw <= 0.001f) return false;
-    const float ndcX = cx / cw;
-    const float ndcY = cy / cw;
-    outX = (ndcX + 1.f) * 0.5f * g_screenW;
-    outY = (1.f - ndcY) * 0.5f * g_screenH;
+    const Vector3 from(wx, wy, wz);
+    const float w = g_viewProj.m30 * from.X + g_viewProj.m31 * from.Y + g_viewProj.m32 * from.Z +
+                    g_viewProj.m33;
+    if (w < 0.01f) return false;
+
+    const Vector3 clip = g_viewProj.MultiplyPoint(from);
+    const float sx = (clip.X + 1.f) * 0.5f;
+    const float sy = (clip.Y + 1.f) * 0.5f;
+    outX = sx * g_screenW;
+    outY = g_screenH - sy * g_screenH;
     return std::isfinite(outX) && std::isfinite(outY);
 }
 
@@ -223,6 +204,7 @@ void esp_camera_reset() {
     g_sbcStatics = 0;
     g_gmStatics = 0;
     g_matrixReady = false;
+    g_matrixEspSource = false;
     g_il2Pid = 0;
     g_rtInvoke = 0;
     g_getMainMi = 0;
@@ -255,6 +237,7 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     g_screenH = screenH;
     normalize_landscape(g_screenW, g_screenH);
     g_matrixReady = false;
+    g_matrixEspSource = false;
     g_useIl2 = false;
     g_mainCam = 0;
 
@@ -292,6 +275,8 @@ void esp_camera_frame_end() {
 bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
+    /* EspSource / EXTERNAL-MLBB: read-only VP matrix (no ptrace jitter). */
+    if (g_matrixEspSource && matrix_w2s(wx, wy, wz, outX, outY)) return true;
     if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
     return matrix_w2s(wx, wy, wz, outX, outY);
 }
