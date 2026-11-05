@@ -853,7 +853,7 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
     for (EspTarget &t : frame.targets) {
         if (!t.ent || !esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy)) continue;
         const auto it = g_entScreen.find(t.ent);
-        const bool havePrev = it != g_entScreen.end();
+        bool havePrev = it != g_entScreen.end();
         float px = havePrev ? it->second.first : sx;
         float py = havePrev ? it->second.second : sy;
         float ox = sx, oy = sy;
