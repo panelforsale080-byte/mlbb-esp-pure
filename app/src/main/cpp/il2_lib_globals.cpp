@@ -1,7 +1,6 @@
 #include "il2_lib_globals.hpp"
 #include "il2_layout.hpp"
 #include "ui_log.hpp"
-#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -40,11 +39,13 @@ static void scan_range(pid_t pid, uintptr_t libBase, uintptr_t scanStart, uintpt
                        uintptr_t &outBmRva, uintptr_t &outCamRva) {
     constexpr size_t kChunk = 256 * 1024;
     std::vector<uint8_t> buf(kChunk);
-    scanStart = std::max(scanStart, libBase + 0x400000ULL);
+    const uintptr_t scanLo = libBase + 0x400000ULL;
+    if (scanStart < scanLo) scanStart = scanLo;
 
     for (uintptr_t cur = scanStart; cur + sizeof(uintptr_t) <= scanEnd && (!outBmRva || !outCamRva);
          cur += kChunk - sizeof(uintptr_t)) {
-        const size_t n = std::min(kChunk, scanEnd - cur);
+        const size_t remain = static_cast<size_t>(scanEnd - cur);
+        const size_t n = remain < kChunk ? remain : kChunk;
         if (!mem_read(pid, cur, buf.data(), n)) continue;
         for (size_t i = 0; i + sizeof(uintptr_t) <= n; i += sizeof(uintptr_t)) {
             uintptr_t val = 0;
