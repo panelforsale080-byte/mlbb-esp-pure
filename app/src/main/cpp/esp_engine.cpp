@@ -157,6 +157,16 @@ static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
     return false;
 }
 
+/* Local hero: CachePosition tracks the rendered model; LastPosition lags vs follow-cam. */
+static bool read_local_pos(pid_t pid, uintptr_t bm, Vec3 &pos) {
+    uintptr_t local = 0;
+    if (!bm || !mem_read(pid, bm + Off::LocalPlayerShow, local) || !local) return false;
+    if (mem_read(pid, local + Off::CachePosition, pos) && pos_ok(pos)) return true;
+    if (mem_read(pid, local + Off::LastPosition, pos) && pos_ok(pos)) return true;
+    pos = {};
+    return false;
+}
+
 static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
     if (!bm || !mem_ptr_ok(bm)) return false;
     uintptr_t pDict = 0, mDict = 0;
@@ -708,7 +718,7 @@ EspStatus esp_tick(EspFrame &out) {
     uintptr_t local = 0;
     mem_read(g_pid, bm + Off::LocalPlayerShow, local);
     Vec3 self{};
-    if (local) read_entity_pos(g_pid, local, self);
+    if (local) read_local_pos(g_pid, bm, self);
     out.selfX = self.x;
     out.selfY = self.y;
     out.selfZ = self.z;
@@ -793,14 +803,10 @@ namespace {
 
 constexpr float kSmoothAlphaHero = 0.26f;
 constexpr float kSmoothAlphaMob = 0.32f;
-constexpr float kSmoothAlphaSelf = 0.30f;
 constexpr float kSmoothSnapPx = 96.f;
 constexpr int kScreenHoldFrames = 14;
 
 static pid_t g_screenPid = 0;
-static float g_selfSx = 0.f, g_selfSy = 0.f;
-static bool g_haveSelfSmooth = false;
-static int g_selfMiss = 0;
 
 struct EntScreenSmooth {
     float px = 0.f;
@@ -853,27 +859,37 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
     if (g_screenPid != frame.pid) {
         g_screenPid = frame.pid;
         g_entScreen.clear();
-        g_haveSelfSmooth = false;
-        g_selfMiss = 0;
+    }
+
+    Vec3 selfWorld{frame.selfX, frame.selfY, frame.selfZ};
+    if (frame.bmInstance && read_local_pos(frame.pid, frame.bmInstance, selfWorld)) {
+        frame.selfX = selfWorld.x;
+        frame.selfY = selfWorld.y;
+        frame.selfZ = selfWorld.z;
     }
 
     esp_camera_frame_begin(frame.pid, screenW, screenH, true);
     float sx = 0.f, sy = 0.f;
-    if (esp_camera_world_to_screen(frame.selfX, frame.selfY, frame.selfZ, sx, sy)) {
-        smooth_screen_point(sx, sy, frame.selfScreenX, frame.selfScreenY, kSmoothAlphaSelf,
-                            g_selfSx, g_selfSy, g_haveSelfSmooth);
-        g_selfMiss = 0;
+    if (esp_camera_world_to_screen(selfWorld.x, selfWorld.y, selfWorld.z, sx, sy)) {
+        frame.selfScreenX = sx;
+        frame.selfScreenY = sy;
         frame.selfScreenValid = true;
-    } else if (g_haveSelfSmooth && g_selfMiss < kScreenHoldFrames) {
-        ++g_selfMiss;
-        frame.selfScreenX = g_selfSx;
-        frame.selfScreenY = g_selfSy;
-        frame.selfScreenValid = true;
+    } else {
+        frame.selfScreenValid = false;
     }
 
     std::unordered_map<uintptr_t, EntScreenSmooth> live;
     for (EspTarget &t : frame.targets) {
         if (!t.ent) continue;
+        Vec3 pos{};
+        if (read_entity_pos(frame.pid, t.ent, pos)) {
+            t.worldX = pos.x;
+            t.worldY = pos.y;
+            t.worldZ = pos.z;
+            t.relX = pos.x - selfWorld.x;
+            t.relZ = pos.z - selfWorld.z;
+            t.meters = (int)std::sqrt(t.relX * t.relX + t.relZ * t.relZ);
+        }
         const float alpha = t.kind == 0 ? kSmoothAlphaHero : kSmoothAlphaMob;
         auto it = g_entScreen.find(t.ent);
         EntScreenSmooth st{};

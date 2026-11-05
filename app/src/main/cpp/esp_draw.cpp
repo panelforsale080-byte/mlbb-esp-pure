@@ -30,10 +30,12 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
 
     if (feat.line && !monster) {
         ImVec2 anchor;
-        if (frame.selfScreenValid)
+        if (frame.selfScreenValid) {
             anchor = {frame.selfScreenX, frame.selfScreenY};
-        else
-            anchor = {screenW * 0.5f, screenH * 0.92f};
+        } else {
+            /* Follow-cam: hero stays near lower-center when self W2S fails. */
+            anchor = {screenW * 0.5f, screenH * 0.58f};
+        }
         draw->AddLine(anchor, root, IM_COL32(255, 255, 255, 180), 1.5f);
     }
     if (!onScreen) return;
