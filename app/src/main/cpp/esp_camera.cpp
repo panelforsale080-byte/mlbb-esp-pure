@@ -292,6 +292,7 @@ void esp_camera_frame_end() {
 bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
-    if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
+    /* One path per frame — mixing IL2 + matrix on different targets causes box jitter. */
+    if (g_useIl2) return il2_invoke_w2s(wx, wy, wz, outX, outY);
     return matrix_w2s(wx, wy, wz, outX, outY);
 }

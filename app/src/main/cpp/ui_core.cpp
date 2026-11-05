@@ -226,7 +226,7 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("Fast conRent resolve + IL2 W2S (conRentV1). Tick = vm_read.");
+        ImGui::TextDisabled("conRent resolve + IL2/matrix W2S + screen EMA (steady heroes).");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
