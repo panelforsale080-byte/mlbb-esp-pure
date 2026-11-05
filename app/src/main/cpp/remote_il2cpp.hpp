@@ -9,6 +9,7 @@ struct RemoteIl2CppInfo {
     uintptr_t base = 0;
     uintptr_t end = 0;
     uintptr_t sym_domain_get = 0;
+    uintptr_t sym_domain_assembly_open = 0;
     uintptr_t sym_class_from_name = 0;
     uintptr_t sym_domain_get_assemblies = 0;
     uintptr_t sym_assembly_get_image = 0;

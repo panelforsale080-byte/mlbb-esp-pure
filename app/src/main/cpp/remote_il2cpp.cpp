@@ -74,6 +74,7 @@ static bool resolve_sym(pid_t pid, const SoModule &m, const char *sym, uintptr_t
 
 static const char *kIl2Api[] = {
     "il2cpp_domain_get",
+    "il2cpp_domain_assembly_open",
     "il2cpp_domain_get_assemblies",
     "il2cpp_class_from_name",
     "il2cpp_assembly_get_image",
@@ -170,6 +171,8 @@ static bool try_module(pid_t pid, const SoModule &m, RemoteIl2CppInfo &out, int 
         uintptr_t a = 0;
         if (!resolve_sym(pid, m, api, a) || !a) continue;
         ++apiHits;
+        if (std::strcmp(api, "il2cpp_domain_assembly_open") == 0)
+            out.sym_domain_assembly_open = a;
         if (std::strcmp(api, "il2cpp_domain_get_assemblies") == 0)
             out.sym_domain_get_assemblies = a;
         if (std::strcmp(api, "il2cpp_class_from_name") == 0)
