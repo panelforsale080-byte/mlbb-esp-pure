@@ -25,4 +25,9 @@ public final class NativeBridge {
         OverlayService svc = OverlayService.instance;
         if (svc != null) svc.setMenuTouch(menuInteractive);
     }
+
+    public static void requestOverlayFrame() {
+        OverlayService svc = OverlayService.instance;
+        if (svc != null) svc.requestFrameRefresh();
+    }
 }

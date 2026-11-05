@@ -195,6 +195,17 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
 
     esp_camera_frame_begin(frame.pid, screenW, screenH, false);
 
+    {
+        char hud[72];
+        std::snprintf(hud, sizeof(hud), "ESP ON  %zu enemies  (in classic/training match)",
+                      frame.targets.size());
+        text_outlined(draw, ImVec2(14.f, 14.f), IM_COL32(120, 240, 160, 240), hud);
+        if (frame.targets.empty()) {
+            text_outlined(draw, ImVec2(14.f, 34.f), IM_COL32(255, 200, 100, 230),
+                          "No targets — wait for heroes / tap Resolve in match");
+        }
+    }
+
     for (const EspTarget &t : frame.targets) {
         if (t.kind == 0 && anyPlayer) draw_one(draw, screenW, screenH, frame, t, feat, false);
         if (t.kind == 1 && anyMon) draw_one(draw, screenW, screenH, frame, t, feat, true);

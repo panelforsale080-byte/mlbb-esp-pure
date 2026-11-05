@@ -437,13 +437,21 @@ void ui_toggle_menu() { g_showMenu = !g_showMenu; }
 bool ui_menu_interactive() { return g_showMenu; }
 
 void ui_esp_start() {
+    if (!g_feat.box && !g_feat.line && !g_feat.health && !g_feat.name && !g_feat.distance &&
+        !g_feat.monsterBox && !g_feat.monsterName && !g_feat.monsterHealth) {
+        g_feat.box = true;
+        g_feat.line = true;
+        g_feat.distance = true;
+    }
     g_espActive.store(true);
-    ui_log("[esp] START — drawing on world (vm_read/IL2 W2S)");
+    ui_log("[esp] START — world overlay ON (enable Box/Line in menu if empty)");
+    ui_request_frame();
 }
 
 void ui_esp_stop() {
     g_espActive.store(false);
     ui_log("[esp] STOP — no ESP on world");
+    ui_request_frame();
 }
 
 bool ui_esp_is_active() { return g_espActive.load(); }

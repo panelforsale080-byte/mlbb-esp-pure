@@ -103,13 +103,15 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
     uintptr_t entries = 0;
     int count = 0;
     if (!mem_read(pid, dict + Off::DictEntries, entries) || !entries) return false;
-    if (!mem_read(pid, dict + Off::DictCount, count) || count <= 0 || count > 256)
-        return false;
+    mem_read(pid, dict + Off::DictCount, count);
+    if (count < 0 || count > 256) count = 0;
     int maxLength = 0;
     if (!mem_read(pid, entries + Off::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
         return false;
     const uintptr_t data = entries + Off::ArrData;
-    for (int i = 0; i < maxLength; ++i) {
+    const int scanCap = std::min(maxLength, 128);
+    const int want = count > 0 ? count : scanCap;
+    for (int i = 0; i < scanCap; ++i) {
         const uintptr_t entry = data + (uintptr_t)i * Off::EntryStride;
         int hash = 0, key = 0;
         uintptr_t value = 0;
@@ -117,7 +119,7 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
         if (!mem_read(pid, entry + Off::EntryKey, key)) continue;
         if (!mem_read(pid, entry + Off::EntryValue, value) || !value) continue;
         out.emplace_back(key, value);
-        if ((int)out.size() >= count) break;
+        if ((int)out.size() >= want) break;
     }
     return !out.empty();
 }
@@ -298,7 +300,7 @@ static bool map_is_game_heap(const MapsReg &m) {
 }
 
 static bool heap_find_battle_manager(pid_t pid, const std::vector<MapsReg> &maps,
-                                     uintptr_t &bmOut, int &bestScoreOut) {
+                                     uintptr_t &bmOut, int &bestScoreOut, bool logScan = true) {
     bmOut = 0;
     bestScoreOut = -1;
     int candidates = 0;
@@ -329,8 +331,9 @@ static bool heap_find_battle_manager(pid_t pid, const std::vector<MapsReg> &maps
         }
     }
 
-    ui_log("[resolve] heap scan (EspTab-style) tried=%d best=%d inst=0x%llx",
-           candidates, bestScoreOut, (unsigned long long)bmOut);
+    if (logScan)
+        ui_log("[resolve] heap scan (EspTab-style) tried=%d best=%d inst=0x%llx",
+               candidates, bestScoreOut, (unsigned long long)bmOut);
     return bmOut != 0 && bestScoreOut >= 100;
 }
 
@@ -561,8 +564,25 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
 static void refresh_instance(pid_t pid) {
     if (!g_bmStatics) return;
     uintptr_t inst = 0;
-    if (mem_read(pid, g_bmStatics + Off::InstanceStatic, inst) && mem_ptr_ok(inst))
+    if (mem_read(pid, g_bmStatics + Off::InstanceStatic, inst) && mem_ptr_ok(inst)) {
         g_bmInstance = inst;
+        g_bmInstancePin = inst;
+    }
+}
+
+static void maybe_refind_battle_manager(pid_t pid) {
+    if (pid <= 0) return;
+    std::vector<MapsReg> maps;
+    if (!mem_maps(pid, maps)) return;
+    uintptr_t bm2 = 0;
+    int best = -1;
+    if (!heap_find_battle_manager(pid, maps, bm2, best, false) || best < 100 || !bm2) return;
+    const int cur = g_bmInstance ? score_bm(pid, g_bmInstance) : -1;
+    if (bm2 == g_bmInstance || best <= cur) return;
+    g_bmInstance = bm2;
+    g_bmInstancePin = bm2;
+    ui_log("[tick] BM heap refresh inst=0x%llx score=%d (was %d)", (unsigned long long)bm2, best,
+           cur);
 }
 
 void esp_reset() {
@@ -693,6 +713,7 @@ const EspResolveReport &esp_last_resolve_report() {
 
 EspStatus esp_tick(EspFrame &out) {
     std::lock_guard<std::mutex> lock(g_mu);
+    static int s_emptyTargetTicks = 0;
     out = EspFrame{};
     out.pid = g_pid;
     if (g_pid <= 0) {
@@ -706,8 +727,7 @@ EspStatus esp_tick(EspFrame &out) {
         return out.status;
     }
     refresh_instance(g_pid);
-    const uintptr_t bm = g_bmInstancePin ? g_bmInstancePin : g_bmInstance;
-    if (bm) g_bmInstance = bm;
+    const uintptr_t bm = g_bmInstance ? g_bmInstance : g_bmInstancePin;
     if (!bm) {
         out.status = EspStatus::NoInstance;
         std::snprintf(out.hint, sizeof(out.hint), "BattleManager null — enter match");
@@ -799,6 +819,12 @@ EspStatus esp_tick(EspFrame &out) {
     out.dictMonsters = (int)monsters.size();
 
     out.status = EspStatus::Ready;
+    if (out.targets.empty()) {
+        s_emptyTargetTicks++;
+        if (s_emptyTargetTicks == 30 || s_emptyTargetTicks == 90) maybe_refind_battle_manager(g_pid);
+    } else {
+        s_emptyTargetTicks = 0;
+    }
     std::snprintf(out.hint, sizeof(out.hint), "OK  %zu targets  dict P%d M%d",
                   out.targets.size(), out.dictPlayers, out.dictMonsters);
     return out.status;
