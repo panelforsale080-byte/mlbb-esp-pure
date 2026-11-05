@@ -126,6 +126,15 @@ static uintptr_t find_class_fast(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &
     return klass;
 }
 
+static uintptr_t method_native_ptr(pid_t pid, uintptr_t methodInfo) {
+    if (!methodInfo) return 0;
+    for (uintptr_t off : {0u, 0x8u, 0x10u}) {
+        uintptr_t fn = 0;
+        if (mem_read(pid, methodInfo + off, fn) && fn > 0x10000 && mem_ptr_ok(fn)) return fn;
+    }
+    return 0;
+}
+
 static uintptr_t method_from_name(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
                                   uintptr_t klass, const char *methodName, int argCount) {
     if (!il2.sym_class_get_method_from_name || !klass) return 0;
@@ -278,6 +287,8 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
         out.camera_get_main_method = method_from_name(s, pid, il2, camKlass, "get_main", 0);
         out.camera_w2s_method =
             method_from_name(s, pid, il2, camKlass, "WorldToScreenPoint", 1);
+        out.camera_get_main_native = method_native_ptr(pid, out.camera_get_main_method);
+        out.camera_w2s_native = method_native_ptr(pid, out.camera_w2s_method);
     }
     out.metadata_ready =
         klass && out.camera_get_main_method && out.camera_w2s_method && out.runtime_ready;

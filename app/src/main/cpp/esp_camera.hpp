@@ -4,7 +4,8 @@
 void esp_camera_reset();
 void esp_camera_set_static_bases(uintptr_t showBattleCameraStatics, uintptr_t gameMethodStatics);
 void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t get_main_method,
-                               uintptr_t w2s_method);
+                               uintptr_t w2s_method, uintptr_t get_main_native = 0,
+                               uintptr_t w2s_native = 0);
 
 void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowIl2Ptrace = false);
 void esp_camera_frame_end();

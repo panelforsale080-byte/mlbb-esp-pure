@@ -14,6 +14,8 @@ struct ConrentResolve {
     uintptr_t game_method_statics = 0;
     uintptr_t camera_get_main_method = 0; /* MethodInfo* */
     uintptr_t camera_w2s_method = 0;
+    uintptr_t camera_get_main_native = 0; /* methodPointer — conRent direct call */
+    uintptr_t camera_w2s_native = 0;
     bool metadata_ready = false;
     char method[64] = {};
     char detail[200] = {};

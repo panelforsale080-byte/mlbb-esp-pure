@@ -149,8 +149,8 @@ static bool pos_ok(const Vec3 &p) {
 }
 
 static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
-    if (mem_read(pid, ent + Off::CachePosition, pos) && pos_ok(pos)) return true;
     if (mem_read(pid, ent + Off::LastPosition, pos) && pos_ok(pos)) return true;
+    if (mem_read(pid, ent + Off::CachePosition, pos) && pos_ok(pos)) return true;
     pos = {};
     return false;
 }
@@ -644,7 +644,8 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     g_il2_for_resolve = nullptr;
     esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
-                                cr.camera_w2s_method);
+                              cr.camera_w2s_method, cr.camera_get_main_native,
+                              cr.camera_w2s_native);
 
     if (crRan && (cr.battle_manager || cr.battle_manager_klass || cr.metadata_ready)) {
         g_bmKlass = cr.battle_manager_klass;

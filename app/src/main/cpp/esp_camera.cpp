@@ -45,6 +45,8 @@ static pid_t g_il2Pid = 0;
 static uintptr_t g_rtInvoke = 0;
 static uintptr_t g_getMainMi = 0;
 static uintptr_t g_w2sMi = 0;
+static uintptr_t g_getMainNative = 0;
+static uintptr_t g_w2sNative = 0;
 static bool g_il2Ready = false;
 
 static RemoteSession g_sess{};
@@ -65,14 +67,6 @@ static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, 
     oz = iz + w * tz + (x * ty - y * tx);
 }
 
-static void normalize_landscape(float &w, float &h) {
-    if (w > 0.f && h > 0.f && w < h) {
-        const float t = w;
-        w = h;
-        h = t;
-    }
-}
-
 static RowMat4 mul_row_mat4(const RowMat4 &proj, const RowMat4 &view) {
     RowMat4 r{};
     for (int row = 0; row < 4; ++row) {
@@ -86,8 +80,18 @@ static RowMat4 mul_row_mat4(const RowMat4 &proj, const RowMat4 &view) {
     return r;
 }
 
-/** #107 resolve: GameMethod statics → SmoothFollow → ViewMatrix (EXTERNAL-MLBB draw path, vm_read). */
-static bool load_vp_resolved_game_camera(pid_t pid) {
+/** Build #107: pre-multiplied VP at SmoothFollow+0x5C (conRent game camera). */
+static bool load_vp_game_combined(pid_t pid) {
+    if (!g_gmStatics) return false;
+    uintptr_t smooth = 0;
+    if (!mem_read(pid, g_gmStatics + 0x10, smooth) || !mem_ptr_ok(smooth)) return false;
+    if (!mem_read(pid, smooth + 0x5C, g_viewProjLegacy)) return false;
+    g_useExtW2sMath = false;
+    return true;
+}
+
+/** EXTERNAL-MLBB: projection * worldToCamera from same camera block. */
+static bool load_vp_game_matrix_pair(pid_t pid) {
     if (!g_gmStatics) return false;
     uintptr_t smooth = 0;
     if (!mem_read(pid, g_gmStatics + 0x10, smooth) || !mem_ptr_ok(smooth)) return false;
@@ -211,7 +215,11 @@ static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &out
 
     if (!mem_ptr_ok(g_mainCam)) {
         uintptr_t cam = 0;
-        if (!remote_session_call(g_sess, g_rtInvoke, {g_getMainMi, 0, 0, 0}, cam)) {
+        const bool got =
+            (g_getMainNative &&
+             remote_session_call(g_sess, g_getMainNative, {}, cam)) ||
+            (g_getMainMi && remote_session_call(g_sess, g_rtInvoke, {g_getMainMi, 0, 0, 0}, cam));
+        if (!got) {
             g_useIl2 = false;
             return false;
         }
@@ -276,6 +284,8 @@ void esp_camera_reset() {
     g_rtInvoke = 0;
     g_getMainMi = 0;
     g_w2sMi = 0;
+    g_getMainNative = 0;
+    g_w2sNative = 0;
     g_il2Ready = false;
     g_useIl2 = false;
     g_mainCam = 0;
@@ -291,18 +301,20 @@ void esp_camera_set_static_bases(uintptr_t showBattleCameraStatics, uintptr_t ga
 }
 
 void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t get_main_method,
-                               uintptr_t w2s_method) {
+                               uintptr_t w2s_method, uintptr_t get_main_native,
+                               uintptr_t w2s_native) {
     g_il2Pid = pid;
     g_rtInvoke = runtime_invoke;
     g_getMainMi = get_main_method;
     g_w2sMi = w2s_method;
+    g_getMainNative = get_main_native;
+    g_w2sNative = w2s_native;
     g_il2Ready = runtime_invoke && get_main_method && w2s_method;
 }
 
 void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowIl2Ptrace) {
     g_screenW = screenW;
     g_screenH = screenH;
-    normalize_landscape(g_screenW, g_screenH);
     g_matrixReady = false;
     g_useIl2 = false;
     g_useExtW2sMath = false;
@@ -312,20 +324,22 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     if (g_inFrame) remote_session_end(g_sess);
     g_inFrame = false;
 
-    if (pid > 0 && proc_alive(pid)) {
-        if (load_vp_resolved_game_camera(pid))
-            g_matrixReady = true;
-        else if (load_vp_show_battle_camera(pid))
-            g_matrixReady = true;
-    }
-
-    /* conRentV1-accurate fallback: one ptrace attach per frame, capped W2S calls. */
+    /* conRentV1: Camera.get_main + WorldToScreenPoint (most accurate). */
     if (allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
         proc_alive(pid)) {
-        if (remote_session_begin_try(pid, g_sess)) {
+        if (remote_session_begin(pid, g_sess)) {
             g_inFrame = true;
             g_useIl2 = true;
         }
+    }
+
+    if (pid > 0 && proc_alive(pid)) {
+        if (load_vp_game_combined(pid))
+            g_matrixReady = true;
+        else if (load_vp_game_matrix_pair(pid))
+            g_matrixReady = true;
+        else if (load_vp_show_battle_camera(pid))
+            g_matrixReady = true;
     }
 }
 
@@ -340,9 +354,10 @@ void esp_camera_frame_end() {
 bool esp_camera_ready() { return g_matrixReady || g_useIl2; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
-    if (g_matrixReady) {
-        if (g_useExtW2sMath && external_style_w2s(wx, wy, wz, outX, outY)) return true;
-        if (!g_useExtW2sMath && legacy_matrix_w2s(wx, wy, wz, outX, outY)) return true;
-    }
-    return il2_invoke_w2s(wx, wy, wz, outX, outY);
+    if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
+    if (g_matrixReady && !g_useExtW2sMath && legacy_matrix_w2s(wx, wy, wz, outX, outY))
+        return true;
+    if (g_matrixReady && g_useExtW2sMath && external_style_w2s(wx, wy, wz, outX, outY))
+        return true;
+    return false;
 }
