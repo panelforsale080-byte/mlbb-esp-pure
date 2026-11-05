@@ -17,8 +17,6 @@ add_library(MlbbEsp SHARED
     remote_il2cpp.cpp
     remote_elf.cpp
     clip_android.cpp
-    esp_w2s_bridge.cpp
-    esp_inject.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp
@@ -42,6 +40,3 @@ target_link_libraries(MlbbEsp
     ${android-lib}
     ${EGL-lib}
     ${GLESv2-lib})
-
-add_library(mlbb_espw2s SHARED inject_agent/esp_w2s_agent.cpp)
-target_link_libraries(mlbb_espw2s ${log-lib})

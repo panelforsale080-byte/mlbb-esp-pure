@@ -1,6 +1,5 @@
 #include "esp_engine.hpp"
 #include "esp_camera.hpp"
-#include "esp_w2s_bridge.hpp"
 #include "conrent_esp.hpp"
 #include "offsets.hpp"
 #include "proc.hpp"
@@ -151,9 +150,8 @@ static bool pos_ok(const Vec3 &p) {
 }
 
 static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
-    /* LastPosition is network-smoothed; steadier on screen than raw CachePosition. */
-    if (mem_read(pid, ent + Off::LastPosition, pos) && pos_ok(pos)) return true;
     if (mem_read(pid, ent + Off::CachePosition, pos) && pos_ok(pos)) return true;
+    if (mem_read(pid, ent + Off::LastPosition, pos) && pos_ok(pos)) return true;
     pos = {};
     return false;
 }
@@ -559,13 +557,7 @@ void esp_reset() {
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
     g_resolved = false;
-    esp_w2s_bridge_reset();
     esp_camera_reset();
-}
-
-pid_t esp_current_pid() {
-    std::lock_guard<std::mutex> lock(g_mu);
-    return g_pid;
 }
 
 EspStatus esp_attach(pid_t pid) {
@@ -656,9 +648,6 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
                               cr.camera_w2s_method);
-    if (cr.camera_get_main_native && cr.camera_w2s_native)
-        esp_w2s_bridge_publish_cfg(g_pid, cr.camera_get_main_native, cr.camera_w2s_native, 0.f,
-                                   0.f);
 
     if (crRan && (cr.battle_manager || cr.battle_manager_klass || cr.metadata_ready)) {
         g_bmKlass = cr.battle_manager_klass;
@@ -800,56 +789,19 @@ EspStatus esp_tick(EspFrame &out) {
 
 namespace {
 
-constexpr float kSmoothAlphaHero = 0.26f;
-constexpr float kSmoothAlphaMob = 0.32f;
-constexpr float kSmoothAlphaSelf = 0.30f;
-constexpr float kSmoothSnapPx = 96.f;
-constexpr int kScreenHoldFrames = 14;
+constexpr int kScreenHoldFrames = 2;
 
 static pid_t g_screenPid = 0;
 static float g_selfSx = 0.f, g_selfSy = 0.f;
-static bool g_haveSelfSmooth = false;
+static bool g_haveSelf = false;
 static int g_selfMiss = 0;
 
-struct EntScreenSmooth {
-    float px = 0.f;
-    float py = 0.f;
-    float outX = 0.f;
-    float outY = 0.f;
-    bool have = false;
+struct EntScreenHold {
+    float x = 0.f;
+    float y = 0.f;
     int miss = 0;
 };
-static std::unordered_map<uintptr_t, EntScreenSmooth> g_entScreen;
-
-static float smooth1d(float prev, float raw, float alpha) {
-    if (!std::isfinite(prev)) return raw;
-    return prev + (raw - prev) * alpha;
-}
-
-static void smooth_screen_point(float rawX, float rawY, float &outX, float &outY, float alpha,
-                                float &prevX, float &prevY, bool &havePrev) {
-    if (!havePrev) {
-        prevX = rawX;
-        prevY = rawY;
-        havePrev = true;
-        outX = rawX;
-        outY = rawY;
-        return;
-    }
-    const float dx = rawX - prevX;
-    const float dy = rawY - prevY;
-    if (dx * dx + dy * dy > kSmoothSnapPx * kSmoothSnapPx) {
-        prevX = rawX;
-        prevY = rawY;
-        outX = rawX;
-        outY = rawY;
-        return;
-    }
-    outX = smooth1d(prevX, rawX, alpha);
-    outY = smooth1d(prevY, rawY, alpha);
-    prevX = outX;
-    prevY = outY;
-}
+static std::unordered_map<uintptr_t, EntScreenHold> g_entScreen;
 
 } // namespace
 
@@ -862,48 +814,51 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
     if (g_screenPid != frame.pid) {
         g_screenPid = frame.pid;
         g_entScreen.clear();
-        g_haveSelfSmooth = false;
+        g_haveSelf = false;
         g_selfMiss = 0;
     }
 
-    esp_camera_frame_begin(frame.pid, screenW, screenH, false);
+    esp_camera_frame_begin(frame.pid, screenW, screenH, true);
     float sx = 0.f, sy = 0.f;
     if (esp_camera_world_to_screen(frame.selfX, frame.selfY, frame.selfZ, sx, sy)) {
-        smooth_screen_point(sx, sy, frame.selfScreenX, frame.selfScreenY, kSmoothAlphaSelf,
-                            g_selfSx, g_selfSy, g_haveSelfSmooth);
+        frame.selfScreenX = sx;
+        frame.selfScreenY = sy;
+        g_selfSx = sx;
+        g_selfSy = sy;
+        g_haveSelf = true;
         g_selfMiss = 0;
         frame.selfScreenValid = true;
-    } else if (g_haveSelfSmooth && g_selfMiss < kScreenHoldFrames) {
+    } else if (g_haveSelf && g_selfMiss < kScreenHoldFrames) {
         ++g_selfMiss;
         frame.selfScreenX = g_selfSx;
         frame.selfScreenY = g_selfSy;
         frame.selfScreenValid = true;
     }
 
-    std::unordered_map<uintptr_t, EntScreenSmooth> live;
-    for (EspTarget &t : frame.targets) {
-        if (!t.ent) continue;
-        const float alpha = t.kind == 0 ? kSmoothAlphaHero : kSmoothAlphaMob;
-        auto it = g_entScreen.find(t.ent);
-        EntScreenSmooth st{};
-        if (it != g_entScreen.end()) st = it->second;
+    std::vector<size_t> order(frame.targets.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return frame.targets[a].kind < frame.targets[b].kind;
+    });
 
+    std::unordered_map<uintptr_t, EntScreenHold> live;
+    for (size_t idx : order) {
+        EspTarget &t = frame.targets[idx];
+        if (!t.ent) continue;
+        const auto it = g_entScreen.find(t.ent);
+        const bool hadPrev = it != g_entScreen.end();
         if (esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy)) {
-            float ox = sx, oy = sy;
-            smooth_screen_point(sx, sy, ox, oy, alpha, st.px, st.py, st.have);
-            st.outX = ox;
-            st.outY = oy;
-            st.miss = 0;
-            t.screenX = ox;
-            t.screenY = oy;
+            t.screenX = sx;
+            t.screenY = sy;
             t.screenValid = true;
-            live[t.ent] = st;
+            live[t.ent] = {sx, sy, 0};
             continue;
         }
-        if (st.have && st.miss < kScreenHoldFrames) {
+        if (hadPrev && it->second.miss < kScreenHoldFrames) {
+            EntScreenHold st = it->second;
             ++st.miss;
-            t.screenX = st.outX;
-            t.screenY = st.outY;
+            t.screenX = st.x;
+            t.screenY = st.y;
             t.screenValid = true;
             live[t.ent] = st;
         }

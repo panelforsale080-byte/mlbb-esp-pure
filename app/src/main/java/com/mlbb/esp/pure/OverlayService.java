@@ -20,10 +20,6 @@ import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-
 public class OverlayService extends Service {
     private static final String TAG = "MlbbEspOverlay";
     public static OverlayService instance;
@@ -48,8 +44,6 @@ public class OverlayService extends Service {
         try {
             NativeBridge.nativeInit();
             NativeBridge.nativeSetContext(getApplicationContext());
-            NativeBridge.nativeSetInjectScratchDir(getCacheDir().getAbsolutePath());
-            stageW2sInjectAgent();
             startForegroundNotif();
             wm = (WindowManager) getSystemService(WINDOW_SERVICE);
             DisplayMetrics dm = new DisplayMetrics();
@@ -60,31 +54,6 @@ public class OverlayService extends Service {
         } catch (Throwable t) {
             Log.e(TAG, "onCreate", t);
             stopSelf();
-        }
-    }
-
-    /** Copy packaged libmlbb_espw2s.so to app files (readable path for ptrace inject). */
-    private void stageW2sInjectAgent() {
-        try {
-            String libDir = getApplicationInfo().nativeLibraryDir;
-            if (libDir == null) return;
-            File src = new File(libDir, "libmlbb_espw2s.so");
-            if (!src.isFile()) {
-                Log.w(TAG, "missing " + src.getAbsolutePath());
-                return;
-            }
-            File dst = new File(getFilesDir(), "libmlbb_espw2s.so");
-            try (FileInputStream in = new FileInputStream(src);
-                 FileOutputStream out = new FileOutputStream(dst, false)) {
-                byte[] buf = new byte[16384];
-                int n;
-                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            }
-            dst.setReadable(true, false);
-            NativeBridge.nativeSetW2sAgentPath(dst.getAbsolutePath());
-            Log.i(TAG, "W2S agent staged: " + dst.getAbsolutePath());
-        } catch (Throwable t) {
-            Log.e(TAG, "stageW2sInjectAgent", t);
         }
     }
 
