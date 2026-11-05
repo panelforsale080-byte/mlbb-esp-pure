@@ -16,3 +16,7 @@ void ui_touch(int action, float x, float y);
 void ui_open_menu();
 void ui_toggle_menu();
 bool ui_menu_interactive();
+
+void ui_esp_start();
+void ui_esp_stop();
+bool ui_esp_is_active();

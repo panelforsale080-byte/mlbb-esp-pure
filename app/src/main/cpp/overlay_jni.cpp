@@ -84,3 +84,13 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeIsMenuInteractive(JNIEnv *, jclass) {
     return ui_menu_interactive() ? JNI_TRUE : JNI_FALSE;
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_mlbb_esp_pure_NativeBridge_nativeStartEsp(JNIEnv *, jclass) {
+    ui_esp_start();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_mlbb_esp_pure_NativeBridge_nativeStopEsp(JNIEnv *, jclass) {
+    ui_esp_stop();
+}

@@ -18,6 +18,8 @@ public final class NativeBridge {
     public static native void nativeOpenMenu();
     public static native void nativeToggleMenu();
     public static native boolean nativeIsMenuInteractive();
+    public static native void nativeStartEsp();
+    public static native void nativeStopEsp();
 
     public static void applyMenuTouch(boolean menuInteractive) {
         OverlayService svc = OverlayService.instance;

@@ -43,6 +43,7 @@ static bool g_fallbackPid = true;
 static bool g_showMenu = false;
 static bool g_logScrollBottom = true;
 static EspFeatures g_feat{};
+static std::atomic<bool> g_espActive{false};
 
 static void apply_menu_style() {
     ImGuiStyle &s = ImGui::GetStyle();
@@ -161,6 +162,7 @@ static void reader_loop() {
 
         if (pid > 0 && !proc_alive(pid)) {
             ui_log("[proc] pid %d died — reset", (int)pid);
+            ui_esp_stop();
             esp_reset();
             g_wantPid.store(0);
             g_needResolve.store(true);
@@ -204,7 +206,9 @@ static void draw_ui() {
     if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
     if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
 
-    esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
+    if (g_espActive.load() && fr.status == EspStatus::Ready) {
+        esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
+    }
 
     if (!g_showMenu) return;
 
@@ -225,6 +229,17 @@ static void draw_ui() {
             if (p <= 0 && g_fallbackPid) p = proc_find_mlbb_fallback();
             attach_pid(p, "find");
         }
+
+        ImGui::SeparatorText("ESP control");
+        ImGui::Text("World draw: %s", g_espActive.load() ? "ON" : "OFF");
+        if (ImGui::Button("Start ESP", ImVec2(118.f, 0.f))) {
+            if (fr.status == EspStatus::Ready)
+                ui_esp_start();
+            else
+                ui_log("[esp] not Ready — Find pid + Resolve in match first");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Stop ESP", ImVec2(118.f, 0.f))) ui_esp_stop();
 
         ImGui::SeparatorText("Enemy");
         ImGui::Checkbox("Box", &g_feat.box);
@@ -412,3 +427,15 @@ void ui_open_menu() { g_showMenu = true; }
 void ui_toggle_menu() { g_showMenu = !g_showMenu; }
 
 bool ui_menu_interactive() { return g_showMenu; }
+
+void ui_esp_start() {
+    g_espActive.store(true);
+    ui_log("[esp] START — drawing on world (vm_read/IL2 W2S)");
+}
+
+void ui_esp_stop() {
+    g_espActive.store(false);
+    ui_log("[esp] STOP — no ESP on world");
+}
+
+bool ui_esp_is_active() { return g_espActive.load(); }

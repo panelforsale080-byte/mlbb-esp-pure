@@ -28,6 +28,8 @@ public class OverlayService extends Service {
     private FrameLayout root;
     private GlImGuiView glView;
     private View fab;
+    private View fabStart;
+    private View fabStop;
     private WindowManager.LayoutParams surfaceLp;
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -96,12 +98,50 @@ public class OverlayService extends Service {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT);
-        fabLp.gravity = Gravity.TOP | Gravity.START;
+        fabLp.gravity = Gravity.TOP | Gravity.END;
         fabLp.x = 24;
-        fabLp.y = 120;
+        fabLp.y = 56;
+
+        fabStart = new TextView(this);
+        ((TextView) fabStart).setText("Start ESP");
+        ((TextView) fabStart).setTextSize(13f);
+        ((TextView) fabStart).setPadding(22, 14, 22, 14);
+        fabStart.setBackgroundColor(0xCC1B5E20);
+        fabStart.setOnClickListener(v -> NativeBridge.nativeStartEsp());
+
+        fabStop = new TextView(this);
+        ((TextView) fabStop).setText("Stop ESP");
+        ((TextView) fabStop).setTextSize(13f);
+        ((TextView) fabStop).setPadding(22, 14, 22, 14);
+        fabStop.setBackgroundColor(0xCC8B1A1A);
+        fabStop.setOnClickListener(v -> NativeBridge.nativeStopEsp());
+
+        WindowManager.LayoutParams startLp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                overlayType,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT);
+        startLp.gravity = Gravity.TOP | Gravity.END;
+        startLp.x = 24;
+        startLp.y = 124;
+
+        WindowManager.LayoutParams stopLp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                overlayType,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT);
+        stopLp.gravity = Gravity.TOP | Gravity.END;
+        stopLp.x = 24;
+        stopLp.y = 188;
 
         wm.addView(root, surfaceLp);
         wm.addView(fab, fabLp);
+        wm.addView(fabStart, startLp);
+        wm.addView(fabStop, stopLp);
     }
 
     void setMenuTouch(boolean interactive) {
@@ -119,9 +159,10 @@ public class OverlayService extends Service {
                 } catch (Throwable ignored) {
                 }
             }
-            if (fab != null) {
-                fab.setVisibility(interactive ? View.GONE : View.VISIBLE);
-            }
+            int fabVis = interactive ? View.GONE : View.VISIBLE;
+            if (fab != null) fab.setVisibility(fabVis);
+            if (fabStart != null) fabStart.setVisibility(fabVis);
+            if (fabStop != null) fabStop.setVisibility(fabVis);
             if (glView != null) glView.requestRender();
         });
     }
@@ -161,6 +202,14 @@ public class OverlayService extends Service {
             if (glView != null) glView.releaseGl();
         } catch (Throwable t) {
             Log.e(TAG, "releaseGl", t);
+        }
+        try {
+            if (fabStop != null) wm.removeView(fabStop);
+        } catch (Throwable ignored) {
+        }
+        try {
+            if (fabStart != null) wm.removeView(fabStart);
+        } catch (Throwable ignored) {
         }
         try {
             if (fab != null) wm.removeView(fab);
