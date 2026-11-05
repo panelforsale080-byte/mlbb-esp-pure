@@ -41,7 +41,7 @@ static bool g_inFrame = false;
 static uintptr_t g_mainCam = 0;
 static bool g_useIl2 = false;
 static int g_w2sBudget = 0;
-constexpr int kMaxIl2W2sPerFrame = 512;
+constexpr int kMaxIl2W2sPerFrame = 128;
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
@@ -263,19 +263,12 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     g_inFrame = false;
 
     g_w2sBudget = kMaxIl2W2sPerFrame;
+    (void)allowIl2Ptrace;
 
+    /* Build #49 IL2 W2S runs in injected libmlbb_espw2s (in-process) — no overlay ptrace on draw. */
     if (esp_w2s_bridge_active()) esp_w2s_bridge_set_screen(g_screenW, g_screenH);
 
-    /* Build #49: IL2 Camera.WorldToScreenPoint when ptrace attach succeeds (try_lock — no deadlock). */
-    if (allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
-        proc_alive(pid)) {
-        if (remote_session_begin_try(pid, g_sess)) {
-            g_inFrame = true;
-            g_useIl2 = true;
-        }
-    }
-
-    /* Build #149: always load matrix so W2S still works when IL2/inject unavailable. */
+    /* Build #148 matrix fallback when inject agent is not loaded yet. */
     if (pid > 0 && proc_alive(pid)) {
         if (load_vp_game_method(pid))
             g_matrixReady = true;
@@ -292,14 +285,11 @@ void esp_camera_frame_end() {
     g_mainCam = 0;
 }
 
-bool esp_camera_ready() {
-    return esp_w2s_bridge_active() || g_useIl2 || g_matrixReady;
-}
+bool esp_camera_ready() { return esp_w2s_bridge_active() || g_matrixReady; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
     if (g_il2Pid > 0 && esp_w2s_bridge_active() &&
         esp_w2s_bridge_world_to_screen(g_il2Pid, wx, wy, wz, outX, outY))
         return true;
-    if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
     return matrix_w2s(wx, wy, wz, outX, outY);
 }

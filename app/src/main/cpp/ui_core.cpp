@@ -181,6 +181,13 @@ static void reader_loop() {
             }
             EspFrame f;
             esp_tick(f);
+            if (g_espActive.load() && f.status == EspStatus::Ready) {
+                float sw = (float)g_width;
+                float sh = (float)g_height;
+                if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
+                if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
+                esp_project_screens(f, sw, sh);
+            }
             if (f.status != lastStatus || pid != lastPid) {
                 ui_log("[tick] %s | %s", status_name(f.status), f.hint);
                 if (f.status == EspStatus::Ready) {
@@ -199,20 +206,6 @@ static void reader_loop() {
     }
 }
 
-static void overlay_draw_size(float &sw, float &sh) {
-    sw = (float)g_width;
-    sh = (float)g_height;
-    if ((sw < 2.f || sh < 2.f) && g_displayW > 0 && g_displayH > 0) {
-        sw = (float)g_displayW;
-        sh = (float)g_displayH;
-    }
-    if (sw > 0.f && sh > 0.f && sw < sh) {
-        const float t = sw;
-        sw = sh;
-        sh = t;
-    }
-}
-
 static void draw_ui() {
     EspFrame fr;
     {
@@ -220,11 +213,12 @@ static void draw_ui() {
         fr = g_frame;
     }
     const EspResolveReport &rep = esp_last_resolve_report();
-    float sw = 0.f, sh = 0.f;
-    overlay_draw_size(sw, sh);
+    float sw = (float)g_width;
+    float sh = (float)g_height;
+    if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
+    if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
 
     if (g_espActive.load() && fr.status == EspStatus::Ready) {
-        esp_project_screens(fr, sw, sh);
         esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
     }
 
@@ -233,7 +227,7 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("#149 ESP + #49 IL2 W2S; conRent fast resolve; matrix fallback.");
+        ImGui::TextDisabled("Build #148 ESP; #49 IL2 W2S via inject (no draw ptrace).");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
@@ -448,16 +442,15 @@ bool ui_menu_interactive() { return g_showMenu; }
 
 void ui_esp_start() {
     g_espActive.store(true);
-    if (!g_feat.box && !g_feat.line && !g_feat.health && !g_feat.name && !g_feat.distance &&
-        !g_feat.monsterBox && !g_feat.monsterName && !g_feat.monsterHealth) {
-        g_feat.box = g_feat.line = g_feat.health = g_feat.name = true;
-        g_feat.monsterBox = g_feat.monsterName = true;
-    }
     const pid_t pid = esp_current_pid();
     if (pid > 0) {
-        std::thread([pid] { esp_w2s_bridge_ensure_injected(pid, nullptr); }).detach();
+        if (esp_w2s_bridge_ensure_injected(pid, nullptr))
+            ui_log("[esp] START — #148 ESP + #49 inject IL2 W2S active");
+        else
+            ui_log("[esp] START — #148 ESP (matrix W2S until inject succeeds; retry Start ESP)");
+    } else {
+        ui_log("[esp] START — attach pid + Resolve first");
     }
-    ui_log("[esp] START — #149 draw + #49 IL2 (ptrace try / inject optional / matrix fallback)");
 }
 
 void ui_esp_stop() {
