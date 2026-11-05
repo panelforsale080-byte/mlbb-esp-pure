@@ -4,6 +4,7 @@
 
 /* Build #49 IL2 WorldToScreenPoint inside game process (injected .so); overlay uses vm_read/write only. */
 
+void esp_w2s_bridge_set_agent_path(const char *absolutePath);
 void esp_w2s_bridge_reset();
 void esp_w2s_bridge_publish_cfg(pid_t pid, uintptr_t get_main_native, uintptr_t w2s_native,
                                 float screenW, float screenH);

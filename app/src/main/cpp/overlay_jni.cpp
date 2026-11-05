@@ -1,5 +1,6 @@
 #include "ui_core.hpp"
 #include "clip_android.hpp"
+#include "esp_w2s_bridge.hpp"
 #include <jni.h>
 
 static JavaVM *g_vm = nullptr;
@@ -35,6 +36,16 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeSetContext(JNIEnv *env, jclass, jobjec
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeSetDisplaySize(JNIEnv *, jclass, jint w, jint h) {
     ui_set_display_size((int)w, (int)h);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_mlbb_esp_pure_NativeBridge_nativeSetW2sAgentPath(JNIEnv *env, jclass, jstring path) {
+    if (!path) return;
+    const char *utf = env->GetStringUTFChars(path, nullptr);
+    if (utf) {
+        esp_w2s_bridge_set_agent_path(utf);
+        env->ReleaseStringUTFChars(path, utf);
+    }
 }
 
 extern "C" JNIEXPORT void JNICALL

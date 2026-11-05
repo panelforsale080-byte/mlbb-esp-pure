@@ -40,17 +40,40 @@ static uintptr_t g_getMainNative = 0;
 static uintptr_t g_w2sNative = 0;
 static bool g_injected = false;
 static uint32_t g_seq = 0;
+static std::string g_agentPath;
 
-static std::string agent_so_path() {
+static std::string maps_path_for_lib(const char *libFileName) {
     std::ifstream maps("/proc/self/maps");
     std::string line;
     while (std::getline(maps, line)) {
-        if (line.find("libMlbbEsp.so") == std::string::npos) continue;
-        const auto p = line.find("/libMlbbEsp.so");
-        if (p == std::string::npos) continue;
-        return line.substr(0, p) + "/libmlbb_espw2s.so";
+        if (line.find(libFileName) == std::string::npos) continue;
+        const char *path = std::strchr(line.c_str(), '/');
+        if (!path) continue;
+        std::string full(path);
+        if (full.find(libFileName) != std::string::npos) return full;
     }
-    return "/data/local/tmp/libmlbb_espw2s.so";
+    return {};
+}
+
+static std::string agent_so_path() {
+    if (!g_agentPath.empty()) return g_agentPath;
+    const std::string mainLib = maps_path_for_lib("libMlbbEsp.so");
+    if (!mainLib.empty()) {
+        const auto pos = mainLib.find("libMlbbEsp.so");
+        if (pos != std::string::npos) {
+            const std::string sibling = mainLib.substr(0, pos) + "libmlbb_espw2s.so";
+            std::ifstream probe(sibling, std::ios::binary);
+            if (probe.good()) return sibling;
+        }
+    }
+    const std::string agent = maps_path_for_lib("libmlbb_espw2s.so");
+    if (!agent.empty()) return agent;
+    return {};
+}
+
+void esp_w2s_bridge_set_agent_path(const char *absolutePath) {
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_agentPath = absolutePath ? absolutePath : "";
 }
 
 static bool read_remote_shm_addr(pid_t pid, uintptr_t &out) {
@@ -104,9 +127,17 @@ bool esp_w2s_bridge_ensure_injected(pid_t pid, const char *agentSoPath) {
     std::lock_guard<std::mutex> lock(g_mu);
     if (g_pid == pid && g_remoteShm && probe_magic(pid, g_remoteShm)) return true;
 
-    const char *so = agentSoPath && agentSoPath[0] ? agentSoPath : agent_so_path().c_str();
+    std::string soStorage;
+    if (agentSoPath && agentSoPath[0])
+        soStorage = agentSoPath;
+    else
+        soStorage = agent_so_path();
+    if (soStorage.empty()) {
+        ui_log("[inject] W2S agent failed: libmlbb_espw2s.so not found (nativeLibraryDir?)");
+        return false;
+    }
     char err[160] = {};
-    if (!esp_inject_dlopen_so(pid, so, err, sizeof(err))) {
+    if (!esp_inject_dlopen_so(pid, soStorage.c_str(), err, sizeof(err))) {
         ui_log("[inject] W2S agent failed: %s", err);
         return false;
     }
@@ -159,7 +190,7 @@ bool esp_w2s_bridge_world_to_screen(pid_t pid, float wx, float wy, float wz, flo
 
     uint32_t ack = 0;
     for (int i = 0; i < 30; ++i) {
-        mem_read(pid, g_remoteShm + offsetof(EspW2sShm, ack_seq), ack); // NOLINT
+        mem_read(pid, g_remoteShm + offsetof(EspW2sShm, ack_seq), ack);
         if (ack == seq) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }

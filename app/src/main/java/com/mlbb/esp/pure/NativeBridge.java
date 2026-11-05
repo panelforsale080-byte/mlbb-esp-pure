@@ -8,6 +8,7 @@ public final class NativeBridge {
     public static native void nativeInit();
     public static native void nativeSetContext(Object context);
     public static native void nativeSetDisplaySize(int width, int height);
+    public static native void nativeSetW2sAgentPath(String absolutePath);
 
     public static native void nativeGlSurfaceCreated();
     public static native void nativeGlSurfaceChanged(int w, int h);
