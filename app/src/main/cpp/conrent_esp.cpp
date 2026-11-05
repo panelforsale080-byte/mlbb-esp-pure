@@ -2,6 +2,7 @@
 #include "offsets.hpp"
 #include "remote_call.hpp"
 #include "ui_log.hpp"
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -42,8 +43,12 @@ static void build_resolve_images(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &
                                  ResolveImages &out) {
     out = {};
     if (il2.sym_domain_assembly_open && mem_ptr_ok(domain)) {
-        const uintptr_t np = scratch_cstr(s, pid, 4, "Assembly-CSharp");
-        if (np) {
+        static const char *kCSharpAsm[] = {"Assembly-CSharp", "Assembly-CSharp.dll",
+                                           "Assembly-CSharp-firstpass.dll"};
+        for (const char *csName : kCSharpAsm) {
+            if (out.assemblyCSharp) break;
+            const uintptr_t np = scratch_cstr(s, pid, 3, csName);
+            if (!np) continue;
             uintptr_t as = 0;
             if (remote_session_call(s, il2.sym_domain_assembly_open, {domain, np}, as) && as)
                 remote_session_call(s, il2.sym_assembly_get_image, {as}, out.assemblyCSharp);
@@ -82,11 +87,8 @@ static uintptr_t class_from_name_image(RemoteSession &s, pid_t pid, RemoteIl2Cpp
                                        uintptr_t image, const std::string &ns,
                                        const std::string &cls) {
     if (!image || !il2.sym_class_from_name) return 0;
-    uintptr_t nsPtr = 0;
-    if (!ns.empty()) {
-        nsPtr = scratch_cstr(s, pid, 5, ns.c_str());
-        if (!nsPtr) return 0;
-    }
+    uintptr_t nsPtr = scratch_cstr(s, pid, 5, ns.empty() ? "" : ns.c_str());
+    if (!nsPtr) return 0;
     const uintptr_t namePtr = scratch_cstr(s, pid, 6, cls.c_str());
     if (!namePtr) return 0;
     uintptr_t klass = 0;
@@ -95,13 +97,42 @@ static uintptr_t class_from_name_image(RemoteSession &s, pid_t pid, RemoteIl2Cpp
     return mem_ptr_ok(klass) ? klass : 0;
 }
 
+static bool klass_name_matches(pid_t pid, uintptr_t klass, const std::string &wantCls) {
+    if (!klass) return false;
+    for (uintptr_t nameOff : {0x10u, 0x18u, 0x08u}) {
+        uintptr_t nameP = 0;
+        if (!mem_read(pid, klass + nameOff, nameP) || !nameP) continue;
+        char buf[96] = {};
+        if (!mem_read(pid, nameP, buf, sizeof(buf) - 1)) continue;
+        if (wantCls == buf) return true;
+        const char *dot = std::strrchr(buf, '.');
+        if (dot && wantCls == (dot + 1)) return true;
+    }
+    return false;
+}
+
+static uintptr_t find_class_scan_images(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
+                                        const ResolveImages &img, const std::string &wantCls) {
+    if (!il2.sym_image_get_class || !il2.sym_image_get_class_count) return 0;
+    for (uintptr_t image : img.all) {
+        uintptr_t count = 0;
+        if (!remote_session_call(s, il2.sym_image_get_class_count, {image}, count)) continue;
+        const size_t n = (size_t)count;
+        if (n == 0 || n > 12000) continue;
+        const size_t limit = std::min(n, (size_t)6000);
+        for (size_t i = 0; i < limit; ++i) {
+            uintptr_t klass = 0;
+            if (!remote_session_call(s, il2.sym_image_get_class, {image, i}, klass) || !klass)
+                continue;
+            if (klass_name_matches(pid, klass, wantCls)) return klass;
+        }
+    }
+    return 0;
+}
+
 static uintptr_t find_class_fast(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
                                  const ResolveImages &img, const char *fullName,
                                  bool preferUnityImage) {
-    if (g_classPid != pid) {
-        g_classCache.clear();
-        g_classPid = pid;
-    }
     const std::string key(fullName);
     const auto hit = g_classCache.find(key);
     if (hit != g_classCache.end()) return hit->second;
@@ -122,7 +153,8 @@ static uintptr_t find_class_fast(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &
             if (klass) break;
         }
     }
-    g_classCache[key] = klass;
+    if (!klass) klass = find_class_scan_images(s, pid, il2, img, cls);
+    if (klass) g_classCache[key] = klass;
     return klass;
 }
 
@@ -212,6 +244,8 @@ bool conrent_runtime_ready(pid_t pid, RemoteIl2CppInfo &il2) {
 bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*maps*/,
                                     RemoteIl2CppInfo &il2, ConrentResolve &out) {
     out = ConrentResolve{};
+    g_classCache.clear();
+    g_classPid = pid;
     std::snprintf(out.method, sizeof(out.method), "conRentV1 fast ptrace IL2CPP");
 
     if (!il2.sym_class_from_name || !il2.sym_assembly_get_image ||
@@ -226,14 +260,12 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
         return false;
     }
 
-    uintptr_t domain = mem_ptr_ok(il2.domain_ptr) ? il2.domain_ptr : 0;
-    if (!domain) {
-        if (!il2.sym_domain_get ||
-            !remote_session_call(s, il2.sym_domain_get, {}, domain) || !mem_ptr_ok(domain)) {
-            std::snprintf(out.detail, sizeof(out.detail), "il2cpp_domain_get failed");
-            remote_session_end(s);
-            return false;
-        }
+    uintptr_t domain = 0;
+    if (!il2.sym_domain_get ||
+        !remote_session_call(s, il2.sym_domain_get, {}, domain) || !mem_ptr_ok(domain)) {
+        std::snprintf(out.detail, sizeof(out.detail), "il2cpp_domain_get failed");
+        remote_session_end(s);
+        return false;
     }
 
     if (il2.sym_thread_attach) {
@@ -244,14 +276,22 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
     size_t asmCount = 0;
     uintptr_t assemblies = 0;
     const uintptr_t sizeSlot = remote_session_scratch(s, 0, sizeof(size_t));
-    if (il2.sym_domain_get_assemblies && sizeSlot) {
-        size_t zero = 0;
-        mem_write(s.pid, sizeSlot, &zero, sizeof(zero));
-        remote_session_call(s, il2.sym_domain_get_assemblies, {domain, sizeSlot}, assemblies);
-        mem_read(pid, sizeSlot, asmCount);
+    if (!il2.sym_domain_get_assemblies || !sizeSlot) {
+        std::snprintf(out.detail, sizeof(out.detail), "missing domain_get_assemblies");
+        remote_session_end(s);
+        return false;
+    }
+    size_t zero = 0;
+    mem_write(s.pid, sizeSlot, &zero, sizeof(zero));
+    if (!remote_session_call(s, il2.sym_domain_get_assemblies, {domain, sizeSlot}, assemblies) ||
+        !mem_read(pid, sizeSlot, asmCount)) {
+        std::snprintf(out.detail, sizeof(out.detail), "domain_get_assemblies call failed");
+        remote_session_end(s);
+        return false;
     }
     if (!mem_ptr_ok(assemblies) || asmCount == 0 || asmCount > 512) {
-        std::snprintf(out.detail, sizeof(out.detail), "domain_get_assemblies failed");
+        std::snprintf(out.detail, sizeof(out.detail), "assemblies=0 count=%zu domain=0x%llx",
+                      asmCount, (unsigned long long)domain);
         remote_session_end(s);
         return false;
     }
@@ -268,7 +308,10 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
         klass = find_class_fast(s, pid, il2, images, "BattleManager", false);
     }
     if (!klass) {
-        std::snprintf(out.detail, sizeof(out.detail), "FindClass(BattleManager) failed");
+        std::snprintf(out.detail, sizeof(out.detail),
+                      "FindClass(BattleManager) failed asm=%zu imgCS=0x%llx imgAll=%zu",
+                      asmCount, (unsigned long long)images.assemblyCSharp, images.all.size());
+        ui_log("[conrent] %s", out.detail);
         remote_session_end(s);
         return false;
     }

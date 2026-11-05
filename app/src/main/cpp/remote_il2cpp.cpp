@@ -1,5 +1,6 @@
 #include "remote_il2cpp.hpp"
 #include "mem.hpp"
+#include "remote_call.hpp"
 #include "remote_elf.hpp"
 #include "ui_log.hpp"
 #include <algorithm>
@@ -179,6 +180,10 @@ static bool try_module(pid_t pid, const SoModule &m, RemoteIl2CppInfo &out, int 
             out.sym_class_from_name = a;
         if (std::strcmp(api, "il2cpp_assembly_get_image") == 0)
             out.sym_assembly_get_image = a;
+        if (std::strcmp(api, "il2cpp_image_get_class_count") == 0)
+            out.sym_image_get_class_count = a;
+        if (std::strcmp(api, "il2cpp_image_get_class") == 0)
+            out.sym_image_get_class = a;
         if (std::strcmp(api, "il2cpp_class_get_field_from_name") == 0)
             out.sym_class_get_field_from_name = a;
         if (std::strcmp(api, "il2cpp_field_static_get_value") == 0)
@@ -244,6 +249,18 @@ static RemoteIl2CppInfo g_il2Cached{};
 
 } // namespace
 
+bool remote_il2cpp_prime_domain(pid_t pid, RemoteIl2CppInfo &io) {
+    if (!io.sym_domain_get) return false;
+    uintptr_t domain = 0;
+    char err[160] = {};
+    if (!remote_call(pid, io.sym_domain_get, {}, domain, err, sizeof(err))) return false;
+    if (!mem_ptr_ok(domain)) return false;
+    io.domain_ptr = domain;
+    std::snprintf(io.note, sizeof(io.note), "live il2cpp_domain_get -> 0x%llx",
+                  (unsigned long long)domain);
+    return true;
+}
+
 bool remote_refresh_domain_ptr(pid_t pid, RemoteIl2CppInfo &io) {
     if (!io.sym_domain_get) return false;
     if (domain_from_getter(pid, io.sym_domain_get, io.domain_ptr)) {
@@ -274,7 +291,10 @@ bool remote_detect_il2cpp(pid_t pid, RemoteIl2CppInfo &out) {
     if (g_il2CachedPid == pid && g_il2Cached.sym_domain_get) {
         out = g_il2Cached;
         if (!out.domain_ptr)
+            remote_il2cpp_prime_domain(pid, out);
+        if (!out.domain_ptr)
             remote_refresh_domain_ptr(pid, out);
+        g_il2Cached = out;
         return true;
     }
 
@@ -293,6 +313,8 @@ bool remote_detect_il2cpp(pid_t pid, RemoteIl2CppInfo &out) {
         int hits = 0;
         if (try_module(pid, m, out, hits)) {
             if (!out.domain_ptr)
+                remote_il2cpp_prime_domain(pid, out);
+            if (!out.domain_ptr)
                 remote_refresh_domain_ptr(pid, out);
             g_il2CachedPid = pid;
             g_il2Cached = out;
@@ -308,6 +330,8 @@ bool remote_detect_il2cpp(pid_t pid, RemoteIl2CppInfo &out) {
         ++tried;
         int hits = 0;
         if (try_module(pid, m, out, hits)) {
+            if (!out.domain_ptr)
+                remote_il2cpp_prime_domain(pid, out);
             if (!out.domain_ptr)
                 remote_refresh_domain_ptr(pid, out);
             g_il2CachedPid = pid;

@@ -635,6 +635,8 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     }
     RemoteIl2CppInfo il2{};
     remote_detect_il2cpp(g_pid, il2);
+    if (!il2.domain_ptr)
+        remote_il2cpp_prime_domain(g_pid, il2);
     merge_il2cpp_into_report(rep, il2);
     g_il2_for_resolve = &il2;
 

@@ -13,6 +13,8 @@ struct RemoteIl2CppInfo {
     uintptr_t sym_class_from_name = 0;
     uintptr_t sym_domain_get_assemblies = 0;
     uintptr_t sym_assembly_get_image = 0;
+    uintptr_t sym_image_get_class_count = 0;
+    uintptr_t sym_image_get_class = 0;
     uintptr_t sym_class_get_field_from_name = 0;
     uintptr_t sym_field_static_get_value = 0;
     uintptr_t sym_thread_attach = 0;
@@ -31,4 +33,6 @@ struct RemoteIl2CppInfo {
 
 bool remote_detect_il2cpp(pid_t pid, RemoteIl2CppInfo &out);
 bool remote_refresh_domain_ptr(pid_t pid, RemoteIl2CppInfo &io);
+/** One-shot il2cpp_domain_get in target (fills domain_ptr when static decode fails). */
+bool remote_il2cpp_prime_domain(pid_t pid, RemoteIl2CppInfo &io);
 void remote_il2cpp_invalidate_cache(pid_t pid);
