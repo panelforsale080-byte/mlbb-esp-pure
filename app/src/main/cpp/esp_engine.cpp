@@ -160,6 +160,7 @@ static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
 /* Positions tied to Unity render / follow-cam (ShowEntity cache fields). */
 static bool read_entity_pos_visual(pid_t pid, uintptr_t ent, Vec3 &pos) {
     if (!ent) return false;
+    if (mem_read(pid, ent + Off::EntityObjPos, pos) && pos_ok(pos)) return true;
     if (mem_read(pid, ent + Off::UnityCachePosition, pos) && pos_ok(pos)) return true;
     if (mem_read(pid, ent + Off::CachePosition, pos) && pos_ok(pos)) return true;
     if (mem_read(pid, ent + Off::LastPosition, pos) && pos_ok(pos)) return true;

@@ -3,23 +3,26 @@
 
 namespace Off {
 
-constexpr uintptr_t LocalPlayerShow = 0x48;
-constexpr uintptr_t DicPlayerShow   = 0x60;
-constexpr uintptr_t DicMonsterShow  = 0x68;
+/* BattleManager (dump.cs ~684144) */
+constexpr uintptr_t LocalPlayerShow = 0x48;  /* m_LocalPlayerShow ShowPlayer */
+constexpr uintptr_t DicPlayerShow   = 0x60;  /* m_dicPlayerShow */
+constexpr uintptr_t DicMonsterShow  = 0x68;  /* m_dicMonsterShow */
 constexpr uintptr_t InstanceStatic  = 0x0;
 
-constexpr uintptr_t LastPosition  = 0x3F4;
-constexpr uintptr_t CachePosition = 0x28C;
-constexpr uintptr_t UnityCachePosition = 0x298;
+/* ShowEntity position (dump.cs ~667840–667913, ~667866) — W2S uses visual first */
+constexpr uintptr_t EntityObjPos = 0x308;    /* m_EntityObjPos Unity model anchor */
+constexpr uintptr_t CachePosition = 0x28C;   /* m_vCachePosition */
+constexpr uintptr_t UnityCachePosition = 0x298; /* m_vUnityCachePosition */
+constexpr uintptr_t LastPosition  = 0x3F4; /* LastPosition logic/smooth */
 constexpr uintptr_t ListPlayerShow  = 0x70;
 constexpr uintptr_t ListMonsterShow = 0x78;
 constexpr uintptr_t ListItems = 0x10;
 constexpr uintptr_t ListSize  = 0x18;
-constexpr uintptr_t EntityId     = 0x18C;
-constexpr uintptr_t EntityDeath  = 0xC5;
-constexpr uintptr_t SameCamp     = 0x2A9;
-constexpr uintptr_t Hp           = 0x1A4;
-constexpr uintptr_t HpMax        = 0x1A8;
+constexpr uintptr_t EntityId     = 0x18C;  /* m_ID */
+constexpr uintptr_t EntityDeath  = 0xC5;   /* m_bDeath */
+constexpr uintptr_t SameCamp     = 0x2A9;  /* m_bSameCampType */
+constexpr uintptr_t Hp           = 0x1A4;  /* m_Hp */
+constexpr uintptr_t HpMax        = 0x1A8;  /* m_HpMax */
 
 constexpr uintptr_t KlassName = 0x10;
 constexpr uintptr_t KlassImage = 0x00;
