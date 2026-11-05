@@ -12,6 +12,7 @@
 #include <elf.h>
 #include <atomic>
 #include <mutex>
+#include <unordered_map>
 
 static std::mutex g_mu;
 static pid_t g_pid = 0;
@@ -743,6 +744,7 @@ EspStatus esp_tick(EspFrame &out) {
         Vec3 pos{};
         if (!read_entity_pos(g_pid, v, pos)) return;
         EspTarget t{};
+        t.ent = v;
         t.worldX = pos.x;
         t.worldY = pos.y;
         t.worldZ = pos.z;
@@ -785,27 +787,82 @@ EspStatus esp_tick(EspFrame &out) {
     return out.status;
 }
 
+namespace {
+
+constexpr float kSmoothAlphaTarget = 0.42f;
+constexpr float kSmoothAlphaSelf = 0.50f;
+constexpr float kSmoothSnapPx = 72.f;
+
+static pid_t g_smoothPid = 0;
+static float g_selfSx = 0.f, g_selfSy = 0.f;
+static bool g_haveSelfSmooth = false;
+static std::unordered_map<uintptr_t, std::pair<float, float>> g_entScreen;
+
+static float smooth1d(float prev, float raw, float alpha, bool havePrev) {
+    if (!havePrev || !std::isfinite(prev)) return raw;
+    return prev + (raw - prev) * alpha;
+}
+
+static void smooth_screen_point(float rawX, float rawY, float &outX, float &outY, float alpha,
+                                float &prevX, float &prevY, bool &havePrev) {
+    if (!havePrev) {
+        prevX = rawX;
+        prevY = rawY;
+        havePrev = true;
+        outX = rawX;
+        outY = rawY;
+        return;
+    }
+    const float dx = rawX - prevX;
+    const float dy = rawY - prevY;
+    if (dx * dx + dy * dy > kSmoothSnapPx * kSmoothSnapPx) {
+        prevX = rawX;
+        prevY = rawY;
+        outX = rawX;
+        outY = rawY;
+        return;
+    }
+    outX = smooth1d(prevX, rawX, alpha, true);
+    outY = smooth1d(prevY, rawY, alpha, true);
+    prevX = outX;
+    prevY = outY;
+}
+
+} // namespace
+
 void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
     frame.selfScreenValid = false;
-    for (EspTarget &t : frame.targets) {
-        t.screenValid = false;
-    }
+    for (EspTarget &t : frame.targets) t.screenValid = false;
     if (frame.status != EspStatus::Ready || frame.pid <= 0 || screenW < 1.f || screenH < 1.f)
         return;
+
+    if (g_smoothPid != frame.pid) {
+        g_smoothPid = frame.pid;
+        g_entScreen.clear();
+        g_haveSelfSmooth = false;
+    }
 
     esp_camera_frame_begin(frame.pid, screenW, screenH, true);
     float sx = 0.f, sy = 0.f;
     if (esp_camera_world_to_screen(frame.selfX, frame.selfY, frame.selfZ, sx, sy)) {
-        frame.selfScreenX = sx;
-        frame.selfScreenY = sy;
+        smooth_screen_point(sx, sy, frame.selfScreenX, frame.selfScreenY, kSmoothAlphaSelf,
+                            g_selfSx, g_selfSy, g_haveSelfSmooth);
         frame.selfScreenValid = true;
     }
+    std::unordered_map<uintptr_t, std::pair<float, float>> live;
     for (EspTarget &t : frame.targets) {
-        if (esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy)) {
-            t.screenX = sx;
-            t.screenY = sy;
-            t.screenValid = true;
-        }
+        if (!t.ent || !esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy)) continue;
+        const auto it = g_entScreen.find(t.ent);
+        const bool havePrev = it != g_entScreen.end();
+        float px = havePrev ? it->second.first : sx;
+        float py = havePrev ? it->second.second : sy;
+        float ox = sx, oy = sy;
+        smooth_screen_point(sx, sy, ox, oy, kSmoothAlphaTarget, px, py, havePrev);
+        live[t.ent] = {px, py};
+        t.screenX = ox;
+        t.screenY = oy;
+        t.screenValid = true;
     }
+    g_entScreen.swap(live);
     esp_camera_frame_end();
 }

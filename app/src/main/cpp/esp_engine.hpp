@@ -14,6 +14,7 @@ enum class EspStatus : int {
 };
 
 struct EspTarget {
+    uintptr_t ent = 0;
     float worldX = 0, worldY = 0, worldZ = 0;
     float relX = 0, relZ = 0;
     float screenX = 0.f, screenY = 0.f;
