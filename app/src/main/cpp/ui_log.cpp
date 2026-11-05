@@ -9,7 +9,7 @@
 namespace {
 std::mutex g_mu;
 std::vector<std::string> g_lines;
-constexpr size_t kMaxLines = 64;
+constexpr size_t kMaxLines = 120;
 
 void push_line(const char *line) {
     std::lock_guard<std::mutex> lock(g_mu);

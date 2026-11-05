@@ -103,15 +103,13 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
     uintptr_t entries = 0;
     int count = 0;
     if (!mem_read(pid, dict + Off::DictEntries, entries) || !entries) return false;
-    mem_read(pid, dict + Off::DictCount, count);
-    if (count < 0 || count > 256) count = 0;
+    if (!mem_read(pid, dict + Off::DictCount, count) || count <= 0 || count > 256)
+        return false;
     int maxLength = 0;
     if (!mem_read(pid, entries + Off::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
         return false;
     const uintptr_t data = entries + Off::ArrData;
-    const int scanCap = std::min(maxLength, 128);
-    const int want = count > 0 ? count : scanCap;
-    for (int i = 0; i < scanCap; ++i) {
+    for (int i = 0; i < maxLength; ++i) {
         const uintptr_t entry = data + (uintptr_t)i * Off::EntryStride;
         int hash = 0, key = 0;
         uintptr_t value = 0;
@@ -119,7 +117,7 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
         if (!mem_read(pid, entry + Off::EntryKey, key)) continue;
         if (!mem_read(pid, entry + Off::EntryValue, value) || !value) continue;
         out.emplace_back(key, value);
-        if ((int)out.size() >= want) break;
+        if ((int)out.size() >= count) break;
     }
     return !out.empty();
 }
@@ -155,22 +153,6 @@ static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
     if (mem_read(pid, ent + Off::CachePosition, pos) && pos_ok(pos)) return true;
     pos = {};
     return false;
-}
-
-bool esp_read_entity_world(pid_t pid, uintptr_t entity, float &x, float &y, float &z) {
-    Vec3 p{};
-    if (!read_entity_pos(pid, entity, p)) return false;
-    x = p.x;
-    y = p.y;
-    z = p.z;
-    return true;
-}
-
-bool esp_read_self_world(pid_t pid, uintptr_t bmInstance, float &x, float &y, float &z) {
-    if (!bmInstance || pid <= 0) return false;
-    uintptr_t local = 0;
-    if (!mem_read(pid, bmInstance + Off::LocalPlayerShow, local) || !local) return false;
-    return esp_read_entity_world(pid, local, x, y, z);
 }
 
 static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
@@ -300,7 +282,7 @@ static bool map_is_game_heap(const MapsReg &m) {
 }
 
 static bool heap_find_battle_manager(pid_t pid, const std::vector<MapsReg> &maps,
-                                     uintptr_t &bmOut, int &bestScoreOut, bool logScan = true) {
+                                     uintptr_t &bmOut, int &bestScoreOut) {
     bmOut = 0;
     bestScoreOut = -1;
     int candidates = 0;
@@ -331,9 +313,8 @@ static bool heap_find_battle_manager(pid_t pid, const std::vector<MapsReg> &maps
         }
     }
 
-    if (logScan)
-        ui_log("[resolve] heap scan (EspTab-style) tried=%d best=%d inst=0x%llx",
-               candidates, bestScoreOut, (unsigned long long)bmOut);
+    ui_log("[resolve] heap scan (EspTab-style) tried=%d best=%d inst=0x%llx",
+           candidates, bestScoreOut, (unsigned long long)bmOut);
     return bmOut != 0 && bestScoreOut >= 100;
 }
 
@@ -564,25 +545,8 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
 static void refresh_instance(pid_t pid) {
     if (!g_bmStatics) return;
     uintptr_t inst = 0;
-    if (mem_read(pid, g_bmStatics + Off::InstanceStatic, inst) && mem_ptr_ok(inst)) {
+    if (mem_read(pid, g_bmStatics + Off::InstanceStatic, inst) && mem_ptr_ok(inst))
         g_bmInstance = inst;
-        g_bmInstancePin = inst;
-    }
-}
-
-static void maybe_refind_battle_manager(pid_t pid) {
-    if (pid <= 0) return;
-    std::vector<MapsReg> maps;
-    if (!mem_maps(pid, maps)) return;
-    uintptr_t bm2 = 0;
-    int best = -1;
-    if (!heap_find_battle_manager(pid, maps, bm2, best, false) || best < 100 || !bm2) return;
-    const int cur = g_bmInstance ? score_bm(pid, g_bmInstance) : -1;
-    if (bm2 == g_bmInstance || best <= cur) return;
-    g_bmInstance = bm2;
-    g_bmInstancePin = bm2;
-    ui_log("[tick] BM heap refresh inst=0x%llx score=%d (was %d)", (unsigned long long)bm2, best,
-           cur);
 }
 
 void esp_reset() {
@@ -713,7 +677,6 @@ const EspResolveReport &esp_last_resolve_report() {
 
 EspStatus esp_tick(EspFrame &out) {
     std::lock_guard<std::mutex> lock(g_mu);
-    static int s_emptyTargetTicks = 0;
     out = EspFrame{};
     out.pid = g_pid;
     if (g_pid <= 0) {
@@ -727,7 +690,8 @@ EspStatus esp_tick(EspFrame &out) {
         return out.status;
     }
     refresh_instance(g_pid);
-    const uintptr_t bm = g_bmInstance ? g_bmInstance : g_bmInstancePin;
+    const uintptr_t bm = g_bmInstancePin ? g_bmInstancePin : g_bmInstance;
+    if (bm) g_bmInstance = bm;
     if (!bm) {
         out.status = EspStatus::NoInstance;
         std::snprintf(out.hint, sizeof(out.hint), "BattleManager null — enter match");
@@ -745,25 +709,20 @@ EspStatus esp_tick(EspFrame &out) {
     uintptr_t pDict = 0, mDict = 0;
     mem_read(g_pid, bm + Off::DicPlayerShow, pDict);
     mem_read(g_pid, bm + Off::DicMonsterShow, mDict);
-    thread_local std::vector<std::pair<int, uintptr_t>> players;
-    thread_local std::vector<std::pair<int, uintptr_t>> monsters;
-    thread_local std::vector<uintptr_t> listP;
-    thread_local std::vector<uintptr_t> listM;
-    players.clear();
-    monsters.clear();
+    std::vector<std::pair<int, uintptr_t>> players, monsters;
     dict_entries(g_pid, pDict, players);
     dict_entries(g_pid, mDict, monsters);
     if (players.empty()) {
         uintptr_t pList = 0;
         mem_read(g_pid, bm + Off::ListPlayerShow, pList);
-        listP.clear();
+        std::vector<uintptr_t> listP;
         if (list_entities(g_pid, pList, listP))
             for (size_t i = 0; i < listP.size(); ++i) players.emplace_back((int)i, listP[i]);
     }
     if (monsters.empty()) {
         uintptr_t mList = 0;
         mem_read(g_pid, bm + Off::ListMonsterShow, mList);
-        listM.clear();
+        std::vector<uintptr_t> listM;
         if (list_entities(g_pid, mList, listM))
             for (size_t i = 0; i < listM.size(); ++i) monsters.emplace_back((int)i, listM[i]);
     }
@@ -779,8 +738,6 @@ EspStatus esp_tick(EspFrame &out) {
         Vec3 pos{};
         if (!read_entity_pos(g_pid, v, pos)) return;
         EspTarget t{};
-        t.entityPtr = v;
-        t.entityId = id;
         t.worldX = pos.x;
         t.worldY = pos.y;
         t.worldZ = pos.z;
@@ -796,7 +753,6 @@ EspStatus esp_tick(EspFrame &out) {
             std::snprintf(t.label, sizeof(t.label), "%s", Off::monsterLabel(id));
         else
             std::snprintf(t.label, sizeof(t.label), "P%d", id);
-        if ((int)out.targets.size() >= kEspMaxTargets) return;
         out.targets.push_back(t);
     };
 
@@ -819,12 +775,6 @@ EspStatus esp_tick(EspFrame &out) {
     out.dictMonsters = (int)monsters.size();
 
     out.status = EspStatus::Ready;
-    if (out.targets.empty()) {
-        s_emptyTargetTicks++;
-        if (s_emptyTargetTicks == 30 || s_emptyTargetTicks == 90) maybe_refind_battle_manager(g_pid);
-    } else {
-        s_emptyTargetTicks = 0;
-    }
     std::snprintf(out.hint, sizeof(out.hint), "OK  %zu targets  dict P%d M%d",
                   out.targets.size(), out.dictPlayers, out.dictMonsters);
     return out.status;

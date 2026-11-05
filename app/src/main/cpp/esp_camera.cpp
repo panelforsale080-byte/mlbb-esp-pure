@@ -40,7 +40,7 @@ static bool g_inFrame = false;
 static uintptr_t g_mainCam = 0;
 static bool g_useIl2 = false;
 static int g_w2sBudget = 0;
-constexpr int kMaxIl2W2sPerFrame = 8;
+constexpr int kMaxIl2W2sPerFrame = 48;
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
@@ -263,7 +263,7 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
 
     g_w2sBudget = kMaxIl2W2sPerFrame;
 
-    /* Fast path: vm_read camera matrix every render frame (smooth while moving). */
+    /* Fast draw: vm_read camera matrix every frame (smooth while moving). */
     if (pid > 0 && proc_alive(pid)) {
         if (load_vp_show_battle_camera(pid))
             g_matrixReady = true;
@@ -271,7 +271,6 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
             g_matrixReady = true;
     }
 
-    /* IL2 W2S only when matrix missing and caller allows ptrace (slow). */
     if (!g_matrixReady && allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke &&
         pid > 0 && proc_alive(pid)) {
         if (remote_session_begin_try(pid, g_sess)) {

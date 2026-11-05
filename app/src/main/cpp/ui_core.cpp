@@ -48,21 +48,15 @@ static std::atomic<bool> g_espActive{false};
 static void apply_menu_style() {
     ImGuiStyle &s = ImGui::GetStyle();
     ImVec4 *c = s.Colors;
-    s.WindowRounding = 12.f;
-    s.FrameRounding = 8.f;
-    s.GrabRounding = 6.f;
-    s.WindowPadding = ImVec2(12.f, 10.f);
-    s.ItemSpacing = ImVec2(8.f, 6.f);
-    s.WindowBorderSize = 0.f;
-    c[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.07f, 0.11f, 0.88f);
-    c[ImGuiCol_TitleBg] = ImVec4(0.04f, 0.10f, 0.16f, 1.f);
-    c[ImGuiCol_TitleBgActive] = ImVec4(0.06f, 0.28f, 0.42f, 1.f);
-    c[ImGuiCol_Button] = ImVec4(0.12f, 0.38f, 0.55f, 0.85f);
-    c[ImGuiCol_ButtonHovered] = ImVec4(0.14f, 0.52f, 0.78f, 1.f);
-    c[ImGuiCol_ButtonActive] = ImVec4(0.08f, 0.32f, 0.48f, 1.f);
-    c[ImGuiCol_CheckMark] = ImVec4(0.35f, 0.92f, 1.f, 1.f);
-    c[ImGuiCol_FrameBg] = ImVec4(0.10f, 0.12f, 0.16f, 0.75f);
-    c[ImGuiCol_Separator] = ImVec4(0.25f, 0.45f, 0.60f, 0.45f);
+    s.WindowRounding = 10.f;
+    s.FrameRounding = 6.f;
+    s.WindowPadding = ImVec2(10.f, 10.f);
+    s.WindowBorderSize = 1.f;
+    c[ImGuiCol_WindowBg] = ImVec4(0.07f, 0.08f, 0.10f, 0.92f);
+    c[ImGuiCol_TitleBgActive] = ImVec4(0.05f, 0.35f, 0.55f, 1.f);
+    c[ImGuiCol_Button] = ImVec4(0.10f, 0.45f, 0.68f, 0.70f);
+    c[ImGuiCol_ButtonHovered] = ImVec4(0.10f, 0.65f, 0.95f, 1.f);
+    c[ImGuiCol_CheckMark] = ImVec4(0.06f, 0.80f, 1.f, 1.f);
 }
 
 static const char *status_name(EspStatus s) {
@@ -196,8 +190,7 @@ static void reader_loop() {
             g_frame = std::move(f);
         }
 
-        const int sleepMs =
-            (g_espActive.load() && pid > 0) ? 12 : 28;
+        const int sleepMs = (g_espActive.load() && pid > 0) ? 14 : 25;
         std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
     }
 }
@@ -223,7 +216,7 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("Smooth ESP: live vm_read + camera matrix (conRentV1 offsets).");
+        ImGui::TextDisabled("Fast conRent resolve + IL2 W2S (conRentV1). Tick = vm_read.");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
@@ -275,7 +268,7 @@ static void draw_ui() {
             if (ImGui::Button("Scan MLBB")) scan_and_log_processes();
             ImGui::SameLine();
             if (ImGui::Button("Copy logs")) {
-                static char logCopy[12288];
+                static char logCopy[65536];
                 ui_log_copy_all(logCopy, sizeof(logCopy));
                 if (android_copy_to_clipboard(logCopy))
                     ui_log("[ui] logs copied");
@@ -284,7 +277,7 @@ static void draw_ui() {
             ImGui::Text("IL2CPP: %s", rep.il2cppLib[0] ? rep.il2cppLib : "(none)");
             ImGui::TextWrapped("%s", rep.detail);
             ImGui::Checkbox("Log auto-scroll", &g_logScrollBottom);
-            static char logText[12288];
+            static char logText[65536];
             ui_log_copy_all(logText, sizeof(logText));
             ImGui::BeginChild("logs", {0, 140}, true);
             ImGui::TextUnformatted(logText);
@@ -437,21 +430,13 @@ void ui_toggle_menu() { g_showMenu = !g_showMenu; }
 bool ui_menu_interactive() { return g_showMenu; }
 
 void ui_esp_start() {
-    if (!g_feat.box && !g_feat.line && !g_feat.health && !g_feat.name && !g_feat.distance &&
-        !g_feat.monsterBox && !g_feat.monsterName && !g_feat.monsterHealth) {
-        g_feat.box = true;
-        g_feat.line = true;
-        g_feat.distance = true;
-    }
     g_espActive.store(true);
-    ui_log("[esp] START — world overlay ON (enable Box/Line in menu if empty)");
-    ui_request_frame();
+    ui_log("[esp] START — drawing on world (vm_read/IL2 W2S)");
 }
 
 void ui_esp_stop() {
     g_espActive.store(false);
     ui_log("[esp] STOP — no ESP on world");
-    ui_request_frame();
 }
 
 bool ui_esp_is_active() { return g_espActive.load(); }

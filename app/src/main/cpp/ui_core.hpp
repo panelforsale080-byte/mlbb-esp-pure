@@ -20,4 +20,3 @@ bool ui_menu_interactive();
 void ui_esp_start();
 void ui_esp_stop();
 bool ui_esp_is_active();
-void ui_request_frame();
