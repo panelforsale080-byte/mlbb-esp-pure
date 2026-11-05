@@ -89,11 +89,13 @@ bool proc_alive(pid_t pid) {
 bool proc_probe_read(pid_t pid) {
     std::vector<MapsReg> maps;
     if (!mem_maps(pid, maps)) return false;
+    int tried = 0;
     for (const auto &r : maps) {
         if (r.perms[0] != 'r' || r.end <= r.start) continue;
         uint8_t scratch[8] = {};
         if (mem_read(pid, r.start, scratch, sizeof(scratch)))
             return true;
+        if (++tried >= 64) break;
     }
     return false;
 }

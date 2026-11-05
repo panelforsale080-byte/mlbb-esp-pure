@@ -12,6 +12,8 @@
 #include <atomic>
 #include <mutex>
 
+static std::atomic<bool> g_resolved_flag{false};
+
 static std::mutex g_mu;
 static pid_t g_pid = 0;
 static uintptr_t g_bmKlass = 0;
@@ -692,6 +694,7 @@ void esp_reset() {
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
     g_bmInstancePin = 0;
     g_resolved = false;
+    g_resolved_flag.store(false, std::memory_order_release);
     esp_camera_reset();
 }
 
@@ -702,6 +705,7 @@ EspStatus esp_attach(pid_t pid) {
         g_bmKlass = g_bmStatics = g_bmInstance = 0;
         g_bmInstancePin = 0;
         g_resolved = false;
+        g_resolved_flag.store(false, std::memory_order_release);
     }
     g_pid = pid;
     if (pid <= 0) return EspStatus::NoProcess;
@@ -711,8 +715,7 @@ EspStatus esp_attach(pid_t pid) {
 void esp_request_force_resolve() { g_forceResolve.store(true); }
 
 bool esp_is_resolved() {
-    std::lock_guard<std::mutex> lock(g_mu);
-    return g_resolved;
+    return g_resolved_flag.load(std::memory_order_acquire);
 }
 
 static void fill_report(EspResolveReport &r, EspStatus status, int mapsCount, bool probe,
@@ -805,6 +808,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         g_bmInstance = inst;
         g_bmInstancePin = inst;
         g_resolved = true;
+        g_resolved_flag.store(true, std::memory_order_release);
         ui_log("[resolve] mem-only BM klass=0x%llx inst=0x%llx (no ptrace)",
                (unsigned long long)k, (unsigned long long)inst);
         fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, k, st, inst);
@@ -815,6 +819,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
 
     g_il2_for_resolve = nullptr;
     g_resolved = false;
+    g_resolved_flag.store(false, std::memory_order_release);
     fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, k, st, inst);
     if (meta.nameStrings > 0) {
         std::vector<uintptr_t> dbg;

@@ -38,6 +38,9 @@ static std::mutex g_frameMu;
 static EspFrame g_frame;
 static std::atomic<pid_t> g_wantPid{0};
 static std::atomic<bool> g_needResolve{true};
+static std::atomic<bool> g_requestFindPid{false};
+static std::atomic<bool> g_requestScanMlbb{false};
+static std::atomic<pid_t> g_requestIl2ScanPid{0};
 static std::chrono::steady_clock::time_point g_lastResolveAttempt{};
 static constexpr auto kResolveCooldown = std::chrono::seconds(3);
 
@@ -118,6 +121,7 @@ static void scan_and_log_processes() {
 static void reader_loop();
 static void reader_start_once();
 
+/** Runs on reader thread only — never call from GL/ImGui thread. */
 static void attach_pid(pid_t p, const char *why) {
     if (p <= 0) {
         ui_log("[%s] no pid", why);
@@ -127,14 +131,14 @@ static void attach_pid(pid_t p, const char *why) {
     }
     char cmd[280];
     proc_format_cmdline(p, cmd, sizeof(cmd));
+    ui_log("[%s] pid=%d (probing…)", why, (int)p);
     const bool probe = proc_probe_read(p);
-    ui_log("[%s] pid=%d probe=%s", why, (int)p, probe ? "OK" : "FAIL");
-    ui_log("  cmd: %s", cmd);
+    ui_log("[%s] probe=%s  cmd: %s", why, probe ? "OK" : "FAIL", cmd);
     if (!probe)
         ui_log("  process_vm_readv failed — need root or correct target process");
     esp_attach(p);
     g_wantPid.store(p);
-    if (!esp_is_resolved()) g_needResolve.store(true);
+    g_needResolve.store(true);
 }
 
 static void reader_loop() {
@@ -143,6 +147,16 @@ static void reader_loop() {
     pid_t lastPid = 0;
 
     while (g_runReader.load()) {
+        if (g_requestFindPid.exchange(false)) {
+            ui_log("[find] searching UnityKillsMe…");
+            pid_t p = proc_find_unity_kills();
+            if (p <= 0 && g_fallbackPid) p = proc_find_mlbb_fallback();
+            attach_pid(p, "find");
+        }
+        if (g_requestScanMlbb.exchange(false)) scan_and_log_processes();
+        const pid_t il2Pid = g_requestIl2ScanPid.exchange(0);
+        if (il2Pid > 0) log_il2cpp_scan(il2Pid);
+
         pid_t pid = g_wantPid.load();
 
         if (g_autoFind && pid <= 0) {
@@ -236,9 +250,8 @@ static void draw_ui() {
         }
         ImGui::SameLine();
         if (ImGui::Button("Find pid")) {
-            pid_t p = proc_find_unity_kills();
-            if (p <= 0 && g_fallbackPid) p = proc_find_mlbb_fallback();
-            attach_pid(p, "find");
+            g_requestFindPid.store(true);
+            ui_log("[find] queued (background)…");
         }
 
         ImGui::SeparatorText("Enemy");
@@ -264,7 +277,7 @@ static void draw_ui() {
             ImGui::Checkbox("Fallback MLBB pid", &g_fallbackPid);
             const pid_t pid = g_wantPid.load();
             ImGui::Text("PID: %d", (int)pid);
-            if (ImGui::Button("Scan MLBB")) scan_and_log_processes();
+            if (ImGui::Button("Scan MLBB")) g_requestScanMlbb.store(true);
             ImGui::SameLine();
             if (ImGui::Button("Copy logs")) {
                 static char logCopy[65536];
@@ -272,7 +285,7 @@ static void draw_ui() {
                 if (android_copy_to_clipboard(logCopy))
                     ui_log("[ui] logs copied");
             }
-            if (pid > 0 && ImGui::Button("Scan IL2CPP")) log_il2cpp_scan(pid);
+            if (pid > 0 && ImGui::Button("Scan IL2CPP")) g_requestIl2ScanPid.store(pid);
             ImGui::Text("IL2CPP: %s", rep.il2cppLib[0] ? rep.il2cppLib : "(none)");
             ImGui::TextWrapped("%s", rep.detail);
             ImGui::Checkbox("Log auto-scroll", &g_logScrollBottom);
