@@ -36,6 +36,11 @@ struct ConrentResolve {
     uintptr_t battle_manager_statics = 0;
     uintptr_t show_battle_camera_statics = 0; /* Il2Cpp static_fields for m_CamPos/m_CamRot */
     uintptr_t game_method_statics = 0;
+    uintptr_t il2_lib_base = 0;
+    /** Discovered at resolve: *(lib + RVA) == BattleManager Il2CppClass* */
+    uintptr_t auto_rva_battle_manager_typeinfo = 0;
+    /** Discovered at resolve: external-style MainCamera chain matches GameMethod.mainCamera */
+    uintptr_t auto_rva_main_camera_root = 0;
     uintptr_t camera_get_main_method = 0; /* MethodInfo* */
     uintptr_t camera_w2s_method = 0;
     uintptr_t camera_world_to_camera_method = 0;

@@ -12,6 +12,7 @@ add_library(MlbbEsp SHARED
     esp_draw.cpp
     esp_camera.cpp
     conrent_esp.cpp
+    il2_lib_globals.cpp
     remote_call.cpp
     ui_log.cpp
     remote_il2cpp.cpp
