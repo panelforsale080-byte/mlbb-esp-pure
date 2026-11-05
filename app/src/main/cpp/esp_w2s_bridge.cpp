@@ -71,11 +71,6 @@ static std::string agent_so_path() {
     return {};
 }
 
-void esp_w2s_bridge_set_agent_path(const char *absolutePath) {
-    std::lock_guard<std::mutex> lock(g_mu);
-    g_agentPath = absolutePath ? absolutePath : "";
-}
-
 static bool read_remote_shm_addr(pid_t pid, uintptr_t &out) {
     char path[128];
     std::snprintf(path, sizeof(path), "/data/local/tmp/mlbb_esp_%d.shm", (int)pid);
