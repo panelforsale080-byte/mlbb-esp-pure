@@ -33,8 +33,8 @@ static const char *g_glslVersion = "#version 100";
 static std::atomic<bool> g_runReader{false};
 static std::thread g_reader;
 static std::atomic<bool> g_readerStarted{false};
-static std::mutex g_frameMu;
-static EspFrame g_frame;
+static EspFrame g_frames[2];
+static std::atomic<int> g_frameFront{0};
 static std::atomic<pid_t> g_wantPid{0};
 static std::atomic<bool> g_needResolve{true};
 
@@ -186,21 +186,19 @@ static void reader_loop() {
                 lastStatus = f.status;
                 lastPid = pid;
             }
-            std::lock_guard<std::mutex> lock(g_frameMu);
-            g_frame = std::move(f);
+            const int back = 1 - g_frameFront.load(std::memory_order_relaxed);
+            g_frames[back] = std::move(f);
+            g_frameFront.store(back, std::memory_order_release);
         }
 
-        const int sleepMs = (g_espActive.load() && pid > 0) ? 14 : 25;
+        const int sleepMs = (g_espActive.load() && pid > 0) ? 16 : 28;
         std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
     }
 }
 
 static void draw_ui() {
-    EspFrame fr;
-    {
-        std::lock_guard<std::mutex> lock(g_frameMu);
-        fr = g_frame;
-    }
+    const int front = g_frameFront.load(std::memory_order_acquire);
+    const EspFrame &fr = g_frames[front];
     const EspResolveReport &rep = esp_last_resolve_report();
     float sw = (float)g_width;
     float sh = (float)g_height;
@@ -268,7 +266,7 @@ static void draw_ui() {
             if (ImGui::Button("Scan MLBB")) scan_and_log_processes();
             ImGui::SameLine();
             if (ImGui::Button("Copy logs")) {
-                static char logCopy[65536];
+                static char logCopy[4096];
                 ui_log_copy_all(logCopy, sizeof(logCopy));
                 if (android_copy_to_clipboard(logCopy))
                     ui_log("[ui] logs copied");
@@ -277,9 +275,14 @@ static void draw_ui() {
             ImGui::Text("IL2CPP: %s", rep.il2cppLib[0] ? rep.il2cppLib : "(none)");
             ImGui::TextWrapped("%s", rep.detail);
             ImGui::Checkbox("Log auto-scroll", &g_logScrollBottom);
-            static char logText[65536];
-            ui_log_copy_all(logText, sizeof(logText));
-            ImGui::BeginChild("logs", {0, 140}, true);
+            static char logText[4096];
+            static double logRefreshAt = 0.0;
+            const double now = ImGui::GetTime();
+            if (now - logRefreshAt > 0.35) {
+                logRefreshAt = now;
+                ui_log_copy_all(logText, sizeof(logText));
+            }
+            ImGui::BeginChild("logs", {0, 120}, true);
             ImGui::TextUnformatted(logText);
             if (g_logScrollBottom) ImGui::SetScrollHereY(1.0f);
             ImGui::EndChild();
@@ -440,3 +443,7 @@ void ui_esp_stop() {
 }
 
 bool ui_esp_is_active() { return g_espActive.load(); }
+
+bool ui_wants_continuous_render() {
+    return g_showMenu || g_espActive.load();
+}

@@ -25,4 +25,9 @@ public final class NativeBridge {
         OverlayService svc = OverlayService.instance;
         if (svc != null) svc.setMenuTouch(menuInteractive);
     }
+
+    public static void applyContinuousRender(boolean continuous) {
+        OverlayService svc = OverlayService.instance;
+        if (svc != null) svc.setContinuousRender(continuous);
+    }
 }

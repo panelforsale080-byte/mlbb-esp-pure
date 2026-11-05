@@ -753,6 +753,7 @@ EspStatus esp_tick(EspFrame &out) {
             std::snprintf(t.label, sizeof(t.label), "%s", Off::monsterLabel(id));
         else
             std::snprintf(t.label, sizeof(t.label), "P%d", id);
+        if (out.targets.size() >= 24) return;
         out.targets.push_back(t);
     };
 
@@ -765,7 +766,7 @@ EspStatus esp_tick(EspFrame &out) {
     }
 
     out.mapsCount = 0;
-    out.readProbe = proc_probe_read(g_pid);
+    out.readProbe = g_lastReport.readProbe;
     out.bmKlass = g_bmKlass;
     out.bmStatics = g_bmStatics;
     out.bmInstance = bm;

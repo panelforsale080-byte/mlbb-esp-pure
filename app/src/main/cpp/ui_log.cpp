@@ -3,29 +3,36 @@
 #include <cstring>
 #include <cstdio>
 #include <mutex>
-#include <string>
-#include <vector>
 
 namespace {
 std::mutex g_mu;
-std::vector<std::string> g_lines;
-constexpr size_t kMaxLines = 120;
+constexpr size_t kMaxLines = 40;
+constexpr size_t kLineCap = 200;
+static char g_lines[kMaxLines][kLineCap];
+static size_t g_start = 0;
+static size_t g_count = 0;
 
 void push_line(const char *line) {
     std::lock_guard<std::mutex> lock(g_mu);
-    g_lines.emplace_back(line);
-    if (g_lines.size() > kMaxLines)
-        g_lines.erase(g_lines.begin(), g_lines.begin() + (g_lines.size() - kMaxLines));
+    size_t slot;
+    if (g_count < kMaxLines) {
+        slot = (g_start + g_count) % kMaxLines;
+        g_count++;
+    } else {
+        slot = g_start;
+        g_start = (g_start + 1) % kMaxLines;
+    }
+    std::snprintf(g_lines[slot], kLineCap, "%s", line ? line : "");
 }
 } // namespace
 
 void ui_log_clear() {
     std::lock_guard<std::mutex> lock(g_mu);
-    g_lines.clear();
+    g_start = g_count = 0;
 }
 
 void ui_log(const char *fmt, ...) {
-    char buf[512];
+    char buf[kLineCap];
     va_list ap;
     va_start(ap, fmt);
     std::vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -38,12 +45,13 @@ void ui_log_copy_all(char *dst, size_t cap) {
     dst[0] = '\0';
     std::lock_guard<std::mutex> lock(g_mu);
     size_t used = 0;
-    for (size_t i = 0; i < g_lines.size(); ++i) {
-        const std::string &ln = g_lines[i];
-        if (used + ln.size() + 2 >= cap) break;
+    for (size_t i = 0; i < g_count; ++i) {
+        const char *ln = g_lines[(g_start + i) % kMaxLines];
+        const size_t n = std::strlen(ln);
+        if (used + n + 2 >= cap) break;
         if (i > 0) dst[used++] = '\n';
-        std::memcpy(dst + used, ln.c_str(), ln.size());
-        used += ln.size();
+        std::memcpy(dst + used, ln, n);
+        used += n;
     }
     dst[used] = '\0';
 }
