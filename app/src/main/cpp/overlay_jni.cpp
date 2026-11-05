@@ -1,6 +1,7 @@
 #include "ui_core.hpp"
 #include "clip_android.hpp"
 #include "esp_w2s_bridge.hpp"
+#include "esp_inject.hpp"
 #include <jni.h>
 
 static JavaVM *g_vm = nullptr;
@@ -45,6 +46,16 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeSetW2sAgentPath(JNIEnv *env, jclass, j
     if (utf) {
         esp_w2s_bridge_set_agent_path(utf);
         env->ReleaseStringUTFChars(path, utf);
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_mlbb_esp_pure_NativeBridge_nativeSetInjectScratchDir(JNIEnv *env, jclass, jstring dir) {
+    if (!dir) return;
+    const char *utf = env->GetStringUTFChars(dir, nullptr);
+    if (utf) {
+        esp_inject_set_scratch_dir(utf);
+        env->ReleaseStringUTFChars(dir, utf);
     }
 }
 

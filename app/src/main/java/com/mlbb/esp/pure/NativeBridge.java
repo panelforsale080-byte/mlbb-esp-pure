@@ -10,6 +10,9 @@ public final class NativeBridge {
     public static native void nativeSetDisplaySize(int width, int height);
     public static native void nativeSetW2sAgentPath(String absolutePath);
 
+    /** Writable dir for inject .so copy when /data/local/tmp is denied. */
+    public static native void nativeSetInjectScratchDir(String absolutePath);
+
     public static native void nativeGlSurfaceCreated();
     public static native void nativeGlSurfaceChanged(int w, int h);
     public static native void nativeGlSurfaceDestroyed();

@@ -48,6 +48,7 @@ public class OverlayService extends Service {
         try {
             NativeBridge.nativeInit();
             NativeBridge.nativeSetContext(getApplicationContext());
+            NativeBridge.nativeSetInjectScratchDir(getCacheDir().getAbsolutePath());
             stageW2sInjectAgent();
             startForegroundNotif();
             wm = (WindowManager) getSystemService(WINDOW_SERVICE);

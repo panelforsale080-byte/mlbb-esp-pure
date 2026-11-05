@@ -21,11 +21,14 @@
 #include <sys/user.h>
 
 #if !defined(__aarch64__)
+void esp_inject_set_scratch_dir(const char *) {}
 bool esp_inject_dlopen_so(pid_t, const char *, char *errOut, size_t errCap) {
     if (errOut && errCap) std::snprintf(errOut, errCap, "inject: arm64 only");
     return false;
 }
 #else
+
+static std::string g_scratchDir;
 
 namespace {
 
@@ -124,32 +127,36 @@ static uintptr_t remote_call2(pid_t pid, uintptr_t func, uintptr_t a0, uintptr_t
     return ret;
 }
 
-static bool copy_to_tmp(pid_t pid, const char *src, std::string &dst, char *err, size_t errCap) {
-    dst = "/data/local/tmp/mlbb_espw2s_" + std::to_string(pid) + ".so";
+static bool copy_for_inject(pid_t pid, const char *src, std::string &dst, char *err,
+                              size_t errCap) {
     std::ifstream in(src, std::ios::binary);
     if (!in) {
         if (err && errCap) std::snprintf(err, errCap, "open src %s", src);
         return false;
     }
-    std::ofstream out(dst, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        if (err && errCap) std::snprintf(err, errCap, "write %s", dst.c_str());
-        return false;
+    const std::string name = "mlbb_espw2s_" + std::to_string(pid) + ".so";
+    std::vector<std::string> dests;
+    dests.push_back("/data/local/tmp/" + name);
+    if (!g_scratchDir.empty()) dests.push_back(g_scratchDir + "/" + name);
+
+    for (const std::string &d : dests) {
+        in.clear();
+        in.seekg(0);
+        std::ofstream out(d, std::ios::binary | std::ios::trunc);
+        if (!out) continue;
+        out << in.rdbuf();
+        if (!out.good()) continue;
+        chmod(d.c_str(), 0755);
+        dst = d;
+        return true;
     }
-    out << in.rdbuf();
-    chmod(dst.c_str(), 0755);
-    return true;
+    if (err && errCap)
+        std::snprintf(err, errCap, "copy inject so failed (tmp + scratch)");
+    return false;
 }
 
-} // namespace
-
-bool esp_inject_dlopen_so(pid_t pid, const char *soPath, char *errOut, size_t errCap) {
-    if (pid <= 0 || !soPath || !soPath[0]) {
-        if (errOut && errCap) std::snprintf(errOut, errCap, "bad args");
-        return false;
-    }
-    std::string remotePath;
-    if (!copy_to_tmp(pid, soPath, remotePath, errOut, errCap)) return false;
+static bool dlopen_remote_path(pid_t pid, const char *remotePath, char *errOut, size_t errCap) {
+    if (!remotePath || !remotePath[0]) return false;
 
     if (ptrace(PTRACE_ATTACH, pid, nullptr, nullptr) != 0) {
         if (errOut && errCap)
@@ -172,7 +179,7 @@ bool esp_inject_dlopen_so(pid_t pid, const char *soPath, char *errOut, size_t er
     }
     const uintptr_t dlopenAddr = tgtL + ((uintptr_t)sym - selfL);
 
-    const size_t pathLen = remotePath.size() + 1;
+    const size_t pathLen = std::strlen(remotePath) + 1;
     const size_t mapLen = (pathLen + 0xFFF) & ~size_t(0xFFF);
     const uintptr_t remoteBuf =
         remote_syscall(pid, 222, 0, mapLen, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS);
@@ -191,8 +198,34 @@ bool esp_inject_dlopen_so(pid_t pid, const char *soPath, char *errOut, size_t er
         if (errOut && errCap) std::snprintf(errOut, errCap, "dlopen in game failed");
         return false;
     }
-    if (errOut && errCap) std::snprintf(errOut, errCap, "ok handle=0x%llx", (unsigned long long)handle);
+    if (errOut && errCap) std::snprintf(errOut, errCap, "ok handle=0x%llx path=%s",
+                                        (unsigned long long)handle, remotePath);
     return true;
+}
+
+} // namespace
+
+void esp_inject_set_scratch_dir(const char *appWritableDir) {
+    g_scratchDir = appWritableDir ? appWritableDir : "";
+}
+
+bool esp_inject_dlopen_so(pid_t pid, const char *soPath, char *errOut, size_t errCap) {
+    if (pid <= 0 || !soPath || !soPath[0]) {
+        if (errOut && errCap) std::snprintf(errOut, errCap, "bad args");
+        return false;
+    }
+    /* GSpace / shared UID: game may dlopen overlay files path directly. */
+    if (dlopen_remote_path(pid, soPath, errOut, errCap)) return true;
+
+    std::string copied;
+    char copyErr[160] = {};
+    if (!copy_for_inject(pid, soPath, copied, copyErr, sizeof(copyErr))) {
+        if (errOut && errCap) {
+            std::snprintf(errOut, errCap, "direct dlopen failed; %s", copyErr);
+        }
+        return false;
+    }
+    return dlopen_remote_path(pid, copied.c_str(), errOut, errCap);
 }
 
 #endif
