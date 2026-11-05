@@ -26,6 +26,11 @@ jobs:
 
       - run: chmod +x gradlew
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.2"
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace --no-daemon
 
