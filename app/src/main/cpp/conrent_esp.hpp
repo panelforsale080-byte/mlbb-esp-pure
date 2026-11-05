@@ -48,6 +48,8 @@ struct ConrentResolve {
     /** Resolve-time absolute VA of global pointer slots (ESP reads here; no hardcoded RVA at draw). */
     uintptr_t bm_global_slot_va = 0;
     uintptr_t main_camera_global_slot_va = 0;
+    /** True when discovered lib slot chain matched GameMethod.mainCamera (accurate W2S). */
+    bool main_camera_slot_live_ok = false;
     uintptr_t camera_get_main_method = 0; /* MethodInfo* */
     uintptr_t camera_w2s_method = 0;
     uintptr_t camera_world_to_camera_method = 0;

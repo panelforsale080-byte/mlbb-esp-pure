@@ -26,6 +26,7 @@ static bool g_matrixFromVmRead = false;
 static uintptr_t g_matrixLibBase = 0;
 static uintptr_t g_matrixMainCamRva = 0;
 static uintptr_t g_mainCameraSlotVa = 0;
+static bool g_mainCameraSlotLiveOk = false;
 static Matrix4x4 g_viewProj;
 static int g_matrixPathLog = 0;
 static int g_matrixFailLog = 0;
@@ -306,6 +307,7 @@ void esp_camera_reset() {
     g_matrixLibBase = 0;
     g_matrixMainCamRva = 0;
     g_mainCameraSlotVa = 0;
+    g_mainCameraSlotLiveOk = false;
     g_matrixPathLog = 0;
     g_matrixFailLog = 0;
     g_il2Pid = 0;
@@ -333,6 +335,7 @@ void esp_camera_set_runtime(const EspCameraRuntime &runtime) {
     g_matrixLibBase = runtime.matrix_lib_base;
     g_matrixMainCamRva = runtime.matrix_main_camera_rva;
     g_mainCameraSlotVa = runtime.main_camera_global_slot_va;
+    g_mainCameraSlotLiveOk = runtime.main_camera_slot_live_ok;
 }
 
 void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t get_main_method,
@@ -359,6 +362,7 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     g_matrixLibBase = g_rt.matrix_lib_base;
     g_matrixMainCamRva = g_rt.matrix_main_camera_rva;
     g_mainCameraSlotVa = g_rt.main_camera_global_slot_va;
+    g_mainCameraSlotLiveOk = g_rt.main_camera_slot_live_ok;
 
     if (g_inFrame) remote_session_end(g_sess);
     g_inFrame = false;
@@ -369,39 +373,48 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
                          proc_alive(pid);
 
     if (pid > 0 && proc_alive(pid)) {
-        /* Prefer IL2CPP / GameMethod (patch-resilient). Lib global chain (+0xA8/0x08/0x5C) is fallback. */
-        if (load_vp_from_game_method_smooth(pid)) {
+        /* live=OK lib slot = accurate (build ~211). Else GameMethod / IL2CPP. */
+        if (g_mainCameraSlotLiveOk && g_mainCameraSlotVa &&
+            load_vp_from_discovered_main_camera_slot(pid)) {
             g_matrixReady = true;
             g_matrixFromVmRead = true;
             if (g_matrixPathLog == 0) {
                 g_matrixPathLog = 1;
-                ui_log("[esp] W2S matrix: GameMethod.mainCamera (IL2CPP primary)");
+                ui_log("[esp] W2S matrix: slot_va=0x%llx chain (live validated, accurate)",
+                       (unsigned long long)g_mainCameraSlotVa);
+            }
+        } else if (load_vp_from_game_method_smooth(pid)) {
+            g_matrixReady = true;
+            g_matrixFromVmRead = true;
+            if (g_matrixPathLog == 0) {
+                g_matrixPathLog = 2;
+                ui_log("[esp] W2S matrix: GameMethod.mainCamera (IL2CPP)");
             }
         } else if (wantIl2 && remote_session_begin_try(pid, g_sess)) {
             g_inFrame = true;
             if (load_vp_il2_camera_matrices(pid)) {
                 g_matrixReady = true;
                 if (g_matrixPathLog == 0) {
-                    g_matrixPathLog = 2;
+                    g_matrixPathLog = 3;
                     ui_log("[esp] W2S matrix: Unity Camera matrix getters (IL2CPP)");
                 }
             } else {
                 remote_session_end(g_sess);
                 g_inFrame = false;
             }
-        } else if (load_vp_from_discovered_main_camera_slot(pid)) {
+        } else if (g_mainCameraSlotVa && load_vp_from_discovered_main_camera_slot(pid)) {
             g_matrixReady = true;
             g_matrixFromVmRead = true;
             if (g_matrixPathLog == 0) {
-                g_matrixPathLog = 3;
-                ui_log("[esp] W2S matrix: lib global slot_va=0x%llx (EXTERNAL chain fallback)",
+                g_matrixPathLog = 4;
+                ui_log("[esp] W2S matrix: slot_va=0x%llx (lib fallback, live not confirmed)",
                        (unsigned long long)g_mainCameraSlotVa);
             }
         }
         if (!g_matrixReady && load_vp_show_battle_camera(pid)) {
             g_matrixReady = true;
             if (g_matrixPathLog == 0) {
-                g_matrixPathLog = 4;
+                g_matrixPathLog = 5;
                 ui_log("[esp] W2S matrix: ShowBattleCamera fallback");
             }
         }

@@ -21,6 +21,7 @@ struct DiscoverPick {
     uintptr_t slotVa = 0;
     uintptr_t libBase = 0;
     uintptr_t computedRva = 0;
+    bool liveValidated = false;
     const char *via = "";
 };
 
@@ -75,6 +76,28 @@ static uintptr_t module_base_for_path(const std::vector<MapsReg> &maps, const ch
     return base;
 }
 
+static void assign_elf_rva_for_slot(const std::vector<MapsReg> &maps, uintptr_t slotVa,
+                                    DiscoverPick &pick) {
+    pick.slotVa = slotVa;
+    pick.libBase = 0;
+    pick.computedRva = 0;
+    for (const MapsReg &m : maps) {
+        if (slotVa < m.start || slotVa >= m.end) continue;
+        if (m.path.find("libcsharp.so") == std::string::npos &&
+            m.path.find("liblogic.so") == std::string::npos &&
+            m.path.find("libil2cpp.so") == std::string::npos)
+            continue;
+        pick.computedRva = (slotVa - m.start) + m.fileOff;
+        if (m.path.find("libcsharp.so") != std::string::npos)
+            pick.libBase = module_base_for_path(maps, "libcsharp.so");
+        else if (m.path.find("liblogic.so") != std::string::npos)
+            pick.libBase = module_base_for_path(maps, "liblogic.so");
+        else
+            pick.libBase = module_base_for_path(maps, "libil2cpp.so");
+        return;
+    }
+}
+
 static bool try_bm_slot(pid_t pid, uintptr_t slotVa, uintptr_t bmKlass, uintptr_t bmStatics,
                         uintptr_t &outKlass) {
     outKlass = 0;
@@ -104,16 +127,18 @@ static void append_unique_slot(std::vector<uintptr_t> &slots, uintptr_t va) {
 
 static void append_gm_statics_cam_candidates(uintptr_t gmStatics, std::vector<uintptr_t> &slots) {
     if (!gmStatics) return;
-    static const int kRel[] = {-0x138, -0x140, -0x130, -0x148, -0x128, -0x150, -0x120, -0x160};
+    static const int kRel[] = {-0xF8,  -0x138, -0x140, -0x130, -0x148,
+                               -0x128, -0x150, -0x120, -0x160};
     for (int rel : kRel) append_unique_slot(slots, gmStatics + rel);
     const uintptr_t lo = gmStatics - kGmStaticsWalkBytes;
     const uintptr_t hi = gmStatics + 0x100;
     for (uintptr_t slot = lo; slot < hi; slot += 8) append_unique_slot(slots, slot);
 }
 
-static bool discover_cam_from_gm_statics(pid_t pid, uintptr_t gmStatics, uintptr_t libBase,
-                                         uintptr_t expectedLive, DiscoverPick &pick) {
-    if (!gmStatics || !libBase) return false;
+static bool discover_cam_from_gm_statics(pid_t pid, const std::vector<MapsReg> &maps,
+                                         uintptr_t gmStatics, uintptr_t expectedLive,
+                                         DiscoverPick &pick) {
+    if (!gmStatics) return false;
     std::vector<uintptr_t> slots;
     append_gm_statics_cam_candidates(gmStatics, slots);
     for (uintptr_t slot : slots) {
@@ -121,15 +146,16 @@ static bool discover_cam_from_gm_statics(pid_t pid, uintptr_t gmStatics, uintptr
         if (!try_main_cam_slot(pid, slot, chain)) continue;
         const bool liveOk = camera_main_camera_live_matches(pid, chain.cam3, expectedLive);
         ui_log("  [gm-statics] Cam slot_va=0x%llx off=+0x%llx chain=%s live=%s",
-               (unsigned long long)slot,
-               (unsigned long long)(slot - gmStatics), chain.variant, liveOk ? "OK" : "no");
-        pick.slotVa = slot;
-        pick.libBase = libBase;
-        pick.computedRva = slot - libBase;
+               (unsigned long long)slot, (unsigned long long)(static_cast<intptr_t>(slot) -
+                                                               static_cast<intptr_t>(gmStatics)),
+               chain.variant, liveOk ? "OK" : "no");
+        if (!liveOk) continue;
+        assign_elf_rva_for_slot(maps, slot, pick);
         pick.via = "GameMethod-statics";
-        if (liveOk) return true;
+        pick.liveValidated = true;
+        return true;
     }
-    return pick.slotVa != 0;
+    return false;
 }
 
 static bool discover_bm_rw_auto(pid_t pid, const std::vector<MapsReg> &maps, uintptr_t libBase,
@@ -148,9 +174,7 @@ static bool discover_bm_rw_auto(pid_t pid, const std::vector<MapsReg> &maps, uin
             if (probes++ >= kMaxRwProbeSteps) return pick.slotVa != 0;
             uintptr_t klass = 0;
             if (!try_bm_slot(pid, cur, bmKlass, bmStatics, klass)) continue;
-            pick.slotVa = cur;
-            pick.libBase = libBase;
-            pick.computedRva = cur - libBase;
+            assign_elf_rva_for_slot(maps, cur, pick);
             pick.via = "rw-auto";
             ui_log("  [rw-auto] BM slot_va=0x%llx lib+0x%llx", (unsigned long long)cur,
                    (unsigned long long)pick.computedRva);
@@ -182,10 +206,9 @@ static bool discover_main_cam_rw_auto(pid_t pid, const std::vector<MapsReg> &map
                 const bool liveOk =
                     camera_main_camera_live_matches(pid, chain.cam3, expectedLive);
                 if (wantLive && !liveOk) continue;
-                pick.slotVa = cur;
-                pick.libBase = modBase;
-                pick.computedRva = cur - modBase;
+                assign_elf_rva_for_slot(maps, cur, pick);
                 pick.via = "rw-auto";
+                pick.liveValidated = liveOk;
                 ui_log("  [rw-auto] Cam slot_va=0x%llx lib+0x%llx chain=%s live=%s",
                        (unsigned long long)cur, (unsigned long long)pick.computedRva, chain.variant,
                        liveOk ? "OK" : "no");
@@ -194,19 +217,6 @@ static bool discover_main_cam_rw_auto(pid_t pid, const std::vector<MapsReg> &map
         }
     }
     return pick.slotVa != 0;
-}
-
-static uintptr_t module_base_for_slot_va(const std::vector<MapsReg> &maps, uintptr_t slotVa,
-                                         uintptr_t fallback) {
-    for (const MapsReg &m : maps) {
-        if (m.start <= slotVa && slotVa < m.end) {
-            if (m.path.find("libcsharp.so") != std::string::npos)
-                return module_base_for_path(maps, "libcsharp.so");
-            if (m.path.find("liblogic.so") != std::string::npos)
-                return module_base_for_path(maps, "liblogic.so");
-        }
-    }
-    return fallback;
 }
 
 } // namespace
@@ -218,6 +228,7 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
     resolve.main_camera_matrix_lib_base = 0;
     resolve.bm_global_slot_va = 0;
     resolve.main_camera_global_slot_va = 0;
+    resolve.main_camera_slot_live_ok = false;
     if (pid <= 0) return;
 
     std::vector<MapsReg> maps;
@@ -236,17 +247,13 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
     const uintptr_t baseCsharp = module_base_for_path(maps, "libcsharp.so");
 
     ui_log("[resolve] GameMethod mainCamera live=0x%llx", (unsigned long long)expectedLive);
-    ui_log("[resolve] lib global discover (optional ESP fallback — primary W2S is GameMethod/IL2CPP):");
+    ui_log("[resolve] lib global discover (accurate slot when live=OK — else GameMethod/IL2CPP):");
 
     DiscoverPick bmPick{};
     DiscoverPick camPick{};
 
-    if (resolve.game_method_statics && baseCsharp) {
-        const uintptr_t gmBase =
-            module_base_for_slot_va(maps, resolve.game_method_statics, baseCsharp);
-        discover_cam_from_gm_statics(pid, resolve.game_method_statics, gmBase, expectedLive,
-                                     camPick);
-    }
+    if (resolve.game_method_statics)
+        discover_cam_from_gm_statics(pid, maps, resolve.game_method_statics, expectedLive, camPick);
 
     if (!camPick.slotVa) {
         ui_log("[resolve] rw-auto MainCamera global...");
@@ -276,9 +283,10 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
         resolve.main_camera_global_slot_va = camPick.slotVa;
         resolve.main_camera_matrix_lib_base = camPick.libBase;
         resolve.auto_rva_main_camera_root = camPick.computedRva;
-        ui_log("[resolve] MainCamera STORED slot_va=0x%llx lib+0x%llx (%s) ESP",
+        resolve.main_camera_slot_live_ok = camPick.liveValidated;
+        ui_log("[resolve] MainCamera STORED slot_va=0x%llx lib+0x%llx live=%s (%s) ESP",
                (unsigned long long)camPick.slotVa, (unsigned long long)camPick.computedRva,
-               camPick.via);
+               camPick.liveValidated ? "OK" : "no", camPick.via);
     } else {
         ui_log("[resolve] MainCamera global not found — GameMethod matrix fallback");
     }
