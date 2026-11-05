@@ -188,7 +188,7 @@ static bool dlopen_remote_path(pid_t pid, const char *remotePath, char *errOut, 
         if (errOut && errCap) std::snprintf(errOut, errCap, "remote mmap failed");
         return false;
     }
-    write_remote(pid, remoteBuf, remotePath.c_str(), pathLen);
+    write_remote(pid, remoteBuf, remotePath, pathLen);
     const uintptr_t handle = remote_call2(pid, dlopenAddr, remoteBuf, RTLD_NOW);
     remote_syscall(pid, 215, remoteBuf, mapLen, 0, 0);
 
