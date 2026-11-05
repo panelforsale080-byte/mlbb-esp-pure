@@ -198,6 +198,20 @@ static void reader_loop() {
     }
 }
 
+static void overlay_draw_size(float &sw, float &sh) {
+    sw = (float)g_width;
+    sh = (float)g_height;
+    if ((sw < 2.f || sh < 2.f) && g_displayW > 0 && g_displayH > 0) {
+        sw = (float)g_displayW;
+        sh = (float)g_displayH;
+    }
+    if (sw > 0.f && sh > 0.f && sw < sh) {
+        const float t = sw;
+        sw = sh;
+        sh = t;
+    }
+}
+
 static void draw_ui() {
     EspFrame fr;
     {
@@ -288,20 +302,6 @@ static void draw_ui() {
         }
     }
     ImGui::End();
-}
-
-static void overlay_draw_size(float &sw, float &sh) {
-    sw = (float)g_width;
-    sh = (float)g_height;
-    if ((sw < 2.f || sh < 2.f) && g_displayW > 0 && g_displayH > 0) {
-        sw = (float)g_displayW;
-        sh = (float)g_displayH;
-    }
-    if (sw > 0.f && sh > 0.f && sw < sh) {
-        const float t = sw;
-        sw = sh;
-        sh = t;
-    }
 }
 
 static void apply_display_metrics() {
