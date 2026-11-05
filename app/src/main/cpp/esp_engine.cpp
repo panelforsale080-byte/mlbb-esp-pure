@@ -150,6 +150,24 @@ static bool pos_ok(const Vec3 &p) {
 }
 
 static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
+    std::vector<std::pair<uintptr_t, size_t>> reqs = {
+        {ent + Off::LastPosition, sizeof(Vec3)},
+        {ent + Off::CachePosition, sizeof(Vec3)},
+    };
+    std::vector<std::vector<uint8_t>> raw;
+    if (mem_read_batch(pid, reqs, raw) && raw.size() == 2) {
+        Vec3 a{}, b{};
+        if (raw[0].size() >= sizeof(Vec3)) std::memcpy(&a, raw[0].data(), sizeof(Vec3));
+        if (raw[1].size() >= sizeof(Vec3)) std::memcpy(&b, raw[1].data(), sizeof(Vec3));
+        if (pos_ok(a)) {
+            pos = a;
+            return true;
+        }
+        if (pos_ok(b)) {
+            pos = b;
+            return true;
+        }
+    }
     if (mem_read(pid, ent + Off::LastPosition, pos) && pos_ok(pos)) return true;
     if (mem_read(pid, ent + Off::CachePosition, pos) && pos_ok(pos)) return true;
     pos = {};
@@ -609,6 +627,7 @@ static uintptr_t pick_battle_manager_instance(pid_t pid) {
 
 void esp_reset() {
     std::lock_guard<std::mutex> lock(g_mu);
+    mem_invalidate_maps_cache(g_pid);
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
     g_bmInstancePin = 0;
@@ -619,6 +638,7 @@ void esp_reset() {
 EspStatus esp_attach(pid_t pid) {
     std::lock_guard<std::mutex> lock(g_mu);
     if (pid != g_pid) {
+        mem_invalidate_maps_cache(g_pid);
         g_bmKlass = g_bmStatics = g_bmInstance = 0;
         g_bmInstancePin = 0;
         g_resolved = false;
@@ -721,35 +741,6 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         return rep.status;
     }
 
-    ui_log("[resolve] mem klass walk failed — one-shot conRent IL2CPP (draw stays ptrace-free)");
-    ConrentResolve cr{};
-    const bool crRan = conrent_resolve_battle_manager(g_pid, maps, il2, cr);
-    if (cr.show_battle_camera_statics || cr.game_method_statics)
-        esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
-    if (crRan && (cr.battle_manager || cr.metadata_ready)) {
-        g_il2_for_resolve = nullptr;
-        g_bmKlass = cr.battle_manager_klass;
-        g_bmStatics = cr.battle_manager_statics;
-        g_bmInstance = cr.battle_manager;
-        g_bmInstancePin = cr.battle_manager;
-        g_resolved = true;
-        esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
-                                  cr.camera_w2s_method);
-        ui_log("[w2s] conRent sbc=0x%llx gm=0x%llx il2_w2s=%d",
-               (unsigned long long)cr.show_battle_camera_statics,
-               (unsigned long long)cr.game_method_statics,
-               (cr.camera_get_main_method && cr.camera_w2s_method && il2.sym_runtime_invoke) ? 1
-                                                                                              : 0);
-        const EspStatus st = cr.battle_manager ? EspStatus::Ready : EspStatus::NoInstance;
-        fill_report(rep, st, (int)maps.size(), probe, meta, cr.battle_manager_klass,
-                    cr.battle_manager_statics, cr.battle_manager);
-        std::snprintf(rep.detail, sizeof(rep.detail), "conRent resolve (1x ptrace): %s", cr.detail);
-        ui_log("[resolve] %s", cr.detail);
-        g_lastReport = rep;
-        if (reportOut) *reportOut = rep;
-        return rep.status;
-    }
-
     g_il2_for_resolve = nullptr;
     g_resolved = false;
     fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, k, st, inst);
@@ -762,8 +753,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
             ui_log("[resolve] BattleManager str@%llX = \"%s\"", (unsigned long long)dbg[i], txt);
         }
     }
-    if (cr.detail[0]) ui_log("[resolve] conRent: %s", cr.detail);
-    ui_log("[resolve] failed — be in classic/training match, tap Resolve once");
+    ui_log("[resolve] mem-only failed (no ptrace) — classic/training match, tap Resolve");
     g_lastReport = rep;
     if (reportOut) *reportOut = rep;
     return rep.status;

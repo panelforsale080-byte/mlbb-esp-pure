@@ -189,7 +189,7 @@ static void reader_loop() {
             g_frame = std::move(f);
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
 }
 
@@ -213,7 +213,7 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("Build 46 overlay + Build 49 W2S (matrix, then IL2CPP fallback).");
+        ImGui::TextDisabled("Build #87 base — external vm_readv + maps (no ptrace).");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
