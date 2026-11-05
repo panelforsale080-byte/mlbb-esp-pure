@@ -1,7 +1,9 @@
 #include "esp_engine.hpp"
 #include "esp_camera.hpp"
 #include "conrent_esp.hpp"
-#include "offsets.hpp"
+#include "il2_layout.hpp"
+#include "esp_monster.hpp"
+#include "esp_runtime_off.hpp"
 #include "proc.hpp"
 #include "remote_il2cpp.hpp"
 #include "remote_elf.hpp"
@@ -103,20 +105,20 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
     if (!dict) return false;
     uintptr_t entries = 0;
     int count = 0;
-    if (!mem_read(pid, dict + Off::DictEntries, entries) || !entries) return false;
-    if (!mem_read(pid, dict + Off::DictCount, count) || count <= 0 || count > 256)
+    if (!mem_read(pid, dict + Il2::DictEntries, entries) || !entries) return false;
+    if (!mem_read(pid, dict + Il2::DictCount, count) || count <= 0 || count > 256)
         return false;
     int maxLength = 0;
-    if (!mem_read(pid, entries + Off::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
+    if (!mem_read(pid, entries + Il2::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
         return false;
-    const uintptr_t data = entries + Off::ArrData;
+    const uintptr_t data = entries + Il2::ArrData;
     for (int i = 0; i < maxLength; ++i) {
-        const uintptr_t entry = data + (uintptr_t)i * Off::EntryStride;
+        const uintptr_t entry = data + (uintptr_t)i * Il2::EntryStride;
         int hash = 0, key = 0;
         uintptr_t value = 0;
-        if (!mem_read(pid, entry + Off::EntryHash, hash) || hash < 0) continue;
-        if (!mem_read(pid, entry + Off::EntryKey, key)) continue;
-        if (!mem_read(pid, entry + Off::EntryValue, value) || !value) continue;
+        if (!mem_read(pid, entry + Il2::EntryHash, hash) || hash < 0) continue;
+        if (!mem_read(pid, entry + Il2::EntryKey, key)) continue;
+        if (!mem_read(pid, entry + Il2::EntryValue, value) || !value) continue;
         out.emplace_back(key, value);
         if ((int)out.size() >= count) break;
     }
@@ -128,12 +130,12 @@ static bool list_entities(pid_t pid, uintptr_t list, std::vector<uintptr_t> &out
     if (!list || !mem_ptr_ok(list)) return false;
     uintptr_t arr = 0;
     int size = 0;
-    if (!mem_read(pid, list + Off::ListItems, arr) || !arr || !mem_ptr_ok(arr)) return false;
-    if (!mem_read(pid, list + Off::ListSize, size) || size <= 0 || size > 128) return false;
+    if (!mem_read(pid, list + Il2::ListItems, arr) || !arr || !mem_ptr_ok(arr)) return false;
+    if (!mem_read(pid, list + Il2::ListSize, size) || size <= 0 || size > 128) return false;
     int maxLength = 0;
-    if (!mem_read(pid, arr + Off::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
+    if (!mem_read(pid, arr + Il2::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
         return false;
-    const uintptr_t data = arr + Off::ArrData;
+    const uintptr_t data = arr + Il2::ArrData;
     const int n = std::min(size, maxLength);
     for (int i = 0; i < n; ++i) {
         uintptr_t p = 0;
@@ -150,17 +152,19 @@ static bool pos_ok(const Vec3 &p) {
 }
 
 static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
-    if (mem_read(pid, ent + Off::CachePosition, pos) && pos_ok(pos)) return true;
-    if (mem_read(pid, ent + Off::LastPosition, pos) && pos_ok(pos)) return true;
+    const uintptr_t off = esp_runtime_off().lastPosition;
+    if (!off) return false;
+    if (mem_read(pid, ent + off, pos) && pos_ok(pos)) return true;
     pos = {};
     return false;
 }
 
 static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
-    if (!bm || !mem_ptr_ok(bm)) return false;
+    if (!esp_runtime_off_ready() || !bm || !mem_ptr_ok(bm)) return false;
+    const EspRuntimeOff &R = esp_runtime_off();
     uintptr_t pDict = 0, mDict = 0;
-    if (!mem_read(pid, bm + Off::DicPlayerShow, pDict) || !mem_ptr_ok(pDict)) return false;
-    mem_read(pid, bm + Off::DicMonsterShow, mDict);
+    if (!mem_read(pid, bm + R.dicPlayerShow, pDict) || !mem_ptr_ok(pDict)) return false;
+    mem_read(pid, bm + R.dicMonsterShow, mDict);
     if (mDict && !mem_ptr_ok(mDict)) return false;
     std::vector<std::pair<int, uintptr_t>> players;
     if (!dict_entries(pid, pDict, players) || players.empty() || players.size() > 20) return false;
@@ -168,23 +172,17 @@ static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
     for (const auto &kv : players) {
         if (!kv.second) continue;
         uint8_t dead = 0, camp = 0;
-        if (mem_read(pid, kv.second + Off::EntityDeath, dead) && dead) continue;
-        if (mem_read(pid, kv.second + Off::SameCamp, camp) && camp) continue;
+        if (mem_read(pid, kv.second + R.entityDeath, dead) && dead) continue;
+        if (mem_read(pid, kv.second + R.sameCamp, camp) && camp) continue;
         Vec3 pos{};
-        if (mem_read(pid, kv.second + Off::LastPosition, pos) && pos_ok(pos)) ++usable;
+        if (mem_read(pid, kv.second + R.lastPosition, pos) && pos_ok(pos)) ++usable;
     }
     return usable > 0;
 }
 
-static bool monster_id(int id) {
-    for (int m : Off::kMonsterIds)
-        if (m == id) return true;
-    return false;
-}
-
 static bool statics_for(pid_t pid, uintptr_t klass, uintptr_t instOff,
                         uintptr_t &statics, uintptr_t &instance) {
-    for (uintptr_t off : Off::StaticFieldOffs) {
+    for (uintptr_t off : Il2::StaticFieldOffs) {
         uintptr_t st = 0;
         if (!mem_read(pid, klass + off, st) || !mem_ptr_ok(st)) continue;
         uintptr_t inst = 0;
@@ -219,14 +217,15 @@ static bool verify_klass(pid_t pid, uintptr_t klass, const char *name,
 }
 
 static int score_bm(pid_t pid, uintptr_t bm) {
-    if (!bm || !mem_ptr_ok(bm)) return -1;
+    if (!esp_runtime_off_ready() || !bm || !mem_ptr_ok(bm)) return -1;
+    const EspRuntimeOff &R = esp_runtime_off();
     uintptr_t local = 0;
-    mem_read(pid, bm + Off::LocalPlayerShow, local);
+    mem_read(pid, bm + R.localPlayerShow, local);
     Vec3 self{};
-    bool haveSelf = local && mem_read(pid, local + Off::LastPosition, self) && pos_ok(self);
+    bool haveSelf = local && mem_read(pid, local + R.lastPosition, self) && pos_ok(self);
     uintptr_t pDict = 0, mDict = 0;
-    mem_read(pid, bm + Off::DicPlayerShow, pDict);
-    mem_read(pid, bm + Off::DicMonsterShow, mDict);
+    mem_read(pid, bm + R.dicPlayerShow, pDict);
+    mem_read(pid, bm + R.dicMonsterShow, mDict);
     std::vector<std::pair<int, uintptr_t>> players, monsters;
     dict_entries(pid, pDict, players);
     dict_entries(pid, mDict, monsters);
@@ -234,13 +233,13 @@ static int score_bm(pid_t pid, uintptr_t bm) {
     auto take = [&](uintptr_t v, bool mob, int key) {
         if (!v || v == local) return;
         uint8_t dead = 0, camp = 0;
-        if (mem_read(pid, v + Off::EntityDeath, dead) && dead) return;
-        if (mem_read(pid, v + Off::SameCamp, camp) && camp) return;
+        if (mem_read(pid, v + R.entityDeath, dead) && dead) return;
+        if (mem_read(pid, v + R.sameCamp, camp) && camp) return;
         int id = key;
-        mem_read(pid, v + Off::EntityId, id);
-        if (mob && !monster_id(id)) return;
+        mem_read(pid, v + R.entityId, id);
+        if (mob && !esp_monster_id(id)) return;
         Vec3 pos{};
-        if (!mem_read(pid, v + Off::LastPosition, pos) || !pos_ok(pos)) return;
+        if (!mem_read(pid, v + R.lastPosition, pos) || !pos_ok(pos)) return;
         usable++;
     };
     for (const auto &kv : players) take(kv.second, false, kv.first);
@@ -255,8 +254,10 @@ static int score_bm(pid_t pid, uintptr_t bm) {
 static int score_bm_heap(pid_t pid, uintptr_t bm) {
     const int s = score_bm(pid, bm);
     if (s > 0) return s;
+    if (!esp_runtime_off_ready()) return -1;
+    const EspRuntimeOff &R = esp_runtime_off();
     uintptr_t pDict = 0;
-    if (!mem_read(pid, bm + Off::DicPlayerShow, pDict) || !mem_ptr_ok(pDict)) return -1;
+    if (!mem_read(pid, bm + R.dicPlayerShow, pDict) || !mem_ptr_ok(pDict)) return -1;
     std::vector<std::pair<int, uintptr_t>> players;
     if (!dict_entries(pid, pDict, players) || players.empty()) return -1;
     return 100 + (int)players.size();
@@ -409,7 +410,7 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
     if (elf_bm_klass(pid, maps, klass)) {
         if (meta) meta->usedElf = true;
         uintptr_t st = 0, inst = 0;
-        if (verify_klass(pid, klass, name, Off::InstanceStatic, st, inst, nullptr)) {
+        if (verify_klass(pid, klass, name, 0, st, inst, nullptr)) {
             statics = st;
             instance = inst;
             if (klass) return true;
@@ -428,7 +429,7 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
         for (uintptr_t nameOff : kNameOffs) {
             const uintptr_t cand = s - nameOff;
             uintptr_t st = 0, inst = 0;
-            if (!verify_klass(pid, cand, name, Off::InstanceStatic, st, inst, &strs)) continue;
+            if (!verify_klass(pid, cand, name, 0, st, inst, &strs)) continue;
             int sc = inst ? score_bm(pid, inst) : (st ? 2 : 0);
             if (sc > bestScore) {
                 bestScore = sc;
@@ -460,7 +461,7 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
                 for (uintptr_t nameOff : kNameOffs) {
                     const uintptr_t cand = m.start + off + i - nameOff;
                     uintptr_t st = 0, inst = 0;
-                    if (!verify_klass(pid, cand, name, Off::InstanceStatic, st, inst, &strs))
+                    if (!verify_klass(pid, cand, name, 0, st, inst, &strs))
                         continue;
                     int sc = inst ? score_bm(pid, inst) : (st ? 2 : 0);
                     if (sc > bestScore) {
@@ -483,7 +484,7 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
         for (uintptr_t addr = m.start; addr + 0x100 < m.end; addr += 0x10) {
             if (!klass_matches_name(pid, addr, name, &strs)) continue;
             uintptr_t st = 0, inst = 0;
-            if (!statics_for(pid, addr, Off::InstanceStatic, st, inst)) continue;
+            if (!statics_for(pid, addr, 0, st, inst)) continue;
             int sc = inst ? score_bm(pid, inst) : 1;
             if (sc > bestScore) {
                 bestScore = sc;
@@ -525,9 +526,9 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
                 for (uintptr_t s : strs)
                     if (p == s) { hit = true; break; }
                 if (!hit) continue;
-                const uintptr_t cand = m.start + off + i - Off::KlassName;
+                const uintptr_t cand = m.start + off + i - Il2::KlassName;
                 uintptr_t st = 0, inst = 0;
-                if (!verify_klass(pid, cand, name, Off::InstanceStatic, st, inst, &strs))
+                if (!verify_klass(pid, cand, name, 0, st, inst, &strs))
                     continue;
                 int sc = inst ? score_bm(pid, inst) : (st ? 2 : 0);
                 if (sc > bestScore) {
@@ -546,7 +547,7 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
 static void refresh_instance(pid_t pid) {
     if (!g_bmStatics) return;
     uintptr_t inst = 0;
-    if (mem_read(pid, g_bmStatics + Off::InstanceStatic, inst) && mem_ptr_ok(inst))
+    if (mem_read(pid, g_bmStatics + 0, inst) && mem_ptr_ok(inst))
         g_bmInstance = inst;
 }
 
@@ -557,6 +558,7 @@ void esp_reset() {
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
     g_resolved = false;
+    esp_runtime_off_clear();
     esp_camera_reset();
 }
 
@@ -654,10 +656,12 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         g_bmStatics = cr.battle_manager_statics;
         g_bmInstance = cr.battle_manager;
         if (cr.battle_manager) g_bmInstancePin = cr.battle_manager;
-        g_resolved = true;
+        esp_runtime_off_apply(cr);
+        g_resolved = esp_runtime_off_ready();
         BmFindMeta meta{};
-        const EspStatus st =
-            cr.battle_manager ? EspStatus::Ready : EspStatus::NoInstance;
+        const EspStatus st = !g_resolved ? EspStatus::NoBattleManager
+                            : cr.battle_manager ? EspStatus::Ready
+                                                : EspStatus::NoInstance;
         fill_report(rep, st, (int)maps.size(), probe, meta, cr.battle_manager_klass,
                     cr.battle_manager_statics, cr.battle_manager);
         std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1 fast: %s", cr.detail);
@@ -703,9 +707,16 @@ EspStatus esp_tick(EspFrame &out) {
         std::snprintf(out.hint, sizeof(out.hint), "BattleManager null — enter match");
         return out.status;
     }
+    if (!esp_runtime_off_ready()) {
+        out.status = EspStatus::NoBattleManager;
+        std::snprintf(out.hint, sizeof(out.hint), "Resolve IL2CPP field offsets (in match)");
+        return out.status;
+    }
+    const EspRuntimeOff &R = esp_runtime_off();
 
     uintptr_t local = 0;
-    mem_read(g_pid, bm + Off::LocalPlayerShow, local);
+    mem_read(g_pid, bm + R.localPlayerShow, local);
+    out.localPlayerEnt = local;
     Vec3 self{};
     if (local) read_entity_pos(g_pid, local, self);
     out.selfX = self.x;
@@ -713,21 +724,21 @@ EspStatus esp_tick(EspFrame &out) {
     out.selfZ = self.z;
 
     uintptr_t pDict = 0, mDict = 0;
-    mem_read(g_pid, bm + Off::DicPlayerShow, pDict);
-    mem_read(g_pid, bm + Off::DicMonsterShow, mDict);
+    mem_read(g_pid, bm + R.dicPlayerShow, pDict);
+    mem_read(g_pid, bm + R.dicMonsterShow, mDict);
     std::vector<std::pair<int, uintptr_t>> players, monsters;
     dict_entries(g_pid, pDict, players);
     dict_entries(g_pid, mDict, monsters);
-    if (players.empty()) {
+    if (players.empty() && R.listPlayerShow) {
         uintptr_t pList = 0;
-        mem_read(g_pid, bm + Off::ListPlayerShow, pList);
+        mem_read(g_pid, bm + R.listPlayerShow, pList);
         std::vector<uintptr_t> listP;
         if (list_entities(g_pid, pList, listP))
             for (size_t i = 0; i < listP.size(); ++i) players.emplace_back((int)i, listP[i]);
     }
-    if (monsters.empty()) {
+    if (monsters.empty() && R.listMonsterShow) {
         uintptr_t mList = 0;
-        mem_read(g_pid, bm + Off::ListMonsterShow, mList);
+        mem_read(g_pid, bm + R.listMonsterShow, mList);
         std::vector<uintptr_t> listM;
         if (list_entities(g_pid, mList, listM))
             for (size_t i = 0; i < listM.size(); ++i) monsters.emplace_back((int)i, listM[i]);
@@ -736,11 +747,11 @@ EspStatus esp_tick(EspFrame &out) {
     auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
         if (!v) return;
         uint8_t dead = 0, camp = 0;
-        if (mem_read(g_pid, v + Off::EntityDeath, dead) && dead) return;
-        if (mem_read(g_pid, v + Off::SameCamp, camp) && camp) return;
+        if (mem_read(g_pid, v + R.entityDeath, dead) && dead) return;
+        if (mem_read(g_pid, v + R.sameCamp, camp) && camp) return;
         int id = key;
-        mem_read(g_pid, v + Off::EntityId, id);
-        if (kind == 1 && !monster_id(id)) return;
+        mem_read(g_pid, v + R.entityId, id);
+        if (kind == 1 && !esp_monster_id(id)) return;
         Vec3 pos{};
         if (!read_entity_pos(g_pid, v, pos)) return;
         EspTarget t{};
@@ -751,13 +762,13 @@ EspStatus esp_tick(EspFrame &out) {
         t.relX = pos.x - self.x;
         t.relZ = pos.z - self.z;
         t.meters = (int)std::sqrt(t.relX * t.relX + t.relZ * t.relZ);
-        mem_read(g_pid, v + Off::Hp, t.hp);
-        mem_read(g_pid, v + Off::HpMax, t.hpMax);
+        mem_read(g_pid, v + R.hp, t.hp);
+        mem_read(g_pid, v + R.hpMax, t.hpMax);
         t.kind = kind;
         if (labelOverride)
             std::snprintf(t.label, sizeof(t.label), "%s", labelOverride);
         else if (kind == 1)
-            std::snprintf(t.label, sizeof(t.label), "%s", Off::monsterLabel(id));
+            std::snprintf(t.label, sizeof(t.label), "%s", esp_monster_label(id));
         else
             std::snprintf(t.label, sizeof(t.label), "P%d", id);
         out.targets.push_back(t);
@@ -766,9 +777,9 @@ EspStatus esp_tick(EspFrame &out) {
     for (const auto &kv : players) push(kv.second, 0, nullptr, kv.first);
     for (const auto &kv : monsters) {
         int id = kv.first;
-        if (kv.second) mem_read(g_pid, kv.second + Off::EntityId, id);
-        if (!monster_id(id)) continue;
-        push(kv.second, 1, Off::monsterLabel(id), kv.first);
+        if (kv.second) mem_read(g_pid, kv.second + R.entityId, id);
+        if (!esp_monster_id(id)) continue;
+        push(kv.second, 1, esp_monster_label(id), kv.first);
     }
 
     out.mapsCount = 0;

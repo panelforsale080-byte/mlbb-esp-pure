@@ -1,5 +1,5 @@
 #include "conrent_esp.hpp"
-#include "offsets.hpp"
+#include "il2_layout.hpp"
 #include "remote_call.hpp"
 #include "ui_log.hpp"
 #include <algorithm>
@@ -181,7 +181,7 @@ static uintptr_t method_from_name(RemoteSession &s, pid_t pid, RemoteIl2CppInfo 
 
 static uintptr_t klass_static_fields(pid_t pid, uintptr_t klass) {
     if (!klass) return 0;
-    for (uintptr_t off : Off::StaticFieldOffs) {
+    for (uintptr_t off : Il2::StaticFieldOffs) {
         uintptr_t st = 0;
         if (mem_read(pid, klass + off, st) && mem_ptr_ok(st)) return st;
     }
