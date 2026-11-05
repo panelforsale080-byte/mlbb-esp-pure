@@ -241,6 +241,11 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
         if (!out.runtime_fields.se_CachePosition)
             out.runtime_fields.se_CachePosition =
                 instance_field_offset(s, pid, il2, seKlass, "CachePosition");
+        out.runtime_fields.se_vCachePosition =
+            instance_field_offset(s, pid, il2, seKlass, "m_vCachePosition");
+        if (!out.runtime_fields.se_vCachePosition)
+            out.runtime_fields.se_vCachePosition =
+                instance_field_offset(s, pid, il2, seKlass, "vCachePosition");
         out.runtime_fields.se_m_ID = instance_field_offset(s, pid, il2, seKlass, "m_ID");
         out.runtime_fields.se_m_bDeath = instance_field_offset(s, pid, il2, seKlass, "m_bDeath");
         out.runtime_fields.se_m_bSameCampType =

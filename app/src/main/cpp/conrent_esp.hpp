@@ -14,6 +14,7 @@ struct ConrentRuntimeOffsets {
     uintptr_t bm_m_ShowMonsterList = 0;
     uintptr_t se_LastPosition = 0;
     uintptr_t se_CachePosition = 0;
+    uintptr_t se_vCachePosition = 0;
     uintptr_t se_m_ID = 0;
     uintptr_t se_m_bDeath = 0;
     uintptr_t se_m_bSameCampType = 0;

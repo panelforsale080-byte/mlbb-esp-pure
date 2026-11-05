@@ -11,6 +11,8 @@ struct EspRuntimeOff {
     uintptr_t listPlayerShow = 0;
     uintptr_t listMonsterShow = 0;
     uintptr_t lastPosition = 0;
+    uintptr_t cachePosition = 0;
+    uintptr_t vCachePosition = 0;
     uintptr_t entityId = 0;
     uintptr_t entityDeath = 0;
     uintptr_t sameCamp = 0;

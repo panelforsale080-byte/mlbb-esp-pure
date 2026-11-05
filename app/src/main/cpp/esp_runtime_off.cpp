@@ -14,6 +14,8 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     g_off.listPlayerShow = rt.bm_m_ShowPlayerList;
     g_off.listMonsterShow = rt.bm_m_ShowMonsterList;
     g_off.lastPosition = rt.se_LastPosition;
+    g_off.cachePosition = rt.se_CachePosition;
+    g_off.vCachePosition = rt.se_vCachePosition;
     g_off.entityId = rt.se_m_ID;
     g_off.entityDeath = rt.se_m_bDeath;
     g_off.sameCamp = rt.se_m_bSameCampType;

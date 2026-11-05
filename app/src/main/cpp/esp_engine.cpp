@@ -152,9 +152,12 @@ static bool pos_ok(const Vec3 &p) {
 }
 
 static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
-    const uintptr_t off = esp_runtime_off().lastPosition;
-    if (!off) return false;
-    if (mem_read(pid, ent + off, pos) && pos_ok(pos)) return true;
+    const EspRuntimeOff &R = esp_runtime_off();
+    if (R.vCachePosition && mem_read(pid, ent + R.vCachePosition, pos) && pos_ok(pos))
+        return true;
+    if (R.cachePosition && mem_read(pid, ent + R.cachePosition, pos) && pos_ok(pos))
+        return true;
+    if (R.lastPosition && mem_read(pid, ent + R.lastPosition, pos) && pos_ok(pos)) return true;
     pos = {};
     return false;
 }
