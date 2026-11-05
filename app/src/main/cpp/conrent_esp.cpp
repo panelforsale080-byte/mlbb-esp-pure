@@ -454,7 +454,6 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
         klass && out.camera_get_main_method && out.camera_w2s_method && out.runtime_ready;
 
     fill_runtime_field_offsets(s, pid, il2, images, out);
-    il2_discover_lib_global_rvas(pid, il2.base, out);
 
     static const char *kModMenuClasses[] = {
         "UnityEngine.Camera", "BattleData",     "BattleBridge",   "BattleManager",
@@ -470,6 +469,7 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
     }
 
     remote_session_end(s);
+    il2_discover_lib_global_rvas(pid, il2.base, out);
 
     if (!out.battle_manager) {
         std::snprintf(out.detail, sizeof(out.detail),
