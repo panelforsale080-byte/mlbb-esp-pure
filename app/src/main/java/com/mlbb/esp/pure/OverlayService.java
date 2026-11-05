@@ -109,7 +109,7 @@ public class OverlayService extends Service {
         fabStart.setBackgroundColor(0xCC1B5E20);
         fabStart.setOnClickListener(v -> {
             NativeBridge.nativeStartEsp();
-            if (glView != null) glView.requestRender();
+            setContinuousRender(true);
         });
 
         fabStop = new TextView(this);
@@ -119,7 +119,7 @@ public class OverlayService extends Service {
         fabStop.setBackgroundColor(0xCC8B1A1A);
         fabStop.setOnClickListener(v -> {
             NativeBridge.nativeStopEsp();
-            if (glView != null) glView.requestRender();
+            setContinuousRender(NativeBridge.nativeWantsContinuousRender());
         });
 
         WindowManager.LayoutParams startLp = new WindowManager.LayoutParams(

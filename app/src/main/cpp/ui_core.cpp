@@ -433,8 +433,18 @@ void ui_toggle_menu() { g_showMenu = !g_showMenu; }
 bool ui_menu_interactive() { return g_showMenu; }
 
 void ui_esp_start() {
+    if (!g_feat.box && !g_feat.line && !g_feat.health && !g_feat.name && !g_feat.distance &&
+        !g_feat.monsterBox && !g_feat.monsterName && !g_feat.monsterHealth) {
+        g_feat.box = true;
+        g_feat.line = true;
+    }
     g_espActive.store(true);
-    ui_log("[esp] START — drawing on world (vm_read/IL2 W2S)");
+    const int front = g_frameFront.load(std::memory_order_acquire);
+    const EspFrame &fr = g_frames[front];
+    if (fr.status == EspStatus::Ready)
+        ui_log("[esp] START — %zu targets, matrix W2S", fr.targets.size());
+    else
+        ui_log("[esp] START — wait Ready (Find pid + Resolve in match)");
 }
 
 void ui_esp_stop() {

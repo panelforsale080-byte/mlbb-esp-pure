@@ -112,3 +112,8 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeStopEsp(JNIEnv *, jclass) {
     ui_esp_stop();
 }
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_mlbb_esp_pure_NativeBridge_nativeWantsContinuousRender(JNIEnv *, jclass) {
+    return ui_wants_continuous_render() ? JNI_TRUE : JNI_FALSE;
+}
