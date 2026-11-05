@@ -41,7 +41,7 @@ static bool g_useIl2 = false;
 static int g_w2sBudget = 0;
 constexpr int kMaxIl2W2sPerFrame = 48;
 constexpr int kPtraceHoldFrames = 50;
-constexpr int kPtraceRestFrames = 3;
+constexpr int kPtraceRestFrames = 0;
 
 static int g_ptraceHoldLeft = 0;
 static int g_ptraceRestLeft = 0;
@@ -54,7 +54,7 @@ static void il2_force_rest() {
     }
     g_mainCam = 0;
     g_ptraceHoldLeft = 0;
-    g_ptraceRestLeft = kPtraceRestFrames + 5;
+    g_ptraceRestLeft = 2;
 }
 
 static void il2_note_failure() {
@@ -341,5 +341,6 @@ bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
     if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
+    if (g_ptraceRestLeft > 0) return false;
     return matrix_w2s(wx, wy, wz, outX, outY);
 }

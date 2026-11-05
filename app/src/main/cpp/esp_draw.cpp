@@ -17,31 +17,22 @@ static void entity_box(ImDrawList *draw, const ImVec2 &a, const ImVec2 &b, ImU32
     draw->AddRect(a, b, col, r, 0, 1.6f);
 }
 
-static ImVec2 world_to_screen_pseudo(float relX, float relZ, float screenW, float screenH) {
-    constexpr float kRange = 45.f;
-    const float cx = screenW * 0.5f;
-    const float cy = screenH * 0.48f;
-    const float sx = screenW * 0.40f / kRange;
-    const float sy = screenH * 0.28f / kRange;
-    const float dist = std::sqrt(relX * relX + relZ * relZ);
-    const float clamp = dist > kRange ? (kRange / dist) : 1.f;
-    const float x = std::clamp(cx + relX * clamp * sx, 16.f, screenW - 16.f);
-    const float y = std::clamp(cy - relZ * clamp * sy, 90.f, screenH - 28.f);
-    return {x, y};
+static bool target_screen(const EspFrame &frame, const EspTarget &t, float screenW, float screenH,
+                          ImVec2 &out) {
+    float sx = 0.f, sy = 0.f;
+    if (!esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy)) return false;
+    if (!std::isfinite(sx) || !std::isfinite(sy)) return false;
+    if (sx < -8.f || sy < -8.f || sx > screenW + 8.f || sy > screenH + 8.f) return false;
+    out = {sx, sy};
+    return true;
 }
 
-static ImVec2 target_screen(const EspFrame &frame, const EspTarget &t, float screenW, float screenH) {
+static bool self_screen(const EspFrame &frame, float screenW, float screenH, ImVec2 &out) {
     float sx = 0.f, sy = 0.f;
-    if (esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy))
-        return {sx, sy};
-    return world_to_screen_pseudo(t.relX, t.relZ, screenW, screenH);
-}
-
-static ImVec2 self_screen(const EspFrame &frame, float screenW, float screenH) {
-    float sx = 0.f, sy = 0.f;
-    if (esp_camera_world_to_screen(frame.selfX, frame.selfY, frame.selfZ, sx, sy))
-        return {sx, sy};
-    return {screenW * 0.5f, screenH * 0.82f};
+    if (!esp_camera_world_to_screen(frame.selfX, frame.selfY, frame.selfZ, sx, sy)) return false;
+    if (!std::isfinite(sx) || !std::isfinite(sy)) return false;
+    out = {sx, sy};
+    return true;
 }
 
 static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
@@ -51,16 +42,18 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
     const bool anyHp = monster ? feat.monsterHealth : feat.health;
     if (!anyBox && !anyName && !anyHp && !feat.line && !feat.distance) return;
 
-    const ImVec2 root = target_screen(frame, t, screenW, screenH);
+    ImVec2 root{};
+    if (!target_screen(frame, t, screenW, screenH, root)) return;
     const float boxH = std::fabs(screenH / (monster ? 6.8f : 6.5f));
     const float boxW = boxH * (monster ? 0.55f : 0.48f);
     const ImVec2 boxStart{root.x - boxW * 0.5f, root.y - boxH};
     const ImVec2 boxEnd{boxStart.x + boxW, boxStart.y + boxH};
     const float centerX = root.x;
 
-    const ImVec2 selfAnchor = self_screen(frame, screenW, screenH);
+    ImVec2 selfAnchor{};
+    const bool haveSelf = self_screen(frame, screenW, screenH, selfAnchor);
 
-    if (feat.line && !monster) {
+    if (feat.line && !monster && haveSelf) {
         draw->AddLine(selfAnchor, root, IM_COL32(255, 255, 255, 180), 1.5f);
     }
     if (anyBox) {
@@ -111,14 +104,6 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     if (!anyPlayer && !anyMon) {
         esp_camera_frame_end();
         return;
-    }
-
-    if (esp_camera_ready()) {
-        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200),
-                      "W2S conRentV1 IL2 (vm_read tick)");
-    } else {
-        draw->AddText(ImVec2(16.f, 56.f), IM_COL32(220, 160, 80, 200),
-                      "ESP radar fallback — Resolve in match");
     }
 
     for (const EspTarget &t : frame.targets) {

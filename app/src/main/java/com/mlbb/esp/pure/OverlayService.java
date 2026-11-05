@@ -59,6 +59,8 @@ public class OverlayService extends Service {
 
     private void attachWindows() {
         root = new FrameLayout(this);
+        root.setClickable(false);
+        root.setFocusable(false);
         glView = new GlImGuiView(this);
         glView.configureOverlaySurface();
         glView.setOnGlReadyListener(v -> main.post(() -> {
@@ -79,8 +81,9 @@ public class OverlayService extends Service {
                 overlayType,
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                        |                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
         surfaceLp.gravity = Gravity.TOP | Gravity.START;
 
@@ -89,7 +92,10 @@ public class OverlayService extends Service {
         ((TextView) fab).setTextSize(22f);
         ((TextView) fab).setPadding(28, 18, 28, 18);
         fab.setBackgroundColor(0xCC0A3555);
-        fab.setOnClickListener(v -> NativeBridge.nativeToggleMenu());
+        fab.setOnClickListener(v -> {
+            NativeBridge.nativeToggleMenu();
+            setMenuTouch(NativeBridge.nativeIsMenuInteractive());
+        });
 
         WindowManager.LayoutParams fabLp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -107,14 +113,20 @@ public class OverlayService extends Service {
         ((TextView) fabStart).setTextSize(13f);
         ((TextView) fabStart).setPadding(22, 14, 22, 14);
         fabStart.setBackgroundColor(0xCC1B5E20);
-        fabStart.setOnClickListener(v -> NativeBridge.nativeStartEsp());
+        fabStart.setOnClickListener(v -> {
+            NativeBridge.nativeStartEsp();
+            setMenuTouch(false);
+        });
 
         fabStop = new TextView(this);
         ((TextView) fabStop).setText("Stop ESP");
         ((TextView) fabStop).setTextSize(13f);
         ((TextView) fabStop).setPadding(22, 14, 22, 14);
         fabStop.setBackgroundColor(0xCC8B1A1A);
-        fabStop.setOnClickListener(v -> NativeBridge.nativeStopEsp());
+        fabStop.setOnClickListener(v -> {
+            NativeBridge.nativeStopEsp();
+            setMenuTouch(false);
+        });
 
         WindowManager.LayoutParams startLp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -150,9 +162,11 @@ public class OverlayService extends Service {
                 if (interactive) {
                     surfaceLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                     surfaceLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+                    surfaceLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
                 } else {
                     surfaceLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                     surfaceLp.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+                    surfaceLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
                 }
                 try {
                     wm.updateViewLayout(root, surfaceLp);
