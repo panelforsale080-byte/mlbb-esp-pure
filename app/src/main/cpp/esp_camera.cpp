@@ -3,7 +3,6 @@
 #include "proc.hpp"
 #include "remote_call.hpp"
 #include "ui_log.hpp"
-#include <atomic>
 #include <cmath>
 
 namespace {
@@ -42,32 +41,6 @@ static uintptr_t g_mainCam = 0;
 static bool g_useIl2 = false;
 static int g_w2sBudget = 0;
 constexpr int kMaxIl2W2sPerFrame = 48;
-constexpr int kPtraceHoldFrames = 48; /* one attach ~48 draw frames, then brief rest */
-constexpr int kPtraceRestFrames = 2;
-
-static int g_ptraceHoldLeft = 0;
-static int g_ptraceRestLeft = 0;
-static std::atomic<int> g_il2FailStreak{0};
-
-static void il2_force_rest() {
-    if (g_inFrame) {
-        remote_session_end(g_sess);
-        g_inFrame = false;
-    }
-    g_mainCam = 0;
-    g_ptraceHoldLeft = 0;
-    g_ptraceRestLeft = kPtraceRestFrames + 4;
-}
-
-static void il2_note_failure() {
-    if (g_il2FailStreak.fetch_add(1) + 1 >= 6) {
-        g_il2FailStreak.store(0);
-        il2_force_rest();
-        ui_log("[camera] ptrace rest (IL2 hiccup — same as #107 after breather)");
-    }
-}
-
-static void il2_note_success() { g_il2FailStreak.store(0); }
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
@@ -167,14 +140,6 @@ static bool load_vp_show_battle_camera(pid_t pid) {
     return true;
 }
 
-static void load_matrix_fallback(pid_t pid) {
-    if (pid <= 0 || !proc_alive(pid)) return;
-    if (load_vp_show_battle_camera(pid))
-        g_matrixReady = true;
-    else if (load_vp_game_method(pid))
-        g_matrixReady = true;
-}
-
 static bool read_vec3_from_object(pid_t pid, uintptr_t obj, float &x, float &y, float &z) {
     if (!mem_ptr_ok(obj)) return false;
     for (uintptr_t off : {0x10u, 0x14u, 0x18u, 0x20u, 0x24u, 0x28u}) {
@@ -199,7 +164,6 @@ static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &out
         uintptr_t cam = 0;
         if (!remote_session_call(g_sess, g_rtInvoke, {g_getMainMi, 0, 0, 0}, cam)) {
             g_useIl2 = false;
-            il2_note_failure();
             return false;
         }
         g_mainCam = cam;
@@ -220,10 +184,8 @@ static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &out
     uintptr_t ret = 0;
     if (!remote_session_call(g_sess, g_rtInvoke, {g_w2sMi, g_mainCam, paramSlot, excSlot}, ret)) {
         g_useIl2 = false;
-        il2_note_failure();
         return false;
     }
-    il2_note_success();
 
     float sx = 0.f, sy = 0.f, sz = 0.f;
     if (!read_vec3_from_object(g_il2Pid, ret, sx, sy, sz)) {
@@ -294,49 +256,36 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     normalize_landscape(g_screenW, g_screenH);
     g_matrixReady = false;
     g_useIl2 = false;
+    g_mainCam = 0;
+
+    if (g_inFrame) remote_session_end(g_sess);
+    g_inFrame = false;
+
     g_w2sBudget = kMaxIl2W2sPerFrame;
 
-    if (g_ptraceRestLeft > 0) {
-        g_ptraceRestLeft--;
-        if (g_inFrame) {
-            remote_session_end(g_sess);
-            g_inFrame = false;
+    /* Build #49: IL2 Camera.WorldToScreenPoint first (accurate), matrix if attach fails. */
+    if (allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
+        proc_alive(pid)) {
+        if (remote_session_begin_try(pid, g_sess)) {
+            g_inFrame = true;
+            g_useIl2 = true;
         }
-        g_mainCam = 0;
-        load_matrix_fallback(pid);
-        return;
     }
 
-    const bool reuseIl2 = g_inFrame && g_sess.attached && g_ptraceHoldLeft > 0;
-    if (!reuseIl2) {
-        if (g_inFrame) remote_session_end(g_sess);
-        g_inFrame = false;
-        g_mainCam = 0;
-
-        /* Build #107: IL2 Camera.WorldToScreenPoint (accurate on target). */
-        if (allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
-            proc_alive(pid)) {
-            if (remote_session_begin_try(pid, g_sess)) {
-                g_inFrame = true;
-                g_useIl2 = true;
-                g_ptraceHoldLeft = kPtraceHoldFrames;
-            }
-        }
-    } else {
-        g_useIl2 = true;
-        g_ptraceHoldLeft--;
+    if (!g_useIl2 && pid > 0 && proc_alive(pid)) {
+        if (load_vp_show_battle_camera(pid))
+            g_matrixReady = true;
+        else if (load_vp_game_method(pid))
+            g_matrixReady = true;
     }
-
-    if (!g_useIl2 && pid > 0 && proc_alive(pid)) load_matrix_fallback(pid);
 }
 
 void esp_camera_frame_end() {
-    if (g_inFrame && g_ptraceHoldLeft <= 0) {
+    if (g_inFrame) {
         remote_session_end(g_sess);
         g_inFrame = false;
-        g_mainCam = 0;
-        g_ptraceRestLeft = kPtraceRestFrames;
     }
+    g_mainCam = 0;
 }
 
 bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }

@@ -169,14 +169,10 @@ static void reader_loop() {
             lastPid = 0;
         } else if (pid > 0) {
             if (g_needResolve.exchange(false)) {
-                if (g_espActive.load()) {
-                    g_needResolve.store(true);
-                } else {
-                    ui_log("[resolve] start pid=%d", (int)pid);
-                    EspResolveReport rep{};
-                    esp_resolve(&rep);
-                    log_resolve_result(rep);
-                }
+                ui_log("[resolve] start pid=%d", (int)pid);
+                EspResolveReport rep{};
+                esp_resolve(&rep);
+                log_resolve_result(rep);
             }
             EspFrame f;
             esp_tick(f);
