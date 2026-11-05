@@ -36,7 +36,7 @@ static std::atomic<bool> g_readerStarted{false};
 static std::mutex g_frameMu;
 static EspFrame g_frame;
 static std::atomic<pid_t> g_wantPid{0};
-static std::atomic<bool> g_needResolve{false};
+static std::atomic<bool> g_needResolve{true};
 
 static bool g_autoFind = true;
 static bool g_fallbackPid = true;
@@ -132,6 +132,7 @@ static void attach_pid(pid_t p, const char *why) {
         ui_log("  process_vm_readv failed — need root or correct target process");
     esp_attach(p);
     g_wantPid.store(p);
+    if (!esp_is_resolved()) g_needResolve.store(true);
 }
 
 static void reader_loop() {
@@ -167,11 +168,15 @@ static void reader_loop() {
             g_needResolve.store(true);
             lastPid = 0;
         } else if (pid > 0) {
-            if (g_needResolve.load() && !g_espActive.load() && g_needResolve.exchange(false)) {
-                ui_log("[resolve] start pid=%d", (int)pid);
-                EspResolveReport rep{};
-                esp_resolve(&rep);
-                log_resolve_result(rep);
+            if (g_needResolve.load()) {
+                if (g_espActive.load()) {
+                    /* #147: vm_read tick only while ESP on; Resolve runs when ESP off */
+                } else if (g_needResolve.exchange(false)) {
+                    ui_log("[resolve] start pid=%d", (int)pid);
+                    EspResolveReport rep{};
+                    esp_resolve(&rep);
+                    log_resolve_result(rep);
+                }
             }
             EspFrame f;
             esp_tick(f);
@@ -196,8 +201,7 @@ static void reader_loop() {
             g_frame = std::move(f);
         }
 
-        const int sleepMs = g_espActive.load() ? 12 : 8;
-        std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
 }
 
@@ -222,27 +226,19 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("Mod menu flow: Find pid → Resolve (in match) → Start ESP");
+        ImGui::TextDisabled("Build #147 ESP | auto find pid + auto resolve (mod menu classes)");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
+        if (ImGui::Button("Resolve")) {
+            esp_request_force_resolve();
+            g_needResolve.store(true);
+        }
+        ImGui::SameLine();
         if (ImGui::Button("Find pid")) {
             pid_t p = proc_find_unity_kills();
             if (p <= 0 && g_fallbackPid) p = proc_find_mlbb_fallback();
             attach_pid(p, "find");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Resolve")) {
-            if (g_wantPid.load() <= 0) {
-                ui_log("[resolve] Find pid first");
-            } else {
-                if (g_espActive.load()) {
-                    ui_esp_stop();
-                    ui_log("[resolve] ESP stopped for ptrace Resolve");
-                }
-                esp_request_force_resolve();
-                g_needResolve.store(true);
-            }
         }
 
         ImGui::SeparatorText("ESP control");
@@ -445,7 +441,7 @@ bool ui_menu_interactive() { return g_showMenu; }
 
 void ui_esp_start() {
     g_espActive.store(true);
-    ui_log("[esp] START — conRentV1 method (runtime offsets + Camera W2S, GL draw only)");
+    ui_log("[esp] START — #147 ESP (IL2 W2S reader + GL draw)");
 }
 
 void ui_esp_stop() {

@@ -410,6 +410,19 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
 
     fill_runtime_field_offsets(s, pid, il2, images, out);
 
+    static const char *kModMenuClasses[] = {
+        "UnityEngine.Camera", "BattleData",     "BattleBridge",   "BattleManager",
+        "ShowEntity",         "ShowPlayer",     "LogicBattleManager",
+        "Battle.LogicFighter", "Battle.LogicSkillComp", "Battle.CoolDownComp",
+        "Battle.CoolDownData", "Battle.ShowOwnSkillComp", "ShowSkillData",
+    };
+    ui_log("[resolve] mod menu classes (FindClass):");
+    for (const char *cn : kModMenuClasses) {
+        const bool unity = std::strstr(cn, "UnityEngine") != nullptr;
+        uintptr_t k = find_class_fast(s, pid, il2, images, cn, unity);
+        ui_log("  %s -> 0x%llx", cn, (unsigned long long)k);
+    }
+
     remote_session_end(s);
 
     if (!out.battle_manager) {

@@ -33,10 +33,6 @@ static pid_t g_il2Pid = 0;
 static uintptr_t g_rtInvoke = 0;
 static uintptr_t g_getMainMi = 0;
 static uintptr_t g_w2sMi = 0;
-static uintptr_t g_getMainNative = 0;
-static uintptr_t g_w2sNative = 0;
-static uintptr_t g_battleBridge = 0;
-static uintptr_t g_startBattleNative = 0;
 static bool g_il2Ready = false;
 
 static RemoteSession g_sess{};
@@ -44,7 +40,7 @@ static bool g_inFrame = false;
 static uintptr_t g_mainCam = 0;
 static bool g_useIl2 = false;
 static int g_w2sBudget = 0;
-constexpr int kMaxIl2W2sPerFrame = 32;
+constexpr int kMaxIl2W2sPerFrame = 128;
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
@@ -159,31 +155,6 @@ static bool read_vec3_from_object(pid_t pid, uintptr_t obj, float &x, float &y, 
     return false;
 }
 
-static bool screen_sane(float sx, float sy) {
-    if (!std::isfinite(sx) || !std::isfinite(sy)) return false;
-    const float mx = g_screenW * 3.f + 128.f;
-    const float my = g_screenH * 3.f + 128.f;
-    return sx >= -mx && sx <= mx && sy >= -my && sy <= my;
-}
-
-static bool apply_w2s_result(float sx, float sy, float sz, float &outX, float &outY) {
-    if (sz > 0.f) {
-        outX = sx;
-        outY = g_screenH - sy;
-    } else {
-        outX = g_screenW - sx;
-        outY = sy;
-    }
-    return screen_sane(outX, outY);
-}
-
-static bool battle_started_remote() {
-    if (!g_inFrame || !g_battleBridge || !g_startBattleNative) return true;
-    uintptr_t started = 0;
-    if (!remote_session_call(g_sess, g_startBattleNative, {g_battleBridge}, started)) return true;
-    return started != 0;
-}
-
 static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &outY) {
     if (!g_inFrame || !g_useIl2 || !g_rtInvoke || !g_w2sMi || g_il2Pid <= 0) return false;
     if (g_w2sBudget <= 0) return false;
@@ -223,7 +194,14 @@ static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &out
             return false;
     }
 
-    return apply_w2s_result(sx, sy, sz, outX, outY);
+    if (sz > 0.f) {
+        outX = sx;
+        outY = g_screenH - sy;
+    } else {
+        outX = g_screenW - sx;
+        outY = sy;
+    }
+    return std::isfinite(outX) && std::isfinite(outY);
 }
 
 static bool matrix_w2s(float wx, float wy, float wz, float &outX, float &outY) {
@@ -249,10 +227,6 @@ void esp_camera_reset() {
     g_rtInvoke = 0;
     g_getMainMi = 0;
     g_w2sMi = 0;
-    g_getMainNative = 0;
-    g_w2sNative = 0;
-    g_battleBridge = 0;
-    g_startBattleNative = 0;
     g_il2Ready = false;
     g_useIl2 = false;
     g_mainCam = 0;
@@ -267,16 +241,13 @@ void esp_camera_set_static_bases(uintptr_t showBattleCameraStatics, uintptr_t ga
     g_gmStatics = gameMethodStatics;
 }
 
-void esp_camera_set_conrent_w2s(pid_t pid, uintptr_t runtime_invoke, const ConrentResolve &cr) {
+void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t get_main_method,
+                               uintptr_t w2s_method) {
     g_il2Pid = pid;
     g_rtInvoke = runtime_invoke;
-    g_getMainMi = cr.camera_get_main_method;
-    g_w2sMi = cr.camera_w2s_method;
-    g_getMainNative = cr.camera_get_main_native;
-    g_w2sNative = cr.camera_w2s_native;
-    g_battleBridge = cr.battle_bridge;
-    g_startBattleNative = cr.get_bStartBattle_native;
-    g_il2Ready = runtime_invoke && cr.camera_get_main_method && cr.camera_w2s_method;
+    g_getMainMi = get_main_method;
+    g_w2sMi = w2s_method;
+    g_il2Ready = runtime_invoke && get_main_method && w2s_method;
 }
 
 void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowIl2Ptrace) {
@@ -297,12 +268,7 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
         proc_alive(pid)) {
         if (remote_session_begin_try(pid, g_sess)) {
             g_inFrame = true;
-            if (battle_started_remote())
-                g_useIl2 = true;
-            else {
-                remote_session_end(g_sess);
-                g_inFrame = false;
-            }
+            g_useIl2 = true;
         }
     }
 
@@ -326,9 +292,6 @@ void esp_camera_frame_end() {
 bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
-    /* External: do not ptrace-call Camera natives directly (wrong ABI → game crash).
-     * conRent in-process uses native ptrs; here IL2 runtime_invoke then matrix. */
     if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
-    if (matrix_w2s(wx, wy, wz, outX, outY)) return screen_sane(outX, outY);
-    return false;
+    return matrix_w2s(wx, wy, wz, outX, outY);
 }
