@@ -138,8 +138,10 @@ void esp_w2s_bridge_set_screen(float screenW, float screenH) {
     EspW2sShm patch{};
     patch.screen_w = screenW;
     patch.screen_h = screenH;
-    mem_write(g_pid, g_remoteShm + offsetof(EspW2sShm, screen_w), &patch.screen_w, sizeof(float));
-    mem_write(g_pid, g_remoteShm + offsetof(EspW2sShm, screen_h), &patch.screen_h, sizeof(float));
+    mem_write(g_pid, g_remoteShm + offsetof(EspW2sShm, screen_w), &patch.screen_w,
+              sizeof(patch.screen_w));
+    mem_write(g_pid, g_remoteShm + offsetof(EspW2sShm, screen_h), &patch.screen_h,
+              sizeof(patch.screen_h));
 }
 
 bool esp_w2s_bridge_world_to_screen(pid_t pid, float wx, float wy, float wz, float &outX,
@@ -149,15 +151,15 @@ bool esp_w2s_bridge_world_to_screen(pid_t pid, float wx, float wy, float wz, flo
 
     const uint32_t one = 1;
     const uint32_t seq = ++g_seq;
-    mem_write(pid, g_remoteShm + offsetof(EspW2sShm, count), one);
-    mem_write(pid, g_remoteShm + offsetof(EspW2sShm, wx), wx);
-    mem_write(pid, g_remoteShm + offsetof(EspW2sShm, wy), wy);
-    mem_write(pid, g_remoteShm + offsetof(EspW2sShm, wz), wz);
-    mem_write(pid, g_remoteShm + offsetof(EspW2sShm, req_seq), seq);
+    mem_write(pid, g_remoteShm + offsetof(EspW2sShm, count), &one, sizeof(one));
+    mem_write(pid, g_remoteShm + offsetof(EspW2sShm, wx), &wx, sizeof(wx));
+    mem_write(pid, g_remoteShm + offsetof(EspW2sShm, wy), &wy, sizeof(wy));
+    mem_write(pid, g_remoteShm + offsetof(EspW2sShm, wz), &wz, sizeof(wz));
+    mem_write(pid, g_remoteShm + offsetof(EspW2sShm, req_seq), &seq, sizeof(seq));
 
     uint32_t ack = 0;
     for (int i = 0; i < 30; ++i) {
-        mem_read(pid, g_remoteShm + offsetof(EspW2sShm, ack_seq), ack);
+        mem_read(pid, g_remoteShm + offsetof(EspW2sShm, ack_seq), ack); // NOLINT
         if (ack == seq) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
