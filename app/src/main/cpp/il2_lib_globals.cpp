@@ -10,13 +10,9 @@ namespace {
 
 constexpr uintptr_t kGlobalCamChainA = 0xa8;
 constexpr uintptr_t kGlobalCamChainB = 0x08;
-constexpr uintptr_t kLegacyBmTypeInfoRva = 0x635b290ULL;
-constexpr uintptr_t kLegacyMainCameraRva = 0x635b620ULL;
-constexpr uintptr_t kScanMinRva = 0x400000ULL;
-constexpr size_t kMaxScanBytesPerMod = 2 * 1024 * 1024;
-constexpr size_t kMaxCamChainProbes = 512;
-constexpr uintptr_t kLegacyCamWinLo = 0x6340000ULL;
-constexpr uintptr_t kLegacyCamWinHi = 0x6370000ULL;
+/** EXTERNAL-MLBB Offsets.h — fixed; no memory scan. */
+constexpr uintptr_t kRvaBattleManagerTypeInfo = 0x635b290ULL;
+constexpr uintptr_t kRvaMainCameraRoot = 0x635b620ULL;
 
 struct BattleCameraMatricesRaw {
     float worldToCamera[16];
@@ -71,65 +67,6 @@ static uintptr_t follow_main_camera_root(pid_t pid, uintptr_t root) {
     return p;
 }
 
-static bool validate_main_camera_rva(pid_t pid, uintptr_t libBase, uintptr_t rva,
-                                     uintptr_t expectedLive) {
-    if (!libBase || !rva) return false;
-    uintptr_t root = 0;
-    if (!mem_read(pid, libBase + rva, root) || !mem_ptr_ok(root)) return false;
-    const uintptr_t cam3 = follow_main_camera_root(pid, root);
-    if (!cam3 || !vp_from_cam3(pid, cam3)) return false;
-    return main_camera_live_matches(pid, cam3, expectedLive);
-}
-
-static bool validate_bm_typeinfo_rva(pid_t pid, uintptr_t libBase, uintptr_t rva, uintptr_t bmKlass,
-                                     uintptr_t bmStatics) {
-    if (!libBase || !rva || !bmKlass) return false;
-    uintptr_t p = 0;
-    if (!mem_read(pid, libBase + rva, p) || p != bmKlass) return false;
-    return klass_static_fields_match(pid, p, bmStatics) != 0;
-}
-
-static void scan_window(pid_t pid, uintptr_t libBase, uintptr_t winStart, uintptr_t winEnd,
-                        uintptr_t bmKlass, uintptr_t bmStatics, uintptr_t expectedSmoothFollow,
-                        bool requireLiveForCam, uintptr_t &outBmRva, uintptr_t &outCamRva) {
-    constexpr size_t kChunk = 64 * 1024;
-    std::vector<uint8_t> buf(kChunk);
-    size_t scanned = 0;
-    size_t camProbes = 0;
-
-    for (uintptr_t cur = winStart; cur + sizeof(uintptr_t) <= winEnd; cur += kChunk - sizeof(uintptr_t)) {
-        if (scanned >= kMaxScanBytesPerMod) break;
-        if (outBmRva && outCamRva) break;
-
-        const size_t remain = static_cast<size_t>(winEnd - cur);
-        const size_t n = remain < kChunk ? remain : kChunk;
-        if (!mem_read(pid, cur, buf.data(), n)) continue;
-        scanned += n;
-
-        for (size_t i = 0; i + sizeof(uintptr_t) <= n; i += sizeof(uintptr_t)) {
-            uintptr_t val = 0;
-            std::memcpy(&val, buf.data() + i, sizeof(val));
-            if (!val) continue;
-            const uintptr_t rva = (cur + i) - libBase;
-
-            if (!outBmRva && bmKlass && val == bmKlass &&
-                klass_static_fields_match(pid, val, bmStatics))
-                outBmRva = rva;
-
-            if (!outCamRva && mem_ptr_ok(val) && val != bmKlass) {
-                const uintptr_t cam3 = follow_main_camera_root(pid, val);
-                if (!cam3 || !vp_from_cam3(pid, cam3)) continue;
-                if (requireLiveForCam && !expectedSmoothFollow) continue;
-                if (expectedSmoothFollow &&
-                    !main_camera_live_matches(pid, cam3, expectedSmoothFollow))
-                    continue;
-                if (camProbes < kMaxCamChainProbes) ++camProbes;
-                outCamRva = rva;
-            }
-        }
-    }
-}
-
 static uintptr_t module_base_for_path(const std::vector<MapsReg> &maps, const char *needle) {
     uintptr_t base = 0;
     for (const MapsReg &m : maps) {
@@ -139,19 +76,72 @@ static uintptr_t module_base_for_path(const std::vector<MapsReg> &maps, const ch
     return base;
 }
 
-static void module_span(const std::vector<MapsReg> &maps, uintptr_t modBase, uintptr_t &outStart,
-                        uintptr_t &outEnd) {
-    outStart = 0;
-    outEnd = 0;
-    for (const MapsReg &m : maps) {
-        if (m.start < modBase || m.end <= modBase) continue;
-        if (m.path.find("libcsharp") == std::string::npos &&
-            m.path.find("libil2cpp") == std::string::npos &&
-            m.path.find("liblogic") == std::string::npos)
-            continue;
-        if (!outStart || m.start < outStart) outStart = m.start;
-        if (m.end > outEnd) outEnd = m.end;
+static const char *module_label(uintptr_t base, uintptr_t csharp, uintptr_t logic, uintptr_t il2cpp,
+                                uintptr_t il2Detected) {
+    if (base == csharp) return "libcsharp.so";
+    if (base == logic) return "liblogic.so";
+    if (base == il2cpp) return "libil2cpp.so";
+    if (base == il2Detected) return "il2-detect-base";
+    return "unknown-so";
+}
+
+static void collect_unique_bases(uintptr_t csharp, uintptr_t logic, uintptr_t il2cpp,
+                                   uintptr_t il2Detected, std::vector<uintptr_t> &out) {
+    const uintptr_t cand[] = {csharp, logic, il2cpp, il2Detected};
+    for (uintptr_t b : cand) {
+        if (!b) continue;
+        bool dup = false;
+        for (uintptr_t x : out) {
+            if (x == b) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) out.push_back(b);
     }
+}
+
+struct SpyBmResult {
+    uintptr_t slot = 0;
+    bool readOk = false;
+    bool klassMatch = false;
+    bool staticsMatch = false;
+};
+
+static SpyBmResult spy_battle_manager_rva(pid_t pid, uintptr_t libBase, uintptr_t bmKlass,
+                                          uintptr_t bmStatics) {
+    SpyBmResult r{};
+    const uintptr_t addr = libBase + kRvaBattleManagerTypeInfo;
+    r.readOk = mem_read(pid, addr, r.slot);
+    if (!r.readOk || !mem_ptr_ok(r.slot)) return r;
+    r.klassMatch = bmKlass && r.slot == bmKlass;
+    r.staticsMatch = klass_static_fields_match(pid, r.slot, bmStatics) != 0;
+    return r;
+}
+
+struct SpyCamResult {
+    uintptr_t root = 0;
+    uintptr_t afterA8 = 0;
+    uintptr_t cam3 = 0;
+    uintptr_t inner10 = 0;
+    bool readRoot = false;
+    bool chainOk = false;
+    bool vpOk = false;
+    bool liveOk = false;
+};
+
+static SpyCamResult spy_main_camera_rva(pid_t pid, uintptr_t libBase, uintptr_t expectedLive) {
+    SpyCamResult r{};
+    const uintptr_t addr = libBase + kRvaMainCameraRoot;
+    r.readRoot = mem_read(pid, addr, r.root);
+    if (!r.readRoot || !mem_ptr_ok(r.root)) return r;
+    if (!mem_read(pid, r.root + kGlobalCamChainA, r.afterA8)) return r;
+    r.cam3 = follow_main_camera_root(pid, r.root);
+    r.chainOk = mem_ptr_ok(r.cam3);
+    if (r.chainOk) mem_read(pid, r.cam3 + 0x10, r.inner10);
+    if (r.chainOk) r.vpOk = vp_from_cam3(pid, r.cam3);
+    if (r.chainOk && r.vpOk) r.liveOk = main_camera_live_matches(pid, r.cam3, expectedLive);
+    return r;
 }
 
 } // namespace
@@ -165,107 +155,79 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
 
     std::vector<MapsReg> maps;
     if (!mem_maps(pid, maps)) {
-        ui_log("[resolve] lib RVA scan skipped (no maps)");
+        ui_log("[resolve] RVA spy skipped (no maps)");
         return;
     }
 
-    uintptr_t expectedSmooth = 0;
+    uintptr_t expectedLive = 0;
     if (resolve.game_method_statics && resolve.runtime_fields.gm_mainCamera)
         mem_read(pid, resolve.game_method_statics + resolve.runtime_fields.gm_mainCamera,
-                 expectedSmooth);
+                 expectedLive);
+
+    const uintptr_t baseCsharp = module_base_for_path(maps, "libcsharp.so");
+    const uintptr_t baseLogic = module_base_for_path(maps, "liblogic.so");
+    const uintptr_t baseIl2cpp = module_base_for_path(maps, "libil2cpp.so");
 
     ui_log("[resolve] GameMethod statics=0x%llx mainCamera live=0x%llx",
            (unsigned long long)resolve.game_method_statics,
-           (unsigned long long)expectedSmooth);
-    ui_log("[resolve] lib RVA scan (libcsharp/liblogic/libil2cpp)...");
+           (unsigned long long)expectedLive);
+    ui_log("[resolve] RVA spy (fixed EXTERNAL offsets, no scan):");
+    ui_log("  BM TypeInfo slot  lib+0x%llx", (unsigned long long)kRvaBattleManagerTypeInfo);
+    ui_log("  MainCamera root   lib+0x%llx", (unsigned long long)kRvaMainCameraRoot);
 
-    uintptr_t bestBmRva = 0;
-    uintptr_t bestBmBase = 0;
-    uintptr_t bestCamRva = 0;
-    uintptr_t bestCamBase = 0;
+    std::vector<uintptr_t> bases;
+    collect_unique_bases(baseCsharp, baseLogic, baseIl2cpp, il2LibBase, bases);
 
-    const uintptr_t bases[] = {
-        module_base_for_path(maps, "libcsharp.so"),
-        module_base_for_path(maps, "liblogic.so"),
-        module_base_for_path(maps, "libil2cpp.so"),
-        il2LibBase,
-    };
+    uintptr_t pickBmBase = 0;
+    uintptr_t pickCamBase = 0;
 
     for (uintptr_t libBase : bases) {
-        if (!libBase) continue;
-        uintptr_t modStart = 0;
-        uintptr_t modEnd = 0;
-        module_span(maps, libBase, modStart, modEnd);
-        if (modEnd <= modStart) continue;
+        const char *label =
+            module_label(libBase, baseCsharp, baseLogic, baseIl2cpp, il2LibBase);
 
-        uintptr_t winStart = libBase + kScanMinRva;
-        if (winStart < modStart) winStart = modStart;
-        uintptr_t winEnd = modEnd;
-        if (winEnd <= winStart) continue;
+        const SpyBmResult bm = spy_battle_manager_rva(pid, libBase, resolve.battle_manager_klass,
+                                                      resolve.battle_manager_statics);
+        ui_log("  [%s] base=0x%llx BM lib+0x%llx -> *slot=0x%llx klass=%s statics=%s",
+               label, (unsigned long long)libBase, (unsigned long long)kRvaBattleManagerTypeInfo,
+               (unsigned long long)bm.slot, bm.klassMatch ? "MATCH" : "no",
+               bm.staticsMatch ? "MATCH" : "no");
 
-        uintptr_t bmRva = 0;
-        uintptr_t camRva = 0;
-        scan_window(pid, libBase, winStart, winEnd, resolve.battle_manager_klass,
-                    resolve.battle_manager_statics, expectedSmooth, true, bmRva, camRva);
-        if (bmRva && !bestBmRva) {
-            bestBmRva = bmRva;
-            bestBmBase = libBase;
-        }
-        if (camRva && !bestCamRva) {
-            bestCamRva = camRva;
-            bestCamBase = libBase;
-        }
+        if (!pickBmBase && bm.klassMatch && bm.staticsMatch) pickBmBase = libBase;
+
+        const SpyCamResult cam = spy_main_camera_rva(pid, libBase, expectedLive);
+        ui_log("  [%s] Cam lib+0x%llx -> root=0x%llx +0xA8=0x%llx cam3=0x%llx +0x10=0x%llx "
+               "chain=%s vp=%s live=%s",
+               label, (unsigned long long)kRvaMainCameraRoot, (unsigned long long)cam.root,
+               (unsigned long long)cam.afterA8, (unsigned long long)cam.cam3,
+               (unsigned long long)cam.inner10, cam.chainOk ? "OK" : "fail",
+               cam.vpOk ? "OK" : "fail", cam.liveOk ? "OK" : "no");
+
+        if (!pickCamBase && cam.chainOk && cam.vpOk) pickCamBase = libBase;
     }
 
-    const uintptr_t legacyBases[] = {
-        module_base_for_path(maps, "libcsharp.so"),
-        module_base_for_path(maps, "liblogic.so"),
-        module_base_for_path(maps, "libil2cpp.so"),
-        il2LibBase,
-    };
-    for (uintptr_t lb : legacyBases) {
-        if (!lb) continue;
-        if (!bestCamRva) {
-            uintptr_t legBm = 0;
-            uintptr_t legCam = 0;
-            scan_window(pid, lb, lb + kLegacyCamWinLo, lb + kLegacyCamWinHi, 0, 0, expectedSmooth,
-                        false, legBm, legCam);
-            if (legCam) {
-                bestCamRva = legCam;
-                bestCamBase = lb;
-                ui_log("[resolve] MainCamera RVA in legacy window lib+0x%llx (base=0x%llx)",
-                       (unsigned long long)legCam, (unsigned long long)lb);
-            }
-        }
-        if (!bestCamRva && validate_main_camera_rva(pid, lb, kLegacyMainCameraRva, expectedSmooth)) {
-            bestCamRva = kLegacyMainCameraRva;
-            bestCamBase = lb;
-            ui_log("[resolve] MainCamera RVA validated at legacy lib+0x%llx (base=0x%llx)",
-                   (unsigned long long)kLegacyMainCameraRva, (unsigned long long)lb);
-        }
-        if (!bestBmRva &&
-            validate_bm_typeinfo_rva(pid, lb, kLegacyBmTypeInfoRva, resolve.battle_manager_klass,
-                                     resolve.battle_manager_statics)) {
-            bestBmRva = kLegacyBmTypeInfoRva;
-            bestBmBase = lb;
-            ui_log("[resolve] BattleManager RVA validated at legacy lib+0x%llx (base=0x%llx)",
-                   (unsigned long long)kLegacyBmTypeInfoRva, (unsigned long long)lb);
-        }
+    if (pickBmBase) {
+        resolve.auto_rva_battle_manager_typeinfo = kRvaBattleManagerTypeInfo;
+        ui_log("[resolve] BM RVA pick: %s base=0x%llx + 0x%llx",
+               module_label(pickBmBase, baseCsharp, baseLogic, baseIl2cpp, il2LibBase),
+               (unsigned long long)pickBmBase, (unsigned long long)kRvaBattleManagerTypeInfo);
     }
 
-    resolve.auto_rva_battle_manager_typeinfo = bestBmRva;
-    resolve.auto_rva_main_camera_root = bestCamRva;
-    resolve.main_camera_matrix_lib_base = bestCamBase;
+    if (pickCamBase) {
+        resolve.auto_rva_main_camera_root = kRvaMainCameraRoot;
+        resolve.main_camera_matrix_lib_base = pickCamBase;
+        ui_log("[resolve] MainCamera RVA pick: %s base=0x%llx + 0x%llx (ESP vm_read)",
+               module_label(pickCamBase, baseCsharp, baseLogic, baseIl2cpp, il2LibBase),
+               (unsigned long long)pickCamBase, (unsigned long long)kRvaMainCameraRoot);
+    } else {
+        ui_log("[resolve] MainCamera fixed RVA not usable on any module — GameMethod + 0x5C fallback");
+    }
 
-    ui_log("[resolve] matrix RVAs for ESP (vm_read, accurate path):");
-    if (bestBmRva)
-        ui_log("  BattleManager TypeInfo: base=0x%llx + 0x%llx",
-               (unsigned long long)bestBmBase, (unsigned long long)bestBmRva);
-    else
-        ui_log("  BattleManager TypeInfo: not found (IL2CPP Instance OK)");
-    if (bestCamRva)
-        ui_log("  MainCamera root: base=0x%llx + 0x%llx",
-               (unsigned long long)bestCamBase, (unsigned long long)bestCamRva);
-    else
-        ui_log("  MainCamera root: not found — will try GameMethod.mainCamera + 0x5C");
+    ui_log("[resolve] matrix RVAs for ESP:");
+    if (resolve.auto_rva_battle_manager_typeinfo)
+        ui_log("  BattleManager: base=0x%llx + 0x%llx", (unsigned long long)pickBmBase,
+               (unsigned long long)kRvaBattleManagerTypeInfo);
+    if (resolve.auto_rva_main_camera_root)
+        ui_log("  MainCamera: base=0x%llx + 0x%llx",
+               (unsigned long long)resolve.main_camera_matrix_lib_base,
+               (unsigned long long)kRvaMainCameraRoot);
 }
