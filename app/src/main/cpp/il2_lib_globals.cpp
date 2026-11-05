@@ -236,7 +236,7 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
     const uintptr_t baseCsharp = module_base_for_path(maps, "libcsharp.so");
 
     ui_log("[resolve] GameMethod mainCamera live=0x%llx", (unsigned long long)expectedLive);
-    ui_log("[resolve] discover lib globals (no hardcoded lib RVA — statics + rw-auto):");
+    ui_log("[resolve] lib global discover (optional ESP fallback — primary W2S is GameMethod/IL2CPP):");
 
     DiscoverPick bmPick{};
     DiscoverPick camPick{};

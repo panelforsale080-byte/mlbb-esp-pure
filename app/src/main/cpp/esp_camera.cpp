@@ -369,32 +369,33 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
                          proc_alive(pid);
 
     if (pid > 0 && proc_alive(pid)) {
-        if (load_vp_from_discovered_main_camera_slot(pid)) {
+        /* Prefer IL2CPP / GameMethod (patch-resilient). Lib global chain (+0xA8/0x08/0x5C) is fallback. */
+        if (load_vp_from_game_method_smooth(pid)) {
             g_matrixReady = true;
             g_matrixFromVmRead = true;
             if (g_matrixPathLog == 0) {
                 g_matrixPathLog = 1;
-                ui_log("[esp] W2S matrix: slot_va=0x%llx + ViewMatrix (auto-discovered)",
-                       (unsigned long long)g_mainCameraSlotVa);
-            }
-        } else if (load_vp_from_game_method_smooth(pid)) {
-            g_matrixReady = true;
-            g_matrixFromVmRead = true;
-            if (g_matrixPathLog == 0) {
-                g_matrixPathLog = 2;
-                ui_log("[esp] W2S matrix: GameMethod.mainCamera + ViewMatrix 0x5C");
+                ui_log("[esp] W2S matrix: GameMethod.mainCamera (IL2CPP primary)");
             }
         } else if (wantIl2 && remote_session_begin_try(pid, g_sess)) {
             g_inFrame = true;
             if (load_vp_il2_camera_matrices(pid)) {
                 g_matrixReady = true;
                 if (g_matrixPathLog == 0) {
-                    g_matrixPathLog = 3;
-                    ui_log("[esp] W2S matrix: IL2 Camera matrix getters (fallback)");
+                    g_matrixPathLog = 2;
+                    ui_log("[esp] W2S matrix: Unity Camera matrix getters (IL2CPP)");
                 }
             } else {
                 remote_session_end(g_sess);
                 g_inFrame = false;
+            }
+        } else if (load_vp_from_discovered_main_camera_slot(pid)) {
+            g_matrixReady = true;
+            g_matrixFromVmRead = true;
+            if (g_matrixPathLog == 0) {
+                g_matrixPathLog = 3;
+                ui_log("[esp] W2S matrix: lib global slot_va=0x%llx (EXTERNAL chain fallback)",
+                       (unsigned long long)g_mainCameraSlotVa);
             }
         }
         if (!g_matrixReady && load_vp_show_battle_camera(pid)) {
