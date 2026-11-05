@@ -25,6 +25,7 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeInit(JNIEnv *env, jclass clazz) {
     if (!g_setMenuTouch)
         g_setMenuTouch = env->GetStaticMethodID(clazz, "applyMenuTouch", "(Z)V");
     ui_esp_pipeline_idle();
+    ui_ensure_reader_thread();
 }
 
 extern "C" JNIEXPORT void JNICALL

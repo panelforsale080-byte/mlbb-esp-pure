@@ -14,6 +14,7 @@
 #include <mutex>
 
 static std::atomic<bool> g_resolved_flag{false};
+static std::atomic<bool> g_resolve_busy{false};
 
 static std::mutex g_mu;
 static pid_t g_pid = 0;
@@ -748,53 +749,68 @@ static void merge_il2cpp_into_report(EspResolveReport &rep, const RemoteIl2CppIn
 }
 
 EspStatus esp_resolve(EspResolveReport *reportOut) {
-    std::lock_guard<std::mutex> lock(g_mu);
-    EspResolveReport rep{};
-    if (g_pid <= 0) {
-        rep.status = EspStatus::NoProcess;
-        std::snprintf(rep.detail, sizeof(rep.detail), "no pid attached");
-        g_lastReport = rep;
-        if (reportOut) *reportOut = rep;
-        return rep.status;
+    struct ResolveBusy {
+        ResolveBusy() { g_resolve_busy.store(true, std::memory_order_release); }
+        ~ResolveBusy() { g_resolve_busy.store(false, std::memory_order_release); }
+    } busy;
+
+    pid_t pid = 0;
+    bool forceResolve = false;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        if (g_pid <= 0) {
+            EspResolveReport rep{};
+            rep.status = EspStatus::NoProcess;
+            std::snprintf(rep.detail, sizeof(rep.detail), "no pid attached");
+            g_lastReport = rep;
+            if (reportOut) *reportOut = rep;
+            return rep.status;
+        }
+        pid = g_pid;
+        forceResolve = g_forceResolve.exchange(false);
+        if (!forceResolve && g_resolved) {
+            if (reportOut) *reportOut = g_lastReport;
+            return g_lastReport.status;
+        }
     }
+
+    EspResolveReport rep{};
     std::vector<MapsReg> maps;
-    if (!mem_maps(g_pid, maps)) {
+    if (!mem_maps(pid, maps)) {
         rep.status = EspStatus::NoRead;
         rep.mapsCount = 0;
         rep.readProbe = false;
         std::snprintf(rep.detail, sizeof(rep.detail),
-                      "cannot read /proc/%d/maps (root? process dead?)", (int)g_pid);
+                      "cannot read /proc/%d/maps (root? process dead?)", (int)pid);
+        std::lock_guard<std::mutex> lock(g_mu);
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;
     }
-    const bool probe = proc_probe_read(g_pid);
-    if (!g_forceResolve.exchange(false) && g_resolved) {
-        if (reportOut) *reportOut = g_lastReport;
-        return g_lastReport.status;
-    }
-    RemoteIl2CppInfo il2{};
-    remote_detect_il2cpp(g_pid, il2);
-    remote_refresh_domain_ptr(g_pid, il2);
-    merge_il2cpp_into_report(rep, il2);
-    g_il2_for_resolve = &il2;
 
+    const bool probe = proc_probe_read(pid);
+    RemoteIl2CppInfo il2{};
+    remote_detect_il2cpp(pid, il2);
+    remote_refresh_domain_ptr(pid, il2);
+    merge_il2cpp_into_report(rep, il2);
+
+    g_il2_for_resolve = &il2;
     BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;
     uintptr_t sbcK = 0, gmK = 0, sbcStatics = 0, gmStatics = 0;
-    find_klass_statics(g_pid, maps, "ShowBattleCamera", sbcK, sbcStatics);
-    find_klass_statics(g_pid, maps, "GameMethod", gmK, gmStatics);
+    find_klass_statics(pid, maps, "ShowBattleCamera", sbcK, sbcStatics);
+    find_klass_statics(pid, maps, "GameMethod", gmK, gmStatics);
     if (sbcStatics || gmStatics) {
         esp_camera_set_static_bases(sbcStatics, gmStatics);
         ui_log("[w2s] mem-only sbc=0x%llx gm=0x%llx (no ptrace)",
                (unsigned long long)sbcStatics, (unsigned long long)gmStatics);
     }
-    bool memOk = find_bm(g_pid, maps, k, st, inst, &meta);
+    bool memOk = find_bm(pid, maps, k, st, inst, &meta);
 
     if (!inst) {
         uintptr_t heapBm = 0;
         int heapScore = 0;
-        if (heap_find_battle_manager(g_pid, maps, heapBm, heapScore)) {
+        if (heap_find_battle_manager(pid, maps, heapBm, heapScore)) {
             inst = heapBm;
             memOk = true;
             ui_log("[resolve] heap BM inst=0x%llx score=%d (GSpace/no klass)",
@@ -809,7 +825,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         ui_log("[resolve] %s — one-shot ptrace IL2CPP (ESP draw stays vm_read, no ptrace)",
                !haveBm ? "BM missing after mem/heap" : "camera statics missing");
         ConrentResolve cr{};
-        const bool crRan = conrent_resolve_battle_manager(g_pid, maps, il2, cr);
+        const bool crRan = conrent_resolve_battle_manager(pid, maps, il2, cr);
         if (cr.show_battle_camera_statics || cr.game_method_statics) {
             esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
             ui_log("[w2s] ptrace-resolve sbc=0x%llx gm=0x%llx (draw: memory W2S only)",
@@ -830,6 +846,15 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     }
 
     g_il2_for_resolve = nullptr;
+
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (g_pid != pid) {
+        rep.status = EspStatus::NoProcess;
+        std::snprintf(rep.detail, sizeof(rep.detail), "pid changed during resolve");
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        return rep.status;
+    }
 
     if (haveBm && inst) {
         g_bmKlass = k;
@@ -863,10 +888,10 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, k, st, inst);
     if (meta.nameStrings > 0) {
         std::vector<uintptr_t> dbg;
-        scan_strings(g_pid, maps, "BattleManager", dbg);
+        scan_strings(pid, maps, "BattleManager", dbg);
         for (size_t i = 0; i < dbg.size() && i < 5; ++i) {
             char txt[64] = {};
-            mem_read(g_pid, dbg[i], txt, sizeof(txt) - 1);
+            mem_read(pid, dbg[i], txt, sizeof(txt) - 1);
             ui_log("[resolve] BattleManager str@%llX = \"%s\"", (unsigned long long)dbg[i], txt);
         }
     }
@@ -881,8 +906,13 @@ const EspResolveReport &esp_last_resolve_report() {
 }
 
 EspStatus esp_tick(EspFrame &out) {
-    std::lock_guard<std::mutex> lock(g_mu);
     out = EspFrame{};
+    std::unique_lock<std::mutex> lock(g_mu, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        out.status = EspStatus::Resolving;
+        std::snprintf(out.hint, sizeof(out.hint), "Resolve in progress…");
+        return out.status;
+    }
     out.pid = g_pid;
     if (g_pid <= 0) {
         out.status = EspStatus::NoProcess;

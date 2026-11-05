@@ -38,7 +38,7 @@ static std::mutex g_frameMu;
 static EspFrame g_frame;
 static std::atomic<pid_t> g_wantPid{0};
 static std::atomic<bool> g_needResolve{true};
-static std::atomic<bool> g_requestFindPid{false};
+static std::atomic<pid_t> g_pendingAttachPid{0};
 static std::atomic<bool> g_requestScanMlbb{false};
 static std::atomic<pid_t> g_requestIl2ScanPid{0};
 static std::chrono::steady_clock::time_point g_lastResolveAttempt{};
@@ -147,12 +147,8 @@ static void reader_loop() {
     pid_t lastPid = 0;
 
     while (g_runReader.load()) {
-        if (g_requestFindPid.exchange(false)) {
-            ui_log("[find] searching UnityKillsMe…");
-            pid_t p = proc_find_unity_kills();
-            if (p <= 0 && g_fallbackPid) p = proc_find_mlbb_fallback();
-            attach_pid(p, "find");
-        }
+        const pid_t pendingAttach = g_pendingAttachPid.exchange(0);
+        if (pendingAttach > 0) attach_pid(pendingAttach, "find");
         if (g_requestScanMlbb.exchange(false)) scan_and_log_processes();
         const pid_t il2Pid = g_requestIl2ScanPid.exchange(0);
         if (il2Pid > 0) log_il2cpp_scan(il2Pid);
@@ -250,8 +246,17 @@ static void draw_ui() {
         }
         ImGui::SameLine();
         if (ImGui::Button("Find pid")) {
-            g_requestFindPid.store(true);
-            ui_log("[find] queued (background)…");
+            ui_ensure_reader_thread();
+            pid_t p = proc_find_unity_kills();
+            if (p <= 0 && g_fallbackPid) p = proc_find_mlbb_fallback();
+            if (p <= 0) {
+                ui_log("[find] no UnityKillsMe — open MLBB / GSpace first");
+            } else {
+                char cmd[280];
+                proc_format_cmdline(p, cmd, sizeof(cmd));
+                ui_log("[find] pid=%d  %s", (int)p, cmd);
+                g_pendingAttachPid.store(p);
+            }
         }
 
         ImGui::SeparatorText("Enemy");
@@ -393,6 +398,8 @@ static void reader_start_once() {
     g_runReader.store(true);
     g_reader = std::thread(reader_loop);
 }
+
+void ui_ensure_reader_thread() { reader_start_once(); }
 
 void ui_gl_surface_changed(int width, int height) {
     std::lock_guard<std::mutex> lock(g_glMu);
