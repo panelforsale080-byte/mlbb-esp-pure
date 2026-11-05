@@ -155,6 +155,22 @@ static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
     return false;
 }
 
+bool esp_read_entity_world(pid_t pid, uintptr_t entity, float &x, float &y, float &z) {
+    Vec3 p{};
+    if (!read_entity_pos(pid, entity, p)) return false;
+    x = p.x;
+    y = p.y;
+    z = p.z;
+    return true;
+}
+
+bool esp_read_self_world(pid_t pid, uintptr_t bmInstance, float &x, float &y, float &z) {
+    if (!bmInstance || pid <= 0) return false;
+    uintptr_t local = 0;
+    if (!mem_read(pid, bmInstance + Off::LocalPlayerShow, local) || !local) return false;
+    return esp_read_entity_world(pid, local, x, y, z);
+}
+
 static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
     if (!bm || !mem_ptr_ok(bm)) return false;
     uintptr_t pDict = 0, mDict = 0;
@@ -709,20 +725,25 @@ EspStatus esp_tick(EspFrame &out) {
     uintptr_t pDict = 0, mDict = 0;
     mem_read(g_pid, bm + Off::DicPlayerShow, pDict);
     mem_read(g_pid, bm + Off::DicMonsterShow, mDict);
-    std::vector<std::pair<int, uintptr_t>> players, monsters;
+    thread_local std::vector<std::pair<int, uintptr_t>> players;
+    thread_local std::vector<std::pair<int, uintptr_t>> monsters;
+    thread_local std::vector<uintptr_t> listP;
+    thread_local std::vector<uintptr_t> listM;
+    players.clear();
+    monsters.clear();
     dict_entries(g_pid, pDict, players);
     dict_entries(g_pid, mDict, monsters);
     if (players.empty()) {
         uintptr_t pList = 0;
         mem_read(g_pid, bm + Off::ListPlayerShow, pList);
-        std::vector<uintptr_t> listP;
+        listP.clear();
         if (list_entities(g_pid, pList, listP))
             for (size_t i = 0; i < listP.size(); ++i) players.emplace_back((int)i, listP[i]);
     }
     if (monsters.empty()) {
         uintptr_t mList = 0;
         mem_read(g_pid, bm + Off::ListMonsterShow, mList);
-        std::vector<uintptr_t> listM;
+        listM.clear();
         if (list_entities(g_pid, mList, listM))
             for (size_t i = 0; i < listM.size(); ++i) monsters.emplace_back((int)i, listM[i]);
     }
@@ -738,6 +759,8 @@ EspStatus esp_tick(EspFrame &out) {
         Vec3 pos{};
         if (!read_entity_pos(g_pid, v, pos)) return;
         EspTarget t{};
+        t.entityPtr = v;
+        t.entityId = id;
         t.worldX = pos.x;
         t.worldY = pos.y;
         t.worldZ = pos.z;
@@ -753,6 +776,7 @@ EspStatus esp_tick(EspFrame &out) {
             std::snprintf(t.label, sizeof(t.label), "%s", Off::monsterLabel(id));
         else
             std::snprintf(t.label, sizeof(t.label), "P%d", id);
+        if ((int)out.targets.size() >= kEspMaxTargets) return;
         out.targets.push_back(t);
     };
 

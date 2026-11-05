@@ -14,6 +14,8 @@ enum class EspStatus : int {
 };
 
 struct EspTarget {
+    uintptr_t entityPtr = 0;
+    int entityId = 0;
     float worldX = 0, worldY = 0, worldZ = 0;
     float relX = 0, relZ = 0;
     int meters = 0;
@@ -21,6 +23,12 @@ struct EspTarget {
     int kind = 0; /* 0 player 1 monster */
     char label[24] = {};
 };
+
+constexpr int kEspMaxTargets = 28;
+
+/** Live vm_read of ShowEntity position (LastPosition / CachePosition). */
+bool esp_read_entity_world(pid_t pid, uintptr_t entity, float &x, float &y, float &z);
+bool esp_read_self_world(pid_t pid, uintptr_t bmInstance, float &x, float &y, float &z);
 
 struct EspFrame {
     EspStatus status = EspStatus::Idle;
