@@ -1,5 +1,6 @@
 #include "esp_engine.hpp"
 #include "esp_camera.hpp"
+#include "esp_w2s_bridge.hpp"
 #include "conrent_esp.hpp"
 #include "offsets.hpp"
 #include "proc.hpp"
@@ -575,7 +576,13 @@ void esp_reset() {
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
     g_resolved = false;
+    esp_w2s_bridge_reset();
     esp_camera_reset();
+}
+
+pid_t esp_current_pid() {
+    std::lock_guard<std::mutex> lock(g_mu);
+    return g_pid;
 }
 
 EspStatus esp_attach(pid_t pid) {
@@ -666,6 +673,9 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
                               cr.camera_w2s_method);
+    if (cr.camera_get_main_native && cr.camera_w2s_native)
+        esp_w2s_bridge_publish_cfg(g_pid, cr.camera_get_main_native, cr.camera_w2s_native, 0.f,
+                                   0.f);
 
     if (crRan && (cr.battle_manager || cr.battle_manager_klass || cr.metadata_ready)) {
         g_bmKlass = cr.battle_manager_klass;
@@ -875,7 +885,7 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
         frame.selfZ = selfWorld.z;
     }
 
-    esp_camera_frame_begin(frame.pid, screenW, screenH, true);
+    esp_camera_frame_begin(frame.pid, screenW, screenH, false);
     float sx = 0.f, sy = 0.f;
     if (esp_camera_world_to_screen(selfWorld.x, selfWorld.y, selfWorld.z, sx, sy)) {
         frame.selfScreenX = sx;

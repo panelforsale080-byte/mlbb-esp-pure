@@ -1,5 +1,6 @@
 #include "ui_core.hpp"
 #include "esp_engine.hpp"
+#include "esp_w2s_bridge.hpp"
 #include "esp_draw.hpp"
 #include "proc.hpp"
 #include "ui_log.hpp"
@@ -232,7 +233,7 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("conRent resolve + IL2/matrix W2S + screen EMA (steady heroes).");
+        ImGui::TextDisabled("Fast conRent resolve; IL2 W2S via inject (#49); vm_read ESP draw.");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
@@ -447,7 +448,9 @@ bool ui_menu_interactive() { return g_showMenu; }
 
 void ui_esp_start() {
     g_espActive.store(true);
-    ui_log("[esp] START — conRent IL2 W2S on reader thread (GL draw only)");
+    const pid_t pid = esp_current_pid();
+    if (pid > 0) esp_w2s_bridge_ensure_injected(pid, nullptr);
+    ui_log("[esp] START — build #49 IL2 via inject; draw=vm_read (fast resolve kept)");
 }
 
 void ui_esp_stop() {

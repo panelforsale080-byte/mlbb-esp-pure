@@ -63,6 +63,7 @@ struct EspResolveReport {
 };
 
 void esp_reset();
+pid_t esp_current_pid();
 EspStatus esp_attach(pid_t pid);
 EspStatus esp_resolve(EspResolveReport *reportOut = nullptr);
 void esp_request_force_resolve();

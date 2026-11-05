@@ -1,4 +1,5 @@
 #include "esp_camera.hpp"
+#include "esp_w2s_bridge.hpp"
 #include "mem.hpp"
 #include "proc.hpp"
 #include "remote_call.hpp"
@@ -251,6 +252,7 @@ void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t ge
 }
 
 void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowIl2Ptrace) {
+    (void)allowIl2Ptrace;
     g_screenW = screenW;
     g_screenH = screenH;
     normalize_landscape(g_screenW, g_screenH);
@@ -261,18 +263,13 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     if (g_inFrame) remote_session_end(g_sess);
     g_inFrame = false;
 
-    g_w2sBudget = kMaxIl2W2sPerFrame;
-
-    if (allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
-        proc_alive(pid)) {
-        if (remote_session_begin_try(pid, g_sess)) {
-            g_inFrame = true;
-            g_useIl2 = true;
-        }
+    if (esp_w2s_bridge_active()) {
+        esp_w2s_bridge_set_screen(g_screenW, g_screenH);
+        return;
     }
 
-    /* Matrix fallback only when IL2 W2S unavailable; prefer ShowBattleCamera (dump static cam). */
-    if (!g_useIl2 && pid > 0 && proc_alive(pid)) {
+    /* No overlay ptrace on draw (crash). Matrix vm_read fallback if inject agent missing. */
+    if (pid > 0 && proc_alive(pid)) {
         if (load_vp_show_battle_camera(pid))
             g_matrixReady = true;
         else if (load_vp_game_method(pid))
@@ -288,10 +285,13 @@ void esp_camera_frame_end() {
     g_mainCam = 0;
 }
 
-bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
+bool esp_camera_ready() {
+    return esp_w2s_bridge_active() || g_matrixReady;
+}
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
-    /* Mixing IL2 + matrix on different targets skews boxes (see misaligned ESP). */
-    if (g_useIl2) return il2_invoke_w2s(wx, wy, wz, outX, outY);
+    if (g_il2Pid > 0 && esp_w2s_bridge_active() &&
+        esp_w2s_bridge_world_to_screen(g_il2Pid, wx, wy, wz, outX, outY))
+        return true;
     return matrix_w2s(wx, wy, wz, outX, outY);
 }
