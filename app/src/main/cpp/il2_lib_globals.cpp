@@ -1,6 +1,7 @@
 #include "il2_lib_globals.hpp"
 #include "il2_layout.hpp"
 #include "ui_log.hpp"
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -13,16 +14,43 @@ constexpr uintptr_t kLegacyBmTypeInfoRva = 0x635b290ULL;
 constexpr uintptr_t kLegacyMainCameraRva = 0x635b620ULL;
 constexpr uintptr_t kScanMinRva = 0x400000ULL;
 constexpr size_t kMaxScanBytesPerMod = 2 * 1024 * 1024;
-constexpr size_t kMaxCamChainProbes = 128;
+constexpr size_t kMaxCamChainProbes = 512;
+constexpr uintptr_t kLegacyCamWinLo = 0x6340000ULL;
+constexpr uintptr_t kLegacyCamWinHi = 0x6370000ULL;
 
-static bool path_is_game_lib(const std::string &path) {
-    return path.find("libcsharp.so") != std::string::npos ||
-           path.find("libil2cpp.so") != std::string::npos ||
-           path.find("liblogic.so") != std::string::npos;
+struct BattleCameraMatricesRaw {
+    float worldToCamera[16];
+    float projection[16];
+};
+
+static bool matrix4_sane(const float m[16]) {
+    if (!std::isfinite(m[0]) || !std::isfinite(m[15])) return false;
+    const float mag =
+        std::fabs(m[0]) + std::fabs(m[5]) + std::fabs(m[10]) + std::fabs(m[15]);
+    return mag > 1e-4f && mag < 1e8f;
 }
 
-static bool map_contains(uintptr_t addr, const MapsReg &m) {
-    return m.start <= addr && addr < m.end;
+static bool vp_sane_at_holder(pid_t pid, uintptr_t holder) {
+    if (!mem_ptr_ok(holder)) return false;
+    BattleCameraMatricesRaw cam{};
+    if (!mem_read(pid, holder + 0x5C, cam)) return false;
+    return matrix4_sane(cam.worldToCamera) && matrix4_sane(cam.projection);
+}
+
+static bool vp_from_cam3(pid_t pid, uintptr_t cam3) {
+    if (!mem_ptr_ok(cam3)) return false;
+    uintptr_t inner = 0;
+    mem_read(pid, cam3 + 0x10, inner);
+    if (mem_ptr_ok(inner) && vp_sane_at_holder(pid, inner)) return true;
+    return vp_sane_at_holder(pid, cam3);
+}
+
+static bool main_camera_live_matches(pid_t pid, uintptr_t cam3, uintptr_t expectedLive) {
+    if (!expectedLive) return true;
+    if (cam3 == expectedLive) return true;
+    uintptr_t inner = 0;
+    if (mem_read(pid, cam3 + 0x10, inner) && inner == expectedLive) return true;
+    return vp_sane_at_holder(pid, expectedLive);
 }
 
 static uintptr_t klass_static_fields_match(pid_t pid, uintptr_t klass, uintptr_t expectedStatics) {
@@ -44,12 +72,13 @@ static uintptr_t follow_main_camera_root(pid_t pid, uintptr_t root) {
 }
 
 static bool validate_main_camera_rva(pid_t pid, uintptr_t libBase, uintptr_t rva,
-                                     uintptr_t expectedSmooth) {
-    if (!libBase || !rva || !expectedSmooth) return false;
+                                     uintptr_t expectedLive) {
+    if (!libBase || !rva) return false;
     uintptr_t root = 0;
     if (!mem_read(pid, libBase + rva, root) || !mem_ptr_ok(root)) return false;
     const uintptr_t cam3 = follow_main_camera_root(pid, root);
-    return cam3 && cam3 == expectedSmooth;
+    if (!cam3 || !vp_from_cam3(pid, cam3)) return false;
+    return main_camera_live_matches(pid, cam3, expectedLive);
 }
 
 static bool validate_bm_typeinfo_rva(pid_t pid, uintptr_t libBase, uintptr_t rva, uintptr_t bmKlass,
@@ -62,7 +91,7 @@ static bool validate_bm_typeinfo_rva(pid_t pid, uintptr_t libBase, uintptr_t rva
 
 static void scan_window(pid_t pid, uintptr_t libBase, uintptr_t winStart, uintptr_t winEnd,
                         uintptr_t bmKlass, uintptr_t bmStatics, uintptr_t expectedSmoothFollow,
-                        uintptr_t &outBmRva, uintptr_t &outCamRva) {
+                        bool requireLiveForCam, uintptr_t &outBmRva, uintptr_t &outCamRva) {
     constexpr size_t kChunk = 64 * 1024;
     std::vector<uint8_t> buf(kChunk);
     size_t scanned = 0;
@@ -87,11 +116,15 @@ static void scan_window(pid_t pid, uintptr_t libBase, uintptr_t winStart, uintpt
                 klass_static_fields_match(pid, val, bmStatics))
                 outBmRva = rva;
 
-            if (!outCamRva && expectedSmoothFollow && camProbes < kMaxCamChainProbes &&
-                mem_ptr_ok(val) && val != bmKlass) {
-                ++camProbes;
+            if (!outCamRva && mem_ptr_ok(val) && val != bmKlass) {
                 const uintptr_t cam3 = follow_main_camera_root(pid, val);
-                if (cam3 && cam3 == expectedSmoothFollow) outCamRva = rva;
+                if (!cam3 || !vp_from_cam3(pid, cam3)) continue;
+                if (requireLiveForCam && !expectedSmoothFollow) continue;
+                if (expectedSmoothFollow &&
+                    !main_camera_live_matches(pid, cam3, expectedSmoothFollow))
+                    continue;
+                if (camProbes < kMaxCamChainProbes) ++camProbes;
+                outCamRva = rva;
             }
         }
     }
@@ -141,6 +174,9 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
         mem_read(pid, resolve.game_method_statics + resolve.runtime_fields.gm_mainCamera,
                  expectedSmooth);
 
+    ui_log("[resolve] GameMethod statics=0x%llx mainCamera live=0x%llx",
+           (unsigned long long)resolve.game_method_statics,
+           (unsigned long long)expectedSmooth);
     ui_log("[resolve] lib RVA scan (libcsharp/liblogic/libil2cpp)...");
 
     uintptr_t bestBmRva = 0;
@@ -150,6 +186,7 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
 
     const uintptr_t bases[] = {
         module_base_for_path(maps, "libcsharp.so"),
+        module_base_for_path(maps, "liblogic.so"),
         module_base_for_path(maps, "libil2cpp.so"),
         il2LibBase,
     };
@@ -169,7 +206,7 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
         uintptr_t bmRva = 0;
         uintptr_t camRva = 0;
         scan_window(pid, libBase, winStart, winEnd, resolve.battle_manager_klass,
-                    resolve.battle_manager_statics, expectedSmooth, bmRva, camRva);
+                    resolve.battle_manager_statics, expectedSmooth, true, bmRva, camRva);
         if (bmRva && !bestBmRva) {
             bestBmRva = bmRva;
             bestBmBase = libBase;
@@ -182,11 +219,24 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
 
     const uintptr_t legacyBases[] = {
         module_base_for_path(maps, "libcsharp.so"),
+        module_base_for_path(maps, "liblogic.so"),
         module_base_for_path(maps, "libil2cpp.so"),
         il2LibBase,
     };
     for (uintptr_t lb : legacyBases) {
         if (!lb) continue;
+        if (!bestCamRva) {
+            uintptr_t legBm = 0;
+            uintptr_t legCam = 0;
+            scan_window(pid, lb, lb + kLegacyCamWinLo, lb + kLegacyCamWinHi, 0, 0, expectedSmooth,
+                        false, legBm, legCam);
+            if (legCam) {
+                bestCamRva = legCam;
+                bestCamBase = lb;
+                ui_log("[resolve] MainCamera RVA in legacy window lib+0x%llx (base=0x%llx)",
+                       (unsigned long long)legCam, (unsigned long long)lb);
+            }
+        }
         if (!bestCamRva && validate_main_camera_rva(pid, lb, kLegacyMainCameraRva, expectedSmooth)) {
             bestCamRva = kLegacyMainCameraRva;
             bestCamBase = lb;

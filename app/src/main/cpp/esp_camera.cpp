@@ -26,6 +26,7 @@ static uintptr_t g_matrixLibBase = 0;
 static uintptr_t g_matrixMainCamRva = 0;
 static Matrix4x4 g_viewProj;
 static int g_matrixPathLog = 0;
+static int g_matrixFailLog = 0;
 static float g_screenW = 0.f;
 static float g_screenH = 0.f;
 
@@ -81,7 +82,10 @@ static bool load_vp_matrices_at_main_cam3(pid_t pid, uintptr_t mainCam3) {
     constexpr uintptr_t kViewMatrix = 0x5C;
     uintptr_t holder = 0;
     mem_read(pid, mainCam3 + kSmoothFollow, holder);
-    const uintptr_t holders[] = {holder, mainCam3};
+    uintptr_t unityCam = 0;
+    if (g_rt.sf_m_MainCamera)
+        mem_read(pid, mainCam3 + g_rt.sf_m_MainCamera, unityCam);
+    const uintptr_t holders[] = {holder, mainCam3, unityCam};
     for (uintptr_t h : holders) {
         if (!mem_ptr_ok(h)) continue;
         BattleCameraMatrices cam{};
@@ -295,6 +299,7 @@ void esp_camera_reset() {
     g_matrixLibBase = 0;
     g_matrixMainCamRva = 0;
     g_matrixPathLog = 0;
+    g_matrixFailLog = 0;
     g_il2Pid = 0;
     g_rtInvoke = 0;
     g_getMainMi = 0;
@@ -394,6 +399,16 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     if (!g_matrixReady && wantIl2) {
         if (!g_inFrame && remote_session_begin_try(pid, g_sess)) g_inFrame = true;
         if (g_inFrame) g_useIl2 = true;
+    }
+
+    if (!g_matrixReady && !g_useIl2 && pid > 0 && g_matrixFailLog == 0) {
+        g_matrixFailLog = 1;
+        uintptr_t live = 0;
+        if (g_gmStatics && g_rt.gm_mainCamera)
+            mem_read(pid, g_gmStatics + g_rt.gm_mainCamera, live);
+        ui_log("[esp] W2S matrix FAILED gmStatics=0x%llx mainCamera=0x%llx lib=0x%llx rva=0x%llx",
+               (unsigned long long)g_gmStatics, (unsigned long long)live,
+               (unsigned long long)g_matrixLibBase, (unsigned long long)g_matrixMainCamRva);
     }
 }
 

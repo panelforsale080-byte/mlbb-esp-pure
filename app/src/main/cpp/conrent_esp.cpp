@@ -276,6 +276,9 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
     }
 
     ui_log("[resolve] camera runtime (IL2CPP fields, no lib Offsets.h):");
+    ui_log("  GameMethod statics=0x%llx ShowBattleCamera statics=0x%llx",
+           (unsigned long long)out.game_method_statics,
+           (unsigned long long)out.show_battle_camera_statics);
     ui_log("  GameMethod.mainCamera static off=0x%llx",
            (unsigned long long)out.runtime_fields.gm_mainCamera);
     ui_log("  SmoothFollow.m_MainCamera off=0x%llx",
