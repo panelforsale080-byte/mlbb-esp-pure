@@ -3,6 +3,8 @@
 #include "proc.hpp"
 #include "remote_call.hpp"
 #include "ui_log.hpp"
+#include <atomic>
+#include <chrono>
 #include <cmath>
 
 namespace {
@@ -40,7 +42,36 @@ static bool g_inFrame = false;
 static uintptr_t g_mainCam = 0;
 static bool g_useIl2 = false;
 static int g_w2sBudget = 0;
-constexpr int kMaxIl2W2sPerFrame = 48;
+constexpr int kMaxIl2W2sPerFrame = 16;
+
+static std::atomic<int> g_il2FailStreak{0};
+static std::atomic<int64_t> g_il2CooldownUntilMs{0};
+static std::atomic<int64_t> g_lastIl2AttachMs{0};
+
+static int64_t mono_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+static void il2_note_failure() {
+    if (g_il2FailStreak.fetch_add(1) + 1 >= 8) {
+        g_il2CooldownUntilMs.store(mono_ms() + 45000);
+        g_il2FailStreak.store(0);
+        ui_log("[camera] IL2 W2S paused 45s (avoid Unity crash — using matrix)");
+    }
+}
+
+static void il2_note_success() { g_il2FailStreak.store(0); }
+
+static bool il2_attach_allowed(bool allowIl2Ptrace, pid_t pid) {
+    if (!allowIl2Ptrace || !g_il2Ready || pid != g_il2Pid || !g_rtInvoke || pid <= 0) return false;
+    if (!proc_alive(pid)) return false;
+    const int64_t now = mono_ms();
+    if (now < g_il2CooldownUntilMs.load(std::memory_order_relaxed)) return false;
+    if (now - g_lastIl2AttachMs.load(std::memory_order_relaxed) < 350) return false;
+    return true;
+}
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
@@ -164,6 +195,7 @@ static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &out
         uintptr_t cam = 0;
         if (!remote_session_call(g_sess, g_rtInvoke, {g_getMainMi, 0, 0, 0}, cam)) {
             g_useIl2 = false;
+            il2_note_failure();
             return false;
         }
         g_mainCam = cam;
@@ -184,8 +216,10 @@ static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &out
     uintptr_t ret = 0;
     if (!remote_session_call(g_sess, g_rtInvoke, {g_w2sMi, g_mainCam, paramSlot, excSlot}, ret)) {
         g_useIl2 = false;
+        il2_note_failure();
         return false;
     }
+    il2_note_success();
 
     float sx = 0.f, sy = 0.f, sz = 0.f;
     if (!read_vec3_from_object(g_il2Pid, ret, sx, sy, sz)) {
@@ -263,20 +297,20 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
 
     g_w2sBudget = kMaxIl2W2sPerFrame;
 
-    /* Build #49: IL2 Camera.WorldToScreenPoint first (accurate), matrix if attach fails. */
-    if (allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
-        proc_alive(pid)) {
-        if (remote_session_begin_try(pid, g_sess)) {
-            g_inFrame = true;
-            g_useIl2 = true;
-        }
-    }
-
-    if (!g_useIl2 && pid > 0 && proc_alive(pid)) {
+    /* vm_read matrix every frame (safe). IL2 ptrace only if matrix missing — ptrace every frame crashes Unity. */
+    if (pid > 0 && proc_alive(pid)) {
         if (load_vp_show_battle_camera(pid))
             g_matrixReady = true;
         else if (load_vp_game_method(pid))
             g_matrixReady = true;
+    }
+
+    if (!g_matrixReady && il2_attach_allowed(allowIl2Ptrace, pid)) {
+        if (remote_session_begin_try(pid, g_sess)) {
+            g_lastIl2AttachMs.store(mono_ms(), std::memory_order_relaxed);
+            g_inFrame = true;
+            g_useIl2 = true;
+        }
     }
 }
 
@@ -291,6 +325,7 @@ void esp_camera_frame_end() {
 bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
+    if (matrix_w2s(wx, wy, wz, outX, outY)) return true;
     if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
-    return matrix_w2s(wx, wy, wz, outX, outY);
+    return false;
 }

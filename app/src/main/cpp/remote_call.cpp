@@ -115,6 +115,14 @@ bool remote_session_call(RemoteSession &s, uintptr_t func, const std::vector<uin
     ptrace(PTRACE_CONT, s.tid, nullptr, nullptr);
     int st = 0;
     waitpid(s.tid, &st, 0);
+    if (WIFSIGNALED(st)) {
+        std::snprintf(s.err, sizeof(s.err), "tracee signal %d", WTERMSIG(st));
+        return false;
+    }
+    if (!WIFSTOPPED(st)) {
+        std::snprintf(s.err, sizeof(s.err), "tracee not stopped (st=0x%x)", st);
+        return false;
+    }
     if (!get_regs(s.tid, work)) {
         std::snprintf(s.err, sizeof(s.err), "GETREGSET after call");
         return false;
