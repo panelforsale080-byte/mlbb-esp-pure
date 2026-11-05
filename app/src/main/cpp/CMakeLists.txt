@@ -15,7 +15,6 @@ add_library(MlbbEsp SHARED
     remote_call.cpp
     ui_log.cpp
     remote_il2cpp.cpp
-    esp_sdcard_log.cpp
     esp_runtime_off.cpp
     remote_elf.cpp
     clip_android.cpp
