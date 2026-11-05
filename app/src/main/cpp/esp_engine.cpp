@@ -646,8 +646,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     g_il2_for_resolve = nullptr;
     esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
-                              cr.camera_w2s_method, cr.camera_get_main_native,
-                              cr.camera_w2s_native);
+                              cr.camera_w2s_method);
 
     if (crRan && (cr.battle_manager || cr.battle_manager_klass || cr.metadata_ready)) {
         g_bmKlass = cr.battle_manager_klass;

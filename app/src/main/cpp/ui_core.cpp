@@ -168,11 +168,15 @@ static void reader_loop() {
             g_needResolve.store(true);
             lastPid = 0;
         } else if (pid > 0) {
-            if (g_needResolve.exchange(false)) {
-                ui_log("[resolve] start pid=%d", (int)pid);
-                EspResolveReport rep{};
-                esp_resolve(&rep);
-                log_resolve_result(rep);
+            if (g_needResolve.load()) {
+                if (g_espActive.load()) {
+                    /* Avoid ptrace deadlock: Resolve uses attach; ESP draw must not overlap. */
+                } else if (g_needResolve.exchange(false)) {
+                    ui_log("[resolve] start pid=%d", (int)pid);
+                    EspResolveReport rep{};
+                    esp_resolve(&rep);
+                    log_resolve_result(rep);
+                }
             }
             EspFrame f;
             esp_tick(f);
@@ -430,11 +434,13 @@ bool ui_menu_interactive() { return g_showMenu; }
 
 void ui_esp_start() {
     g_espActive.store(true);
-    ui_log("[esp] START — drawing on world (vm_read/IL2 W2S)");
+    ui_log("[esp] START — Build #107 draw (vm_read matrix W2S, no draw-ptrace)");
 }
 
 void ui_esp_stop() {
     g_espActive.store(false);
+    if (g_needResolve.load())
+        ui_log("[esp] STOP — pending Resolve will run on reader thread");
     ui_log("[esp] STOP — no ESP on world");
 }
 
