@@ -157,14 +157,20 @@ static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
     return false;
 }
 
-/* Local hero: CachePosition tracks the rendered model; LastPosition lags vs follow-cam. */
+/* Positions tied to Unity render / follow-cam (ShowEntity cache fields). */
+static bool read_entity_pos_visual(pid_t pid, uintptr_t ent, Vec3 &pos) {
+    if (!ent) return false;
+    if (mem_read(pid, ent + Off::UnityCachePosition, pos) && pos_ok(pos)) return true;
+    if (mem_read(pid, ent + Off::CachePosition, pos) && pos_ok(pos)) return true;
+    if (mem_read(pid, ent + Off::LastPosition, pos) && pos_ok(pos)) return true;
+    pos = {};
+    return false;
+}
+
 static bool read_local_pos(pid_t pid, uintptr_t bm, Vec3 &pos) {
     uintptr_t local = 0;
     if (!bm || !mem_read(pid, bm + Off::LocalPlayerShow, local) || !local) return false;
-    if (mem_read(pid, local + Off::CachePosition, pos) && pos_ok(pos)) return true;
-    if (mem_read(pid, local + Off::LastPosition, pos) && pos_ok(pos)) return true;
-    pos = {};
-    return false;
+    return read_entity_pos_visual(pid, local, pos);
 }
 
 static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
@@ -882,7 +888,7 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
     for (EspTarget &t : frame.targets) {
         if (!t.ent) continue;
         Vec3 pos{};
-        if (read_entity_pos(frame.pid, t.ent, pos)) {
+        if (read_entity_pos_visual(frame.pid, t.ent, pos)) {
             t.worldX = pos.x;
             t.worldY = pos.y;
             t.worldZ = pos.z;

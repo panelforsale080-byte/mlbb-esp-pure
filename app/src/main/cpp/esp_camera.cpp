@@ -40,7 +40,7 @@ static bool g_inFrame = false;
 static uintptr_t g_mainCam = 0;
 static bool g_useIl2 = false;
 static int g_w2sBudget = 0;
-constexpr int kMaxIl2W2sPerFrame = 128;
+constexpr int kMaxIl2W2sPerFrame = 256;
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
@@ -290,6 +290,7 @@ void esp_camera_frame_end() {
 bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
-    if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
+    /* Mixing IL2 + matrix on different targets skews boxes (see misaligned ESP). */
+    if (g_useIl2) return il2_invoke_w2s(wx, wy, wz, outX, outY);
     return matrix_w2s(wx, wy, wz, outX, outY);
 }

@@ -10,6 +10,7 @@ constexpr uintptr_t InstanceStatic  = 0x0;
 
 constexpr uintptr_t LastPosition  = 0x3F4;
 constexpr uintptr_t CachePosition = 0x28C;
+constexpr uintptr_t UnityCachePosition = 0x298;
 constexpr uintptr_t ListPlayerShow  = 0x70;
 constexpr uintptr_t ListMonsterShow = 0x78;
 constexpr uintptr_t ListItems = 0x10;
