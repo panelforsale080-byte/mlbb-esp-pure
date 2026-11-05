@@ -374,9 +374,8 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
             g_matrixFromVmRead = true;
             if (g_matrixPathLog == 0) {
                 g_matrixPathLog = 1;
-                ui_log("[esp] W2S matrix: slot_va=0x%llx rva=0x%llx + ViewMatrix (discovered)",
-                       (unsigned long long)g_mainCameraSlotVa,
-                       (unsigned long long)g_matrixMainCamRva);
+                ui_log("[esp] W2S matrix: slot_va=0x%llx + ViewMatrix (auto-discovered)",
+                       (unsigned long long)g_mainCameraSlotVa);
             }
         } else if (load_vp_from_game_method_smooth(pid)) {
             g_matrixReady = true;

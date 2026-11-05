@@ -8,12 +8,6 @@
 
 namespace {
 
-/** Bootstrap hints only — ESP uses computed slot_va + rva after discover. */
-constexpr uintptr_t kHintBmTypeInfoRva = 0x635b290ULL;
-constexpr uintptr_t kHintMainCameraRootRva = 0x635b620ULL;
-constexpr uintptr_t kNarrowSweepLo = 0x6358000ULL;
-constexpr uintptr_t kNarrowSweepHi = 0x635c000ULL;
-constexpr uintptr_t kNarrowSweepStep = 8ULL;
 constexpr size_t kMaxRwProbeSteps = 8192;
 constexpr size_t kMaxRwSpanBytes = 512 * 1024;
 constexpr size_t kGmStaticsWalkBytes = 0x800;
@@ -21,6 +15,13 @@ constexpr size_t kGmStaticsWalkBytes = 0x800;
 struct MemSpan {
     uintptr_t start = 0;
     uintptr_t end = 0;
+};
+
+struct DiscoverPick {
+    uintptr_t slotVa = 0;
+    uintptr_t libBase = 0;
+    uintptr_t computedRva = 0;
+    const char *via = "";
 };
 
 static void collect_module_rw_spans(const std::vector<MapsReg> &maps, const char *needle,
@@ -41,6 +42,20 @@ static uintptr_t scan_step_for_span(uintptr_t spanLen) {
     return step < 8 ? 8 : step;
 }
 
+static void clamp_scan_window(const MemSpan &sp, uintptr_t anchor, uintptr_t &cur,
+                              uintptr_t &end) {
+    cur = sp.start;
+    end = sp.end;
+    if (static_cast<size_t>(end - cur) <= kMaxRwSpanBytes) return;
+    if (!anchor || anchor < sp.start || anchor >= sp.end) anchor = sp.start + kMaxRwSpanBytes / 2;
+    cur = anchor;
+    if (cur < kMaxRwSpanBytes / 2) cur = sp.start;
+    else cur -= kMaxRwSpanBytes / 2;
+    if (cur < sp.start) cur = sp.start;
+    end = cur + kMaxRwSpanBytes;
+    if (end > sp.end) end = sp.end;
+}
+
 static uintptr_t klass_static_fields_match(pid_t pid, uintptr_t klass, uintptr_t expectedStatics) {
     if (!mem_ptr_ok(klass) || !expectedStatics) return 0;
     for (uintptr_t off : Il2::StaticFieldOffs) {
@@ -58,31 +73,6 @@ static uintptr_t module_base_for_path(const std::vector<MapsReg> &maps, const ch
         if (!base || m.start < base) base = m.start;
     }
     return base;
-}
-
-static const char *module_label(uintptr_t base, uintptr_t csharp, uintptr_t logic, uintptr_t il2cpp,
-                                uintptr_t il2Detected) {
-    if (base == csharp) return "libcsharp.so";
-    if (base == logic) return "liblogic.so";
-    if (base == il2cpp) return "libil2cpp.so";
-    if (base == il2Detected) return "il2-detect-base";
-    return "unknown-so";
-}
-
-static void collect_unique_bases(uintptr_t csharp, uintptr_t logic, uintptr_t il2cpp,
-                                 uintptr_t il2Detected, std::vector<uintptr_t> &out) {
-    const uintptr_t cand[] = {csharp, logic, il2cpp, il2Detected};
-    for (uintptr_t b : cand) {
-        if (!b) continue;
-        bool dup = false;
-        for (uintptr_t x : out) {
-            if (x == b) {
-                dup = true;
-                break;
-            }
-        }
-        if (!dup) out.push_back(b);
-    }
 }
 
 static bool try_bm_slot(pid_t pid, uintptr_t slotVa, uintptr_t bmKlass, uintptr_t bmStatics,
@@ -112,13 +102,6 @@ static void append_unique_slot(std::vector<uintptr_t> &slots, uintptr_t va) {
     slots.push_back(va);
 }
 
-struct DiscoverPick {
-    uintptr_t slotVa = 0;
-    uintptr_t libBase = 0;
-    uintptr_t computedRva = 0;
-    const char *via = "";
-};
-
 static void append_gm_statics_cam_candidates(uintptr_t gmStatics, std::vector<uintptr_t> &slots) {
     if (!gmStatics) return;
     static const int kRel[] = {-0x138, -0x140, -0x130, -0x148, -0x128, -0x150, -0x120, -0x160};
@@ -128,35 +111,48 @@ static void append_gm_statics_cam_candidates(uintptr_t gmStatics, std::vector<ui
     for (uintptr_t slot = lo; slot < hi; slot += 8) append_unique_slot(slots, slot);
 }
 
-static bool discover_bm_rw_auto(pid_t pid, const std::vector<MapsReg> &maps,
-                                uintptr_t libBase, uintptr_t bmKlass, uintptr_t bmStatics,
-                                DiscoverPick &pick) {
+static bool discover_cam_from_gm_statics(pid_t pid, uintptr_t gmStatics, uintptr_t libBase,
+                                         uintptr_t expectedLive, DiscoverPick &pick) {
+    if (!gmStatics || !libBase) return false;
+    std::vector<uintptr_t> slots;
+    append_gm_statics_cam_candidates(gmStatics, slots);
+    for (uintptr_t slot : slots) {
+        LibMainCamChain chain{};
+        if (!try_main_cam_slot(pid, slot, chain)) continue;
+        const bool liveOk = camera_main_camera_live_matches(pid, chain.cam3, expectedLive);
+        ui_log("  [gm-statics] Cam slot_va=0x%llx off=+0x%llx chain=%s live=%s",
+               (unsigned long long)slot,
+               (unsigned long long)(slot - gmStatics), chain.variant, liveOk ? "OK" : "no");
+        pick.slotVa = slot;
+        pick.libBase = libBase;
+        pick.computedRva = slot - libBase;
+        pick.via = "GameMethod-statics";
+        if (liveOk) return true;
+    }
+    return pick.slotVa != 0;
+}
+
+static bool discover_bm_rw_auto(pid_t pid, const std::vector<MapsReg> &maps, uintptr_t libBase,
+                                  uintptr_t bmKlass, uintptr_t bmStatics, uintptr_t bmStaticsBlock,
+                                  DiscoverPick &pick) {
     if (!libBase || !bmKlass) return false;
     std::vector<MemSpan> spans;
     collect_module_rw_spans(maps, "libcsharp.so", spans);
     size_t probes = 0;
     for (const MemSpan &sp : spans) {
-        uintptr_t cur = sp.start;
-        uintptr_t end = sp.end;
-        const uintptr_t len = end - cur;
-        if (len > kMaxRwSpanBytes) {
-            cur = libBase + kHintBmTypeInfoRva;
-            if (cur < kMaxRwSpanBytes / 2) cur = sp.start;
-            else cur -= kMaxRwSpanBytes / 2;
-            if (cur < sp.start) cur = sp.start;
-            end = cur + kMaxRwSpanBytes;
-            if (end > sp.end) end = sp.end;
-        }
+        uintptr_t cur = 0;
+        uintptr_t end = 0;
+        clamp_scan_window(sp, bmStaticsBlock, cur, end);
         const uintptr_t step = scan_step_for_span(end - cur);
         for (; cur + sizeof(uintptr_t) <= end; cur += step) {
-            if (probes++ >= kMaxRwProbeSteps) return false;
+            if (probes++ >= kMaxRwProbeSteps) return pick.slotVa != 0;
             uintptr_t klass = 0;
             if (!try_bm_slot(pid, cur, bmKlass, bmStatics, klass)) continue;
             pick.slotVa = cur;
             pick.libBase = libBase;
             pick.computedRva = cur - libBase;
             pick.via = "rw-auto";
-            ui_log("  [rw-auto] BM slot_va=0x%llx rva=0x%llx", (unsigned long long)cur,
+            ui_log("  [rw-auto] BM slot_va=0x%llx lib+0x%llx", (unsigned long long)cur,
                    (unsigned long long)pick.computedRva);
             return true;
         }
@@ -165,8 +161,8 @@ static bool discover_bm_rw_auto(pid_t pid, const std::vector<MapsReg> &maps,
 }
 
 static bool discover_main_cam_rw_auto(pid_t pid, const std::vector<MapsReg> &maps,
-                                      uintptr_t gmStatics, uintptr_t expectedLive,
-                                      DiscoverPick &pick, bool wantLive) {
+                                        uintptr_t gmStatics, uintptr_t expectedLive,
+                                        DiscoverPick &pick, bool wantLive) {
     const char *needles[] = {"libcsharp.so", "liblogic.so"};
     size_t probes = 0;
     for (const char *needle : needles) {
@@ -175,20 +171,9 @@ static bool discover_main_cam_rw_auto(pid_t pid, const std::vector<MapsReg> &map
         std::vector<MemSpan> spans;
         collect_module_rw_spans(maps, needle, spans);
         for (const MemSpan &sp : spans) {
-            uintptr_t cur = sp.start;
-            uintptr_t end = sp.end;
-            const uintptr_t len = end - cur;
-            if (len > kMaxRwSpanBytes) {
-                uintptr_t anchor = gmStatics;
-                if (!anchor || anchor < sp.start || anchor >= sp.end)
-                    anchor = modBase + kHintMainCameraRootRva;
-                cur = anchor;
-                if (cur < kMaxRwSpanBytes / 2) cur = sp.start;
-                else cur -= kMaxRwSpanBytes / 2;
-                if (cur < sp.start) cur = sp.start;
-                end = cur + kMaxRwSpanBytes;
-                if (end > sp.end) end = sp.end;
-            }
+            uintptr_t cur = 0;
+            uintptr_t end = 0;
+            clamp_scan_window(sp, gmStatics, cur, end);
             const uintptr_t step = scan_step_for_span(end - cur);
             for (; cur + sizeof(uintptr_t) <= end; cur += step) {
                 if (probes++ >= kMaxRwProbeSteps) return pick.slotVa != 0;
@@ -201,7 +186,7 @@ static bool discover_main_cam_rw_auto(pid_t pid, const std::vector<MapsReg> &map
                 pick.libBase = modBase;
                 pick.computedRva = cur - modBase;
                 pick.via = "rw-auto";
-                ui_log("  [rw-auto] Cam slot_va=0x%llx rva=0x%llx chain=%s live=%s",
+                ui_log("  [rw-auto] Cam slot_va=0x%llx lib+0x%llx chain=%s live=%s",
                        (unsigned long long)cur, (unsigned long long)pick.computedRva, chain.variant,
                        liveOk ? "OK" : "no");
                 if (liveOk || !wantLive) return true;
@@ -211,10 +196,17 @@ static bool discover_main_cam_rw_auto(pid_t pid, const std::vector<MapsReg> &map
     return pick.slotVa != 0;
 }
 
-static void append_narrow_cam_slots(uintptr_t libBase, std::vector<uintptr_t> &slots) {
-    if (!libBase) return;
-    for (uintptr_t rva = kNarrowSweepLo; rva <= kNarrowSweepHi; rva += kNarrowSweepStep)
-        append_unique_slot(slots, libBase + rva);
+static uintptr_t module_base_for_slot_va(const std::vector<MapsReg> &maps, uintptr_t slotVa,
+                                         uintptr_t fallback) {
+    for (const MapsReg &m : maps) {
+        if (m.start <= slotVa && slotVa < m.end) {
+            if (m.path.find("libcsharp.so") != std::string::npos)
+                return module_base_for_path(maps, "libcsharp.so");
+            if (m.path.find("liblogic.so") != std::string::npos)
+                return module_base_for_path(maps, "liblogic.so");
+        }
+    }
+    return fallback;
 }
 
 } // namespace
@@ -242,94 +234,22 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
     }
 
     const uintptr_t baseCsharp = module_base_for_path(maps, "libcsharp.so");
-    const uintptr_t baseLogic = module_base_for_path(maps, "liblogic.so");
-    const uintptr_t baseIl2cpp = module_base_for_path(maps, "libil2cpp.so");
 
     ui_log("[resolve] GameMethod mainCamera live=0x%llx", (unsigned long long)expectedLive);
-    ui_log("[resolve] discover lib globals (auto RVA update: hint -> statics -> narrow -> rw-auto):");
-
-    std::vector<uintptr_t> bases;
-    collect_unique_bases(baseCsharp, baseLogic, baseIl2cpp, il2LibBase, bases);
+    ui_log("[resolve] discover lib globals (no hardcoded lib RVA — statics + rw-auto):");
 
     DiscoverPick bmPick{};
     DiscoverPick camPick{};
 
-    for (uintptr_t libBase : bases) {
-        const char *label =
-            module_label(libBase, baseCsharp, baseLogic, baseIl2cpp, il2LibBase);
-
-        std::vector<uintptr_t> bmSlots;
-        append_unique_slot(bmSlots, libBase + kHintBmTypeInfoRva);
-        if (libBase == baseCsharp) {
-            for (uintptr_t rva = kNarrowSweepLo; rva <= kNarrowSweepHi; rva += kNarrowSweepStep)
-                append_unique_slot(bmSlots, libBase + rva);
-        }
-
-        if (!bmPick.slotVa) {
-            for (uintptr_t slot : bmSlots) {
-                uintptr_t klass = 0;
-                if (!try_bm_slot(pid, slot, resolve.battle_manager_klass,
-                                 resolve.battle_manager_statics, klass))
-                    continue;
-                bmPick.slotVa = slot;
-                bmPick.libBase = libBase;
-                bmPick.computedRva = slot - libBase;
-                bmPick.via = (slot == libBase + kHintBmTypeInfoRva) ? "hint" : "narrow";
-                ui_log("  [%s] BM slot_va=0x%llx rva=0x%llx klass=0x%llx via=%s", label,
-                       (unsigned long long)slot, (unsigned long long)bmPick.computedRva,
-                       (unsigned long long)klass, bmPick.via);
-                break;
-            }
-        }
-
-        if (camPick.slotVa) continue;
-
-        std::vector<uintptr_t> camSlots;
-        append_unique_slot(camSlots, libBase + kHintMainCameraRootRva);
-        append_gm_statics_cam_candidates(resolve.game_method_statics, camSlots);
-        if (libBase == baseCsharp) append_narrow_cam_slots(libBase, camSlots);
-
-        bool camLocked = false;
-        for (uintptr_t slot : camSlots) {
-            LibMainCamChain chain{};
-            if (!try_main_cam_slot(pid, slot, chain)) continue;
-            const bool liveOk = camera_main_camera_live_matches(pid, chain.cam3, expectedLive);
-            ui_log("  [%s] Cam slot_va=0x%llx rva=0x%llx chain=%s vp=OK live=%s", label,
-                   (unsigned long long)slot, (unsigned long long)(slot - libBase),
-                   chain.variant, liveOk ? "OK" : "no");
-
-            auto setPick = [&]() {
-                camPick.slotVa = slot;
-                camPick.libBase = libBase;
-                camPick.computedRva = slot - libBase;
-                if (slot == libBase + kHintMainCameraRootRva)
-                    camPick.via = "hint";
-                else if (resolve.game_method_statics &&
-                         slot >= resolve.game_method_statics - 0x200 &&
-                         slot <= resolve.game_method_statics + 0x40)
-                    camPick.via = "GameMethod-statics-rel";
-                else
-                    camPick.via = "narrow";
-            };
-
-            if (liveOk) {
-                setPick();
-                camLocked = true;
-                break;
-            }
-            if (!camPick.slotVa) setPick();
-        }
-        if (camLocked) break;
+    if (resolve.game_method_statics && baseCsharp) {
+        const uintptr_t gmBase =
+            module_base_for_slot_va(maps, resolve.game_method_statics, baseCsharp);
+        discover_cam_from_gm_statics(pid, resolve.game_method_statics, gmBase, expectedLive,
+                                     camPick);
     }
 
-    if (!bmPick.slotVa && baseCsharp) {
-        ui_log("[resolve] auto-update: RW scan BattleManager TypeInfo (libcsharp)...");
-        discover_bm_rw_auto(pid, maps, baseCsharp, resolve.battle_manager_klass,
-                            resolve.battle_manager_statics, bmPick);
-    }
-
-    if (!camPick.slotVa && baseCsharp) {
-        ui_log("[resolve] auto-update: RW scan MainCamera global (libcsharp/liblogic)...");
+    if (!camPick.slotVa) {
+        ui_log("[resolve] rw-auto MainCamera global...");
         discover_main_cam_rw_auto(pid, maps, resolve.game_method_statics, expectedLive, camPick,
                                   true);
         if (!camPick.slotVa)
@@ -337,28 +257,34 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
                                       camPick, false);
     }
 
+    if (baseCsharp) {
+        ui_log("[resolve] rw-auto BattleManager TypeInfo...");
+        discover_bm_rw_auto(pid, maps, baseCsharp, resolve.battle_manager_klass,
+                            resolve.battle_manager_statics, resolve.battle_manager_statics,
+                            bmPick);
+    }
+
     if (bmPick.slotVa) {
         resolve.bm_global_slot_va = bmPick.slotVa;
         resolve.auto_rva_battle_manager_typeinfo = bmPick.computedRva;
-        ui_log("[resolve] BM STORED slot_va=0x%llx base=0x%llx rva=0x%llx (%s)",
-               (unsigned long long)bmPick.slotVa, (unsigned long long)bmPick.libBase,
-               (unsigned long long)bmPick.computedRva, bmPick.via);
+        ui_log("[resolve] BM STORED slot_va=0x%llx lib+0x%llx (%s)",
+               (unsigned long long)bmPick.slotVa, (unsigned long long)bmPick.computedRva,
+               bmPick.via);
     }
 
     if (camPick.slotVa) {
         resolve.main_camera_global_slot_va = camPick.slotVa;
         resolve.main_camera_matrix_lib_base = camPick.libBase;
         resolve.auto_rva_main_camera_root = camPick.computedRva;
-        ui_log("[resolve] MainCamera STORED slot_va=0x%llx base=0x%llx rva=0x%llx (%s) ESP",
-               (unsigned long long)camPick.slotVa, (unsigned long long)camPick.libBase,
-               (unsigned long long)camPick.computedRva, camPick.via);
+        ui_log("[resolve] MainCamera STORED slot_va=0x%llx lib+0x%llx (%s) ESP",
+               (unsigned long long)camPick.slotVa, (unsigned long long)camPick.computedRva,
+               camPick.via);
     } else {
         ui_log("[resolve] MainCamera global not found — GameMethod matrix fallback");
     }
 
-    ui_log("[resolve] ESP matrix source (no hardcoded Offsets.h at draw):");
     if (resolve.main_camera_global_slot_va)
-        ui_log("  MainCamera *slot @ 0x%llx (lib+0x%llx)", 
+        ui_log("[resolve] ESP reads *slot @ 0x%llx (computed lib+0x%llx)",
                (unsigned long long)resolve.main_camera_global_slot_va,
                (unsigned long long)resolve.auto_rva_main_camera_root);
 }
