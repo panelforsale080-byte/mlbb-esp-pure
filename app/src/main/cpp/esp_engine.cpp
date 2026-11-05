@@ -149,8 +149,8 @@ static bool pos_ok(const Vec3 &p) {
 }
 
 static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
-    if (mem_read(pid, ent + Off::LastPosition, pos) && pos_ok(pos)) return true;
     if (mem_read(pid, ent + Off::CachePosition, pos) && pos_ok(pos)) return true;
+    if (mem_read(pid, ent + Off::LastPosition, pos) && pos_ok(pos)) return true;
     pos = {};
     return false;
 }
@@ -551,6 +551,8 @@ static void refresh_instance(pid_t pid) {
 
 void esp_reset() {
     std::lock_guard<std::mutex> lock(g_mu);
+    if (g_pid > 0)
+        remote_il2cpp_invalidate_cache(g_pid);
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
     g_resolved = false;
@@ -560,6 +562,8 @@ void esp_reset() {
 EspStatus esp_attach(pid_t pid) {
     std::lock_guard<std::mutex> lock(g_mu);
     if (pid != g_pid) {
+        if (g_pid > 0)
+            remote_il2cpp_invalidate_cache(g_pid);
         g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
         g_resolved = false;
     }
@@ -631,7 +635,6 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     }
     RemoteIl2CppInfo il2{};
     remote_detect_il2cpp(g_pid, il2);
-    remote_refresh_domain_ptr(g_pid, il2);
     merge_il2cpp_into_report(rep, il2);
     g_il2_for_resolve = &il2;
 

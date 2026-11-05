@@ -30,3 +30,4 @@ struct RemoteIl2CppInfo {
 
 bool remote_detect_il2cpp(pid_t pid, RemoteIl2CppInfo &out);
 bool remote_refresh_domain_ptr(pid_t pid, RemoteIl2CppInfo &io);
+void remote_il2cpp_invalidate_cache(pid_t pid);

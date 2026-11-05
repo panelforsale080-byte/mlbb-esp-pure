@@ -3,6 +3,7 @@
 #include "proc.hpp"
 #include "remote_call.hpp"
 #include <cmath>
+#include <cstdint>
 
 namespace {
 
@@ -50,6 +51,8 @@ static RemoteSession g_sess{};
 static bool g_inFrame = false;
 static uintptr_t g_mainCam = 0;
 static bool g_useIl2 = false;
+static int g_w2sBudget = 0;
+constexpr int kMaxIl2W2sPerFrame = 40;
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
@@ -170,7 +173,8 @@ static bool load_vp_show_battle_camera(pid_t pid) {
 
 static bool external_style_w2s(float wx, float wy, float wz, float &outX, float &outY) {
     const RowMat4 &vp = g_viewProjExt;
-    const float w = vp.m[12] * wx + vp.m[13] * wy + vp.m[14] * wz + vp.m[15];
+    /* Row 3 = m30..m33 at m[3],m[7],m[11],m[15] (EXTERNAL-MLBB layout). */
+    const float w = vp.m[3] * wx + vp.m[7] * wy + vp.m[11] * wz + vp.m[15];
     if (w < 0.01f) return false;
 
     float cx = vp.m[0] * wx + vp.m[4] * wy + vp.m[8] * wz + vp.m[12];
@@ -182,6 +186,70 @@ static bool external_style_w2s(float wx, float wy, float wz, float &outX, float 
     const float sy = (cy + 1.f) * 0.5f;
     outX = sx * g_screenW;
     outY = g_screenH - (sy * g_screenH);
+    return std::isfinite(outX) && std::isfinite(outY);
+}
+
+static bool read_vec3_from_object(pid_t pid, uintptr_t obj, float &x, float &y, float &z) {
+    if (!mem_ptr_ok(obj)) return false;
+    for (uintptr_t off : {0x10u, 0x14u, 0x18u, 0x20u, 0x24u, 0x28u}) {
+        Vec3 v{};
+        if (!mem_read(pid, obj + off, v)) continue;
+        if (std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z)) {
+            x = v.x;
+            y = v.y;
+            z = v.z;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &outY) {
+    if (!g_inFrame || !g_useIl2 || !g_rtInvoke || !g_w2sMi || g_il2Pid <= 0) return false;
+    if (g_w2sBudget <= 0) return false;
+    --g_w2sBudget;
+
+    if (!mem_ptr_ok(g_mainCam)) {
+        uintptr_t cam = 0;
+        if (!remote_session_call(g_sess, g_rtInvoke, {g_getMainMi, 0, 0, 0}, cam)) {
+            g_useIl2 = false;
+            return false;
+        }
+        g_mainCam = cam;
+    }
+    if (!mem_ptr_ok(g_mainCam)) return false;
+
+    const uintptr_t vecSlot = remote_session_scratch(g_sess, 0, 16);
+    const uintptr_t paramSlot = remote_session_scratch(g_sess, 1, 8);
+    const uintptr_t excSlot = remote_session_scratch(g_sess, 2, 8);
+    if (!vecSlot || !paramSlot || !excSlot) return false;
+
+    const float xyz[3] = {wx, wy, wz};
+    mem_write(g_il2Pid, vecSlot, xyz, sizeof(xyz));
+    mem_write(g_il2Pid, paramSlot, &vecSlot, sizeof(vecSlot));
+    uintptr_t zero = 0;
+    mem_write(g_il2Pid, excSlot, &zero, sizeof(zero));
+
+    uintptr_t ret = 0;
+    if (!remote_session_call(g_sess, g_rtInvoke, {g_w2sMi, g_mainCam, paramSlot, excSlot}, ret)) {
+        g_useIl2 = false;
+        return false;
+    }
+
+    float sx = 0.f, sy = 0.f, sz = 0.f;
+    if (!read_vec3_from_object(g_il2Pid, ret, sx, sy, sz)) {
+        if (!mem_read(g_il2Pid, vecSlot, sx) || !mem_read(g_il2Pid, vecSlot + 4, sy) ||
+            !mem_read(g_il2Pid, vecSlot + 8, sz))
+            return false;
+    }
+
+    if (sz > 0.f) {
+        outX = sx;
+        outY = g_screenH - sy;
+    } else {
+        outX = g_screenW - sx;
+        outY = sy;
+    }
     return std::isfinite(outX) && std::isfinite(outY);
 }
 
@@ -231,7 +299,7 @@ void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t ge
     g_il2Ready = runtime_invoke && get_main_method && w2s_method;
 }
 
-void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool /*allowIl2Ptrace*/) {
+void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowIl2Ptrace) {
     g_screenW = screenW;
     g_screenH = screenH;
     normalize_landscape(g_screenW, g_screenH);
@@ -239,16 +307,25 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool /*allo
     g_useIl2 = false;
     g_useExtW2sMath = false;
     g_mainCam = 0;
+    g_w2sBudget = kMaxIl2W2sPerFrame;
 
     if (g_inFrame) remote_session_end(g_sess);
     g_inFrame = false;
 
-    /* EXTERNAL-MLBB draw math + #107 conRent camera statics (no libcsharp RVAs, no draw ptrace). */
     if (pid > 0 && proc_alive(pid)) {
         if (load_vp_resolved_game_camera(pid))
             g_matrixReady = true;
         else if (load_vp_show_battle_camera(pid))
             g_matrixReady = true;
+    }
+
+    /* conRentV1-accurate fallback: one ptrace attach per frame, capped W2S calls. */
+    if (allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
+        proc_alive(pid)) {
+        if (remote_session_begin_try(pid, g_sess)) {
+            g_inFrame = true;
+            g_useIl2 = true;
+        }
     }
 }
 
@@ -260,10 +337,12 @@ void esp_camera_frame_end() {
     g_mainCam = 0;
 }
 
-bool esp_camera_ready() { return g_matrixReady; }
+bool esp_camera_ready() { return g_matrixReady || g_useIl2; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
-    if (!g_matrixReady) return false;
-    if (g_useExtW2sMath) return external_style_w2s(wx, wy, wz, outX, outY);
-    return legacy_matrix_w2s(wx, wy, wz, outX, outY);
+    if (g_matrixReady) {
+        if (g_useExtW2sMath && external_style_w2s(wx, wy, wz, outX, outY)) return true;
+        if (!g_useExtW2sMath && legacy_matrix_w2s(wx, wy, wz, outX, outY)) return true;
+    }
+    return il2_invoke_w2s(wx, wy, wz, outX, outY);
 }

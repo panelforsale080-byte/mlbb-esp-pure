@@ -102,7 +102,8 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     if (!draw || screenW < 1.f || screenH < 1.f) return;
     if (frame.status != EspStatus::Ready) return;
 
-    esp_camera_frame_begin(frame.pid, screenW, screenH, false);
+    const bool allowIl2 = frame.status == EspStatus::Ready && frame.pid > 0;
+    esp_camera_frame_begin(frame.pid, screenW, screenH, allowIl2);
 
     const bool anyPlayer = feat.box || feat.line || feat.health || feat.name || feat.distance;
     const bool anyMon =

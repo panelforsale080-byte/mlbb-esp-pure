@@ -236,6 +236,9 @@ static void domain_scan_bss(pid_t pid, const RemoteIl2CppInfo &lib, uintptr_t &d
     }
 }
 
+static pid_t g_il2CachedPid = 0;
+static RemoteIl2CppInfo g_il2Cached{};
+
 } // namespace
 
 bool remote_refresh_domain_ptr(pid_t pid, RemoteIl2CppInfo &io) {
@@ -257,7 +260,21 @@ bool remote_refresh_domain_ptr(pid_t pid, RemoteIl2CppInfo &io) {
     return false;
 }
 
+void remote_il2cpp_invalidate_cache(pid_t pid) {
+    if (g_il2CachedPid == pid) {
+        g_il2CachedPid = 0;
+        g_il2Cached = RemoteIl2CppInfo{};
+    }
+}
+
 bool remote_detect_il2cpp(pid_t pid, RemoteIl2CppInfo &out) {
+    if (g_il2CachedPid == pid && g_il2Cached.sym_domain_get) {
+        out = g_il2Cached;
+        if (!out.domain_ptr)
+            remote_refresh_domain_ptr(pid, out);
+        return true;
+    }
+
     out = RemoteIl2CppInfo{};
     std::vector<SoModule> mods;
     collect_modules(pid, mods);
@@ -272,7 +289,10 @@ bool remote_detect_il2cpp(pid_t pid, RemoteIl2CppInfo &out) {
         ++tried;
         int hits = 0;
         if (try_module(pid, m, out, hits)) {
-            remote_refresh_domain_ptr(pid, out);
+            if (!out.domain_ptr)
+                remote_refresh_domain_ptr(pid, out);
+            g_il2CachedPid = pid;
+            g_il2Cached = out;
             ui_log("[il2cpp] OK lib=%s base=0x%llx domain_get=0x%llx apis=%d",
                    out.libBaseName, (unsigned long long)out.base,
                    (unsigned long long)out.sym_domain_get, hits);
@@ -285,7 +305,10 @@ bool remote_detect_il2cpp(pid_t pid, RemoteIl2CppInfo &out) {
         ++tried;
         int hits = 0;
         if (try_module(pid, m, out, hits)) {
-            remote_refresh_domain_ptr(pid, out);
+            if (!out.domain_ptr)
+                remote_refresh_domain_ptr(pid, out);
+            g_il2CachedPid = pid;
+            g_il2Cached = out;
             ui_log("[il2cpp] OK (fallback) lib=%s apis=%d", out.libBaseName, hits);
             return true;
         }

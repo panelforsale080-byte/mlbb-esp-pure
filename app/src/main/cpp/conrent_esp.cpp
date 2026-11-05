@@ -4,6 +4,7 @@
 #include "ui_log.hpp"
 #include <cstring>
 #include <string>
+#include <unordered_map>
 
 namespace {
 
@@ -17,26 +18,55 @@ static void split_class_name(const char *full, std::string &ns, std::string &cls
     }
 }
 
+static bool map_has_il2_strings(const MapsReg &m) {
+    if (m.perms[0] != 'r' || m.end <= m.start) return false;
+    const size_t sz = (size_t)(m.end - m.start);
+    if (sz < 64 || sz > 96 * 1024 * 1024) return false;
+    const std::string &p = m.path;
+    if (p.find("global-metadata") != std::string::npos) return true;
+    if (p.find("liblogic") != std::string::npos) return true;
+    if (p.find("libil2cpp") != std::string::npos) return true;
+    if (p.find("libcsharp") != std::string::npos) return true;
+    if (p.find("il2cpp") != std::string::npos) return true;
+    if (p.empty() || p.find("[anon:") != std::string::npos) return sz <= 48 * 1024 * 1024;
+    return false;
+}
+
+static pid_t g_cstrPid = 0;
+static std::unordered_map<std::string, uintptr_t> g_cstrCache;
+
 static uintptr_t find_cstring(pid_t pid, const char *lit) {
     if (!lit) return 0;
+    if (g_cstrPid != pid) {
+        g_cstrCache.clear();
+        g_cstrPid = pid;
+    }
+    const std::string key(lit);
+    const auto hit = g_cstrCache.find(key);
+    if (hit != g_cstrCache.end()) return hit->second;
+
     const size_t n = std::strlen(lit) + 1;
     std::vector<MapsReg> maps;
     if (!mem_maps(pid, maps)) return 0;
     for (const auto &m : maps) {
-        if (m.perms[0] != 'r') continue;
+        if (!map_has_il2_strings(m)) continue;
         const size_t sz = (size_t)(m.end - m.start);
-        if (sz < n || sz > 64 * 1024 * 1024) continue;
-        const size_t step = 512 * 1024;
+        if (sz < n) continue;
+        const size_t step = 1024 * 1024;
         for (size_t off = 0; off < sz; off += step) {
             const size_t chunk = std::min(step + n, sz - off);
             std::vector<char> buf(chunk);
             if (!mem_read(pid, m.start + off, buf.data(), chunk)) continue;
             for (size_t i = 0; i + n <= chunk; ++i) {
-                if (std::memcmp(buf.data() + i, lit, n) == 0)
-                    return m.start + off + i;
+                if (std::memcmp(buf.data() + i, lit, n) == 0) {
+                    const uintptr_t addr = m.start + off + i;
+                    g_cstrCache[key] = addr;
+                    return addr;
+                }
             }
         }
     }
+    g_cstrCache[key] = 0;
     return 0;
 }
 
