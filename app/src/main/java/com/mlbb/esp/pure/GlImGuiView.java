@@ -35,12 +35,8 @@ public class GlImGuiView extends GLSurfaceView implements GLSurfaceView.Renderer
     }
 
     public void configureOverlaySurface() {
-        setZOrderMediaOverlay(true);
-        setZOrderOnTop(false);
+        setZOrderOnTop(true);
         getHolder().setFormat(PixelFormat.TRANSLUCENT);
-        setClickable(false);
-        setFocusable(false);
-        setFocusableInTouchMode(false);
     }
 
     private void initGl() {
@@ -97,12 +93,6 @@ public class GlImGuiView extends GLSurfaceView implements GLSurfaceView.Renderer
             Log.e(TAG, "drawFrame", t);
             surfaceReady = false;
         }
-    }
-
-    @Override
-    public boolean dispatchTouchEvent(MotionEvent event) {
-        if (!NativeBridge.nativeIsMenuInteractive()) return false;
-        return super.dispatchTouchEvent(event);
     }
 
     @Override

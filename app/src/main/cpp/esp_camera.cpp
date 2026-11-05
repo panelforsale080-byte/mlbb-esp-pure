@@ -1,10 +1,12 @@
 #include "esp_camera.hpp"
+#include "external_mlbb.hpp"
 #include "mem.hpp"
 #include "proc.hpp"
 #include "remote_call.hpp"
 #include "ui_log.hpp"
-#include <atomic>
 #include <cmath>
+
+namespace {
 
 struct Matrix4x4 {
     float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
@@ -40,32 +42,9 @@ static uintptr_t g_mainCam = 0;
 static bool g_useIl2 = false;
 static int g_w2sBudget = 0;
 constexpr int kMaxIl2W2sPerFrame = 48;
-constexpr int kPtraceHoldFrames = 50;
-constexpr int kPtraceRestFrames = 0;
 
-static int g_ptraceHoldLeft = 0;
-static int g_ptraceRestLeft = 0;
-static std::atomic<int> g_il2FailStreak{0};
-
-static void il2_force_rest() {
-    if (g_inFrame) {
-        remote_session_end(g_sess);
-        g_inFrame = false;
-    }
-    g_mainCam = 0;
-    g_ptraceHoldLeft = 0;
-    g_ptraceRestLeft = 2;
-}
-
-static void il2_note_failure() {
-    if (g_il2FailStreak.fetch_add(1) + 1 >= 5) {
-        g_il2FailStreak.store(0);
-        il2_force_rest();
-        ui_log("[camera] IL2 breather (keep ESP on — #107 W2S returns soon)");
-    }
-}
-
-static void il2_note_success() { g_il2FailStreak.store(0); }
+static ExtMat4 g_extVp{};
+static bool g_useExternalW2s = false;
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
@@ -165,14 +144,6 @@ static bool load_vp_show_battle_camera(pid_t pid) {
     return true;
 }
 
-static void load_matrix_fallback(pid_t pid) {
-    if (pid <= 0 || !proc_alive(pid)) return;
-    if (load_vp_show_battle_camera(pid))
-        g_matrixReady = true;
-    else if (load_vp_game_method(pid))
-        g_matrixReady = true;
-}
-
 static bool read_vec3_from_object(pid_t pid, uintptr_t obj, float &x, float &y, float &z) {
     if (!mem_ptr_ok(obj)) return false;
     for (uintptr_t off : {0x10u, 0x14u, 0x18u, 0x20u, 0x24u, 0x28u}) {
@@ -197,7 +168,6 @@ static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &out
         uintptr_t cam = 0;
         if (!remote_session_call(g_sess, g_rtInvoke, {g_getMainMi, 0, 0, 0}, cam)) {
             g_useIl2 = false;
-            il2_note_failure();
             return false;
         }
         g_mainCam = cam;
@@ -218,10 +188,8 @@ static bool il2_invoke_w2s(float wx, float wy, float wz, float &outX, float &out
     uintptr_t ret = 0;
     if (!remote_session_call(g_sess, g_rtInvoke, {g_w2sMi, g_mainCam, paramSlot, excSlot}, ret)) {
         g_useIl2 = false;
-        il2_note_failure();
         return false;
     }
-    il2_note_success();
 
     float sx = 0.f, sy = 0.f, sz = 0.f;
     if (!read_vec3_from_object(g_il2Pid, ret, sx, sy, sz)) {
@@ -253,6 +221,8 @@ static bool matrix_w2s(float wx, float wy, float wz, float &outX, float &outY) {
     return std::isfinite(outX) && std::isfinite(outY);
 }
 
+} // namespace
+
 void esp_camera_reset() {
     g_sbcStatics = 0;
     g_gmStatics = 0;
@@ -264,8 +234,8 @@ void esp_camera_reset() {
     g_il2Ready = false;
     g_useIl2 = false;
     g_mainCam = 0;
-    g_ptraceHoldLeft = 0;
-    g_ptraceRestLeft = 0;
+    g_useExternalW2s = false;
+    external_mlbb_reset();
     if (g_inFrame) {
         remote_session_end(g_sess);
         g_inFrame = false;
@@ -286,61 +256,48 @@ void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t ge
     g_il2Ready = runtime_invoke && get_main_method && w2s_method;
 }
 
-void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowIl2Ptrace) {
+void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool /*allowIl2Ptrace*/) {
     g_screenW = screenW;
     g_screenH = screenH;
     normalize_landscape(g_screenW, g_screenH);
     g_matrixReady = false;
     g_useIl2 = false;
-    g_w2sBudget = kMaxIl2W2sPerFrame;
+    g_useExternalW2s = false;
+    g_mainCam = 0;
 
-    if (g_ptraceRestLeft > 0) {
-        g_ptraceRestLeft--;
-        if (g_inFrame) {
-            remote_session_end(g_sess);
-            g_inFrame = false;
-        }
-        g_mainCam = 0;
-        load_matrix_fallback(pid);
+    if (g_inFrame) remote_session_end(g_sess);
+    g_inFrame = false;
+
+    /* EXTERNAL-MLBB (2): vm_read matrix W2S only — no ptrace on draw (no UnityKillsMe crash). */
+    if (pid > 0 && proc_alive(pid) &&
+        external_mlbb_update_matrix(pid, g_screenW, g_screenH, g_extVp)) {
+        g_useExternalW2s = true;
+        g_matrixReady = true;
         return;
     }
 
-    const bool reuseIl2 = g_inFrame && g_sess.attached && g_ptraceHoldLeft > 0;
-    if (!reuseIl2) {
-        if (g_inFrame) remote_session_end(g_sess);
-        g_inFrame = false;
-        g_mainCam = 0;
-
-        /* #107: IL2 WorldToScreenPoint on target (conRentV1). */
-        if (allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
-            proc_alive(pid)) {
-            if (remote_session_begin_try(pid, g_sess)) {
-                g_inFrame = true;
-                g_useIl2 = true;
-                g_ptraceHoldLeft = kPtraceHoldFrames;
-            }
-        }
-    } else {
-        g_useIl2 = true;
-        g_ptraceHoldLeft--;
+    if (pid > 0 && proc_alive(pid)) {
+        if (load_vp_show_battle_camera(pid))
+            g_matrixReady = true;
+        else if (load_vp_game_method(pid))
+            g_matrixReady = true;
     }
-
-    load_matrix_fallback(pid); /* fallback only; W2S order stays IL2 first (#107) */
 }
 
 void esp_camera_frame_end() {
-    if (g_inFrame && g_ptraceHoldLeft <= 0) {
+    if (g_inFrame) {
         remote_session_end(g_sess);
         g_inFrame = false;
-        g_mainCam = 0;
-        g_ptraceRestLeft = kPtraceRestFrames;
     }
+    g_mainCam = 0;
 }
 
 bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
+    if (g_useExternalW2s)
+        return external_mlbb_world_to_screen(g_extVp, wx, wy, wz, g_screenW, g_screenH, outX,
+                                             outY);
     if (g_useIl2 && il2_invoke_w2s(wx, wy, wz, outX, outY)) return true;
-    if (g_ptraceRestLeft > 0) return false;
     return matrix_w2s(wx, wy, wz, outX, outY);
 }
