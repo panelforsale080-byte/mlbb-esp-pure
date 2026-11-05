@@ -272,7 +272,8 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
         }
     }
 
-    if (!g_useIl2 && pid > 0 && proc_alive(pid)) {
+    /* Always load matrix so IL2 budget/timeouts still get W2S every target. */
+    if (pid > 0 && proc_alive(pid) && !g_matrixReady) {
         if (load_vp_game_method(pid))
             g_matrixReady = true;
         else if (load_vp_show_battle_camera(pid))

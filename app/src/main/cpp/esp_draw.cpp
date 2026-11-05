@@ -25,8 +25,18 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
     if (!t.screenValid) return;
 
     const ImVec2 root{t.screenX, t.screenY};
-    if (root.x < -32.f || root.y < -32.f || root.x > screenW + 32.f || root.y > screenH + 32.f)
-        return;
+    const bool onScreen =
+        root.x >= -64.f && root.y >= -64.f && root.x <= screenW + 64.f && root.y <= screenH + 64.f;
+
+    if (feat.line && !monster) {
+        ImVec2 anchor;
+        if (frame.selfScreenValid)
+            anchor = {frame.selfScreenX, frame.selfScreenY};
+        else
+            anchor = {screenW * 0.5f, screenH * 0.92f};
+        draw->AddLine(anchor, root, IM_COL32(255, 255, 255, 180), 1.5f);
+    }
+    if (!onScreen) return;
 
     const float boxH = std::fabs(screenH / (monster ? 6.8f : 6.5f));
     const float boxW = boxH * (monster ? 0.55f : 0.48f);
@@ -34,13 +44,6 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
     const ImVec2 boxEnd{boxStart.x + boxW, boxStart.y + boxH};
     const float centerX = root.x;
 
-    ImVec2 selfAnchor{};
-    const bool haveSelf = frame.selfScreenValid;
-    if (haveSelf) selfAnchor = {frame.selfScreenX, frame.selfScreenY};
-
-    if (feat.line && !monster && haveSelf) {
-        draw->AddLine(selfAnchor, root, IM_COL32(255, 255, 255, 180), 1.5f);
-    }
     if (anyBox) {
         const ImU32 col = monster ? IM_COL32(255, 255, 255, 200) : IM_COL32(255, 255, 255, 230);
         entity_box(draw, boxStart, boxEnd, col, monster ? 6.f : 8.f);
