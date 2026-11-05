@@ -245,9 +245,6 @@ bool remote_refresh_domain_ptr(pid_t pid, RemoteIl2CppInfo &io) {
                       (unsigned long long)io.domain_ptr);
         return true;
     }
-    uint32_t ins[8] = {};
-    mem_read(pid, io.sym_domain_get, ins, sizeof(ins));
-    ui_log("[il2cpp] domain_get ins: %08X %08X %08X %08X", ins[0], ins[1], ins[2], ins[3]);
     domain_scan_bss(pid, io, io.domain_ptr);
     if (io.domain_ptr) {
         std::snprintf(io.note, sizeof(io.note), "domain* bss scan @ 0x%llx",

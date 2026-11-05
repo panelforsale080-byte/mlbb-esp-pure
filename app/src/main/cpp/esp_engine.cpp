@@ -1,6 +1,5 @@
 #include "esp_engine.hpp"
 #include "esp_camera.hpp"
-#include "conrent_esp.hpp"
 #include "offsets.hpp"
 #include "proc.hpp"
 #include "remote_il2cpp.hpp"
@@ -352,9 +351,45 @@ static bool typeinfo_to_klass(pid_t pid, uintptr_t addr, uintptr_t &klass) {
     return false;
 }
 
+static bool typeinfo_from_file(pid_t pid, uintptr_t map_base, const char *filePath,
+                               const char *classShortName, uintptr_t &klass) {
+    klass = 0;
+    if (!filePath || !filePath[0] || !map_base) return false;
+    uintptr_t bias = 0;
+    if (!elf_file_map_bias(filePath, map_base, bias)) return false;
+
+    const char *exact[] = {nullptr, nullptr};
+    char buf0[64], buf1[64];
+    std::snprintf(buf0, sizeof(buf0), "%s_TypeInfo", classShortName);
+    std::snprintf(buf1, sizeof(buf1), "%s_c", classShortName);
+    exact[0] = buf0;
+    exact[1] = buf1;
+
+    for (const char *sym : exact) {
+        uintptr_t addr = 0;
+        if (!elf_file_sym(filePath, bias, sym, addr) || !addr) continue;
+        if (typeinfo_to_klass(pid, addr, klass)) {
+            ui_log("[resolve] file ELF %s -> klass 0x%llx", sym, (unsigned long long)klass);
+            return true;
+        }
+    }
+
+    char matched[128] = {};
+    uintptr_t addr = 0;
+    if (elf_file_sym_contains(filePath, bias, classShortName, addr, matched, sizeof(matched))) {
+        ui_log("[resolve] file ELF sym %s -> 0x%llx", matched, (unsigned long long)addr);
+        if (typeinfo_to_klass(pid, addr, klass)) return true;
+    }
+    return false;
+}
+
 static bool elf_bm_klass_in(pid_t pid, uintptr_t base, uintptr_t /*soEnd*/, uintptr_t &klass) {
     klass = 0;
     if (!base) return false;
+
+    const char *filePath =
+        (g_il2_for_resolve && g_il2_for_resolve->libPath[0]) ? g_il2_for_resolve->libPath : nullptr;
+    if (filePath && typeinfo_from_file(pid, base, filePath, "BattleManager", klass)) return true;
 
     const char *names[] = {"BattleManager_TypeInfo", "BattleManager_c"};
     for (const char *sym : names) {
@@ -363,13 +398,13 @@ static bool elf_bm_klass_in(pid_t pid, uintptr_t base, uintptr_t /*soEnd*/, uint
         if (typeinfo_to_klass(pid, addr, klass)) return true;
     }
 
-    if (g_il2_for_resolve && g_il2_for_resolve->libPath[0]) {
-        ElfRemote er{};
-        if (elf_remote_bias(pid, base, er)) {
+    if (filePath) {
+        uintptr_t bias = 0;
+        if (elf_file_map_bias(filePath, base, bias)) {
             char matched[128] = {};
             uintptr_t addr = 0;
-            if (elf_file_sym_contains(g_il2_for_resolve->libPath, er.load_bias, "BattleManager",
-                                      addr, matched, sizeof(matched))) {
+            if (elf_file_sym_contains(filePath, bias, "BattleManager", addr, matched,
+                                      sizeof(matched))) {
                 ui_log("[resolve] ELF sym %s -> 0x%llx", matched,
                        (unsigned long long)addr);
                 if (typeinfo_to_klass(pid, addr, klass)) return true;
@@ -493,6 +528,17 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
     }
     if (klass) return true;
 
+    {
+        uintptr_t heapBm = 0;
+        int heapScore = 0;
+        if (heap_find_battle_manager(pid, maps, heapBm, heapScore)) {
+            instance = heapBm;
+            ui_log("[resolve] heap BM during klass walk inst=0x%llx score=%d",
+                   (unsigned long long)instance, heapScore);
+            return true;
+        }
+    }
+
     size_t bruteBudget = 0;
     for (const auto &m : maps) {
         if (m.perms[0] != 'r' || m.perms[1] != 'w') continue;
@@ -565,6 +611,20 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
 static bool find_klass_statics(pid_t pid, const std::vector<MapsReg> &maps, const char *name,
                                uintptr_t &klassOut, uintptr_t &staticsOut) {
     klassOut = staticsOut = 0;
+
+    if (g_il2_for_resolve && g_il2_for_resolve->libPath[0] && g_il2_for_resolve->base) {
+        uintptr_t k = 0;
+        if (typeinfo_from_file(pid, g_il2_for_resolve->base, g_il2_for_resolve->libPath, name,
+                               k)) {
+            uintptr_t st = 0, inst = 0;
+            if (statics_for(pid, k, Off::InstanceStatic, st, inst) && st) {
+                klassOut = k;
+                staticsOut = st;
+                return true;
+            }
+        }
+    }
+
     std::vector<uintptr_t> strs;
     scan_strings(pid, maps, name, strs);
     if (strs.empty()) return false;
@@ -725,7 +785,19 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         ui_log("[w2s] mem-only sbc=0x%llx gm=0x%llx (no ptrace)",
                (unsigned long long)sbcStatics, (unsigned long long)gmStatics);
     }
-    const bool memOk = find_bm(g_pid, maps, k, st, inst, &meta);
+    bool memOk = find_bm(g_pid, maps, k, st, inst, &meta);
+
+    if (!inst) {
+        uintptr_t heapBm = 0;
+        int heapScore = 0;
+        if (heap_find_battle_manager(g_pid, maps, heapBm, heapScore)) {
+            inst = heapBm;
+            memOk = true;
+            ui_log("[resolve] heap BM inst=0x%llx score=%d (GSpace/no klass)",
+                   (unsigned long long)inst, heapScore);
+        }
+    }
+
     if (memOk && inst) {
         g_il2_for_resolve = nullptr;
         g_bmKlass = k;

@@ -38,6 +38,8 @@ static std::mutex g_frameMu;
 static EspFrame g_frame;
 static std::atomic<pid_t> g_wantPid{0};
 static std::atomic<bool> g_needResolve{true};
+static std::chrono::steady_clock::time_point g_lastResolveAttempt{};
+static constexpr auto kResolveCooldown = std::chrono::seconds(3);
 
 static bool g_autoFind = true;
 static bool g_fallbackPid = true;
@@ -168,10 +170,20 @@ static void reader_loop() {
             lastPid = 0;
         } else if (pid > 0) {
             if (g_needResolve.exchange(false)) {
-                ui_log("[resolve] start pid=%d", (int)pid);
-                EspResolveReport rep{};
-                esp_resolve(&rep);
-                log_resolve_result(rep);
+                const auto now = std::chrono::steady_clock::now();
+                if (now - g_lastResolveAttempt < kResolveCooldown) {
+                    ui_log("[resolve] wait %ds between attempts (tap Resolve again to force)",
+                           (int)kResolveCooldown.count());
+                    g_needResolve.store(false);
+                } else {
+                    g_lastResolveAttempt = now;
+                    ui_log("[resolve] start pid=%d", (int)pid);
+                    EspResolveReport rep{};
+                    esp_resolve(&rep);
+                    log_resolve_result(rep);
+                    if (rep.status != EspStatus::Ready)
+                        g_needResolve.store(false);
+                }
             }
             EspFrame f;
             esp_tick(f);
@@ -219,6 +231,7 @@ static void draw_ui() {
 
         if (ImGui::Button("Resolve")) {
             esp_request_force_resolve();
+            g_lastResolveAttempt = {};
             g_needResolve.store(true);
         }
         ImGui::SameLine();

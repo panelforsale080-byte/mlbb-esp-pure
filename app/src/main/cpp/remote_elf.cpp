@@ -155,6 +155,21 @@ static bool sym_from_sections_file(FILE *f, const Elf64_Ehdr &eh, uintptr_t load
 
 } // namespace
 
+bool elf_file_map_bias(const char *path, uintptr_t map_base, uintptr_t &load_bias_out) {
+    load_bias_out = 0;
+    if (!path || !path[0] || !map_base) return false;
+    FILE *f = std::fopen(path, "rb");
+    if (!f) return false;
+    Elf64_Ehdr eh{};
+    if (!read_ehdr_file(f, eh)) {
+        std::fclose(f);
+        return false;
+    }
+    const bool ok = calc_bias_from_phdr_file(f, eh, map_base, load_bias_out);
+    std::fclose(f);
+    return ok;
+}
+
 bool elf_remote_bias(pid_t pid, uintptr_t map_base, ElfRemote &out) {
     out = {};
     out.base = map_base;
