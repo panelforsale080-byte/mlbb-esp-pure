@@ -9,12 +9,17 @@ namespace {
 
 constexpr uintptr_t kGlobalCamChainA = 0xa8;
 constexpr uintptr_t kGlobalCamChainB = 0x08;
+constexpr uintptr_t kLegacyBmTypeInfoRva = 0x635b290ULL;
+constexpr uintptr_t kLegacyMainCameraRva = 0x635b620ULL;
+constexpr uintptr_t kScanMinRva = 0x400000ULL;
+constexpr size_t kMaxScanBytesPerMod = 2 * 1024 * 1024;
+constexpr size_t kMaxCamChainProbes = 128;
 
-/** Legacy external RVAs sit ~here; scan a small window only (do not walk whole .so). */
-constexpr uintptr_t kGlobalWinLo = 0x6300000ULL;
-constexpr uintptr_t kGlobalWinHi = 0x6380000ULL;
-constexpr size_t kMaxScanBytes = 512 * 1024;
-constexpr size_t kMaxCamChainProbes = 48;
+static bool path_is_game_lib(const std::string &path) {
+    return path.find("libcsharp.so") != std::string::npos ||
+           path.find("libil2cpp.so") != std::string::npos ||
+           path.find("liblogic.so") != std::string::npos;
+}
 
 static bool map_contains(uintptr_t addr, const MapsReg &m) {
     return m.start <= addr && addr < m.end;
@@ -38,6 +43,23 @@ static uintptr_t follow_main_camera_root(pid_t pid, uintptr_t root) {
     return p;
 }
 
+static bool validate_main_camera_rva(pid_t pid, uintptr_t libBase, uintptr_t rva,
+                                     uintptr_t expectedSmooth) {
+    if (!libBase || !rva || !expectedSmooth) return false;
+    uintptr_t root = 0;
+    if (!mem_read(pid, libBase + rva, root) || !mem_ptr_ok(root)) return false;
+    const uintptr_t cam3 = follow_main_camera_root(pid, root);
+    return cam3 && cam3 == expectedSmooth;
+}
+
+static bool validate_bm_typeinfo_rva(pid_t pid, uintptr_t libBase, uintptr_t rva, uintptr_t bmKlass,
+                                     uintptr_t bmStatics) {
+    if (!libBase || !rva || !bmKlass) return false;
+    uintptr_t p = 0;
+    if (!mem_read(pid, libBase + rva, p) || p != bmKlass) return false;
+    return klass_static_fields_match(pid, p, bmStatics) != 0;
+}
+
 static void scan_window(pid_t pid, uintptr_t libBase, uintptr_t winStart, uintptr_t winEnd,
                         uintptr_t bmKlass, uintptr_t bmStatics, uintptr_t expectedSmoothFollow,
                         uintptr_t &outBmRva, uintptr_t &outCamRva) {
@@ -47,7 +69,7 @@ static void scan_window(pid_t pid, uintptr_t libBase, uintptr_t winStart, uintpt
     size_t camProbes = 0;
 
     for (uintptr_t cur = winStart; cur + sizeof(uintptr_t) <= winEnd; cur += kChunk - sizeof(uintptr_t)) {
-        if (scanned >= kMaxScanBytes) break;
+        if (scanned >= kMaxScanBytesPerMod) break;
         if (outBmRva && outCamRva) break;
 
         const size_t remain = static_cast<size_t>(winEnd - cur);
@@ -62,9 +84,8 @@ static void scan_window(pid_t pid, uintptr_t libBase, uintptr_t winStart, uintpt
             const uintptr_t rva = (cur + i) - libBase;
 
             if (!outBmRva && bmKlass && val == bmKlass &&
-                klass_static_fields_match(pid, val, bmStatics)) {
+                klass_static_fields_match(pid, val, bmStatics))
                 outBmRva = rva;
-            }
 
             if (!outCamRva && expectedSmoothFollow && camProbes < kMaxCamChainProbes &&
                 mem_ptr_ok(val) && val != bmKlass) {
@@ -76,39 +97,42 @@ static void scan_window(pid_t pid, uintptr_t libBase, uintptr_t winStart, uintpt
     }
 }
 
+static uintptr_t module_base_for_path(const std::vector<MapsReg> &maps, const char *needle) {
+    uintptr_t base = 0;
+    for (const MapsReg &m : maps) {
+        if (m.path.find(needle) == std::string::npos) continue;
+        if (!base || m.start < base) base = m.start;
+    }
+    return base;
+}
+
+static void module_span(const std::vector<MapsReg> &maps, uintptr_t modBase, uintptr_t &outStart,
+                        uintptr_t &outEnd) {
+    outStart = 0;
+    outEnd = 0;
+    for (const MapsReg &m : maps) {
+        if (m.start < modBase || m.end <= modBase) continue;
+        if (m.path.find("libcsharp") == std::string::npos &&
+            m.path.find("libil2cpp") == std::string::npos &&
+            m.path.find("liblogic") == std::string::npos)
+            continue;
+        if (!outStart || m.start < outStart) outStart = m.start;
+        if (m.end > outEnd) outEnd = m.end;
+    }
+}
+
 } // namespace
 
 void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolve &resolve) {
     resolve.il2_lib_base = il2LibBase;
     resolve.auto_rva_battle_manager_typeinfo = 0;
     resolve.auto_rva_main_camera_root = 0;
-    if (pid <= 0 || !il2LibBase) return;
+    resolve.main_camera_matrix_lib_base = 0;
+    if (pid <= 0) return;
 
     std::vector<MapsReg> maps;
     if (!mem_maps(pid, maps)) {
         ui_log("[resolve] lib RVA scan skipped (no maps)");
-        return;
-    }
-
-    const MapsReg *mod = nullptr;
-    for (const MapsReg &m : maps) {
-        if (map_contains(il2LibBase, m)) {
-            mod = &m;
-            break;
-        }
-    }
-    if (!mod) {
-        ui_log("[resolve] lib RVA scan skipped (no map for il2 base 0x%llx)",
-               (unsigned long long)il2LibBase);
-        return;
-    }
-
-    uintptr_t winStart = il2LibBase + kGlobalWinLo;
-    uintptr_t winEnd = il2LibBase + kGlobalWinHi;
-    if (winStart < mod->start) winStart = mod->start;
-    if (winEnd > mod->end) winEnd = mod->end;
-    if (winEnd <= winStart) {
-        ui_log("[resolve] lib RVA scan skipped (window outside module)");
         return;
     }
 
@@ -117,25 +141,81 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
         mem_read(pid, resolve.game_method_statics + resolve.runtime_fields.gm_mainCamera,
                  expectedSmooth);
 
-    ui_log("[resolve] lib RVA quick scan (%zu KB max, lib+0x%llx..0x%llx)...",
-           kMaxScanBytes / 1024, (unsigned long long)kGlobalWinLo,
-           (unsigned long long)kGlobalWinHi);
+    ui_log("[resolve] lib RVA scan (libcsharp/liblogic/libil2cpp)...");
 
-    uintptr_t bmRva = 0;
-    uintptr_t camRva = 0;
-    scan_window(pid, il2LibBase, winStart, winEnd, resolve.battle_manager_klass,
-                resolve.battle_manager_statics, expectedSmooth, bmRva, camRva);
+    uintptr_t bestBmRva = 0;
+    uintptr_t bestBmBase = 0;
+    uintptr_t bestCamRva = 0;
+    uintptr_t bestCamBase = 0;
 
-    resolve.auto_rva_battle_manager_typeinfo = bmRva;
-    resolve.auto_rva_main_camera_root = camRva;
+    const uintptr_t bases[] = {
+        module_base_for_path(maps, "libcsharp.so"),
+        module_base_for_path(maps, "libil2cpp.so"),
+        il2LibBase,
+    };
 
-    ui_log("[resolve] auto lib global RVAs (optional, IL2CPP path is primary):");
-    if (bmRva)
-        ui_log("  BattleManager TypeInfo* slot: lib+0x%llx", (unsigned long long)bmRva);
+    for (uintptr_t libBase : bases) {
+        if (!libBase) continue;
+        uintptr_t modStart = 0;
+        uintptr_t modEnd = 0;
+        module_span(maps, libBase, modStart, modEnd);
+        if (modEnd <= modStart) continue;
+
+        uintptr_t winStart = libBase + kScanMinRva;
+        if (winStart < modStart) winStart = modStart;
+        uintptr_t winEnd = modEnd;
+        if (winEnd <= winStart) continue;
+
+        uintptr_t bmRva = 0;
+        uintptr_t camRva = 0;
+        scan_window(pid, libBase, winStart, winEnd, resolve.battle_manager_klass,
+                    resolve.battle_manager_statics, expectedSmooth, bmRva, camRva);
+        if (bmRva && !bestBmRva) {
+            bestBmRva = bmRva;
+            bestBmBase = libBase;
+        }
+        if (camRva && !bestCamRva) {
+            bestCamRva = camRva;
+            bestCamBase = libBase;
+        }
+    }
+
+    const uintptr_t legacyBases[] = {
+        module_base_for_path(maps, "libcsharp.so"),
+        module_base_for_path(maps, "libil2cpp.so"),
+        il2LibBase,
+    };
+    for (uintptr_t lb : legacyBases) {
+        if (!lb) continue;
+        if (!bestCamRva && validate_main_camera_rva(pid, lb, kLegacyMainCameraRva, expectedSmooth)) {
+            bestCamRva = kLegacyMainCameraRva;
+            bestCamBase = lb;
+            ui_log("[resolve] MainCamera RVA validated at legacy lib+0x%llx (base=0x%llx)",
+                   (unsigned long long)kLegacyMainCameraRva, (unsigned long long)lb);
+        }
+        if (!bestBmRva &&
+            validate_bm_typeinfo_rva(pid, lb, kLegacyBmTypeInfoRva, resolve.battle_manager_klass,
+                                     resolve.battle_manager_statics)) {
+            bestBmRva = kLegacyBmTypeInfoRva;
+            bestBmBase = lb;
+            ui_log("[resolve] BattleManager RVA validated at legacy lib+0x%llx (base=0x%llx)",
+                   (unsigned long long)kLegacyBmTypeInfoRva, (unsigned long long)lb);
+        }
+    }
+
+    resolve.auto_rva_battle_manager_typeinfo = bestBmRva;
+    resolve.auto_rva_main_camera_root = bestCamRva;
+    resolve.main_camera_matrix_lib_base = bestCamBase;
+
+    ui_log("[resolve] matrix RVAs for ESP (vm_read, accurate path):");
+    if (bestBmRva)
+        ui_log("  BattleManager TypeInfo: base=0x%llx + 0x%llx",
+               (unsigned long long)bestBmBase, (unsigned long long)bestBmRva);
     else
-        ui_log("  BattleManager TypeInfo* slot: not in scan window");
-    if (camRva)
-        ui_log("  MainCamera root slot: lib+0x%llx", (unsigned long long)camRva);
+        ui_log("  BattleManager TypeInfo: not found (IL2CPP Instance OK)");
+    if (bestCamRva)
+        ui_log("  MainCamera root: base=0x%llx + 0x%llx",
+               (unsigned long long)bestCamBase, (unsigned long long)bestCamRva);
     else
-        ui_log("  MainCamera root slot: not in scan window");
+        ui_log("  MainCamera root: not found — will try GameMethod.mainCamera + 0x5C");
 }

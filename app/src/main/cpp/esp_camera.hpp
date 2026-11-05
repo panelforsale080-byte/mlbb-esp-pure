@@ -10,6 +10,8 @@ struct EspCameraRuntime {
     uintptr_t sbc_m_iFieldOfView = 0;
     uintptr_t camera_world_to_camera_method = 0;
     uintptr_t camera_projection_matrix_method = 0;
+    uintptr_t matrix_lib_base = 0;
+    uintptr_t matrix_main_camera_rva = 0;
 };
 
 void esp_camera_reset();

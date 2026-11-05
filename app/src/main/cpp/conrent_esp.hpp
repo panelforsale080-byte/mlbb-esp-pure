@@ -41,6 +41,8 @@ struct ConrentResolve {
     uintptr_t auto_rva_battle_manager_typeinfo = 0;
     /** Discovered at resolve: external-style MainCamera chain matches GameMethod.mainCamera */
     uintptr_t auto_rva_main_camera_root = 0;
+    /** Module base where auto_rva_main_camera_root applies (often libcsharp.so). */
+    uintptr_t main_camera_matrix_lib_base = 0;
     uintptr_t camera_get_main_method = 0; /* MethodInfo* */
     uintptr_t camera_w2s_method = 0;
     uintptr_t camera_world_to_camera_method = 0;
