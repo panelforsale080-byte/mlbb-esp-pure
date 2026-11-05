@@ -117,7 +117,7 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
 
     if (esp_camera_ready()) {
         draw->AddText(ImVec2(16.f, 56.f), IM_COL32(120, 220, 120, 200),
-                      "W2S vm_read only (resolve may use ptrace once)");
+                      "Build #87 — W2S vm_read only");
     } else {
         draw->AddText(ImVec2(16.f, 56.f), IM_COL32(220, 160, 80, 200),
                       "ESP radar fallback — Resolve in match");

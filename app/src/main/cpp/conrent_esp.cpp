@@ -227,7 +227,6 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
         return false;
     }
     out.battle_manager_klass = klass;
-    out.battle_manager_statics = klass_static_fields(pid, klass);
 
     const uintptr_t inst = static_field_ptr(s, pid, il2, klass, "Instance");
     out.battle_manager = inst;
@@ -249,17 +248,13 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
            (unsigned long long)out.game_method_statics,
            (out.camera_get_main_method && out.camera_w2s_method) ? 1 : 0);
 
-    out.metadata_ready =
-        klass && out.camera_get_main_method && out.camera_w2s_method && out.runtime_ready;
-
     remote_session_end(s);
 
     if (!inst) {
         std::snprintf(out.detail, sizeof(out.detail),
-                      "W2S metadata OK, Instance=0 (enter match) klass=0x%llx asm=%zu",
-                      (unsigned long long)klass, asmCount);
+                      "staticFieldValue(BattleManager, Instance)=0 (lobby?)");
         ui_log("[conrent] %s", out.detail);
-        return out.metadata_ready;
+        return false;
     }
 
     std::snprintf(out.detail, sizeof(out.detail),

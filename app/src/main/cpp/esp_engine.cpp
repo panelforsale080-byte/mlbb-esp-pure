@@ -13,15 +13,11 @@
 #include <atomic>
 #include <mutex>
 
-static std::atomic<bool> g_resolved_flag{false};
-static std::atomic<bool> g_resolve_busy{false};
-
 static std::mutex g_mu;
 static pid_t g_pid = 0;
 static uintptr_t g_bmKlass = 0;
 static uintptr_t g_bmStatics = 0;
 static uintptr_t g_bmInstance = 0;
-static uintptr_t g_bmInstancePin = 0; /* from last good resolve — avoid bad statics refresh */
 static bool g_resolved = false;
 static std::atomic<bool> g_forceResolve{false};
 static EspResolveReport g_lastReport{};
@@ -125,56 +121,10 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
     return !out.empty();
 }
 
-/** EspSource m_ShowPlayers / m_ShowMonsters (Il2Cpp List). */
-static bool list_entities(pid_t pid, uintptr_t list, std::vector<uintptr_t> &out) {
-    out.clear();
-    if (!list || !mem_ptr_ok(list)) return false;
-    uintptr_t arr = 0;
-    int size = 0;
-    if (!mem_read(pid, list + Off::ListItems, arr) || !arr || !mem_ptr_ok(arr)) return false;
-    if (!mem_read(pid, list + Off::ListSize, size) || size <= 0 || size > 128) return false;
-    int maxLength = 0;
-    if (!mem_read(pid, arr + Off::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
-        return false;
-    const uintptr_t data = arr + Off::ArrData;
-    const int n = std::min(size, maxLength);
-    for (int i = 0; i < n; ++i) {
-        uintptr_t p = 0;
-        if (mem_read(pid, data + (uintptr_t)i * sizeof(uintptr_t), p) && p && mem_ptr_ok(p))
-            out.push_back(p);
-    }
-    return !out.empty();
-}
-
 static bool pos_ok(const Vec3 &p) {
     return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z)
         && !(std::fabs(p.x) < 0.01f && std::fabs(p.z) < 0.01f)
         && std::fabs(p.x) <= 10000.f && std::fabs(p.z) <= 10000.f;
-}
-
-static bool read_entity_pos(pid_t pid, uintptr_t ent, Vec3 &pos) {
-    std::vector<std::pair<uintptr_t, size_t>> reqs = {
-        {ent + Off::LastPosition, sizeof(Vec3)},
-        {ent + Off::CachePosition, sizeof(Vec3)},
-    };
-    std::vector<std::vector<uint8_t>> raw;
-    if (mem_read_batch(pid, reqs, raw) && raw.size() == 2) {
-        Vec3 a{}, b{};
-        if (raw[0].size() >= sizeof(Vec3)) std::memcpy(&a, raw[0].data(), sizeof(Vec3));
-        if (raw[1].size() >= sizeof(Vec3)) std::memcpy(&b, raw[1].data(), sizeof(Vec3));
-        if (pos_ok(a)) {
-            pos = a;
-            return true;
-        }
-        if (pos_ok(b)) {
-            pos = b;
-            return true;
-        }
-    }
-    if (mem_read(pid, ent + Off::LastPosition, pos) && pos_ok(pos)) return true;
-    if (mem_read(pid, ent + Off::CachePosition, pos) && pos_ok(pos)) return true;
-    pos = {};
-    return false;
 }
 
 static bool bm_instance_sane(pid_t pid, uintptr_t bm) {
@@ -355,45 +305,9 @@ static bool typeinfo_to_klass(pid_t pid, uintptr_t addr, uintptr_t &klass) {
     return false;
 }
 
-static bool typeinfo_from_file(pid_t pid, uintptr_t map_base, const char *filePath,
-                               const char *classShortName, uintptr_t &klass) {
-    klass = 0;
-    if (!filePath || !filePath[0] || !map_base) return false;
-    uintptr_t bias = 0;
-    if (!elf_file_map_bias(filePath, map_base, bias)) return false;
-
-    const char *exact[] = {nullptr, nullptr};
-    char buf0[64], buf1[64];
-    std::snprintf(buf0, sizeof(buf0), "%s_TypeInfo", classShortName);
-    std::snprintf(buf1, sizeof(buf1), "%s_c", classShortName);
-    exact[0] = buf0;
-    exact[1] = buf1;
-
-    for (const char *sym : exact) {
-        uintptr_t addr = 0;
-        if (!elf_file_sym(filePath, bias, sym, addr) || !addr) continue;
-        if (typeinfo_to_klass(pid, addr, klass)) {
-            ui_log("[resolve] file ELF %s -> klass 0x%llx", sym, (unsigned long long)klass);
-            return true;
-        }
-    }
-
-    char matched[128] = {};
-    uintptr_t addr = 0;
-    if (elf_file_sym_contains(filePath, bias, classShortName, addr, matched, sizeof(matched))) {
-        ui_log("[resolve] file ELF sym %s -> 0x%llx", matched, (unsigned long long)addr);
-        if (typeinfo_to_klass(pid, addr, klass)) return true;
-    }
-    return false;
-}
-
 static bool elf_bm_klass_in(pid_t pid, uintptr_t base, uintptr_t /*soEnd*/, uintptr_t &klass) {
     klass = 0;
     if (!base) return false;
-
-    const char *filePath =
-        (g_il2_for_resolve && g_il2_for_resolve->libPath[0]) ? g_il2_for_resolve->libPath : nullptr;
-    if (filePath && typeinfo_from_file(pid, base, filePath, "BattleManager", klass)) return true;
 
     const char *names[] = {"BattleManager_TypeInfo", "BattleManager_c"};
     for (const char *sym : names) {
@@ -402,13 +316,13 @@ static bool elf_bm_klass_in(pid_t pid, uintptr_t base, uintptr_t /*soEnd*/, uint
         if (typeinfo_to_klass(pid, addr, klass)) return true;
     }
 
-    if (filePath) {
-        uintptr_t bias = 0;
-        if (elf_file_map_bias(filePath, base, bias)) {
+    if (g_il2_for_resolve && g_il2_for_resolve->libPath[0]) {
+        ElfRemote er{};
+        if (elf_remote_bias(pid, base, er)) {
             char matched[128] = {};
             uintptr_t addr = 0;
-            if (elf_file_sym_contains(filePath, bias, "BattleManager", addr, matched,
-                                      sizeof(matched))) {
+            if (elf_file_sym_contains(g_il2_for_resolve->libPath, er.load_bias, "BattleManager",
+                                      addr, matched, sizeof(matched))) {
                 ui_log("[resolve] ELF sym %s -> 0x%llx", matched,
                        (unsigned long long)addr);
                 if (typeinfo_to_klass(pid, addr, klass)) return true;
@@ -532,17 +446,6 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
     }
     if (klass) return true;
 
-    {
-        uintptr_t heapBm = 0;
-        int heapScore = 0;
-        if (heap_find_battle_manager(pid, maps, heapBm, heapScore)) {
-            instance = heapBm;
-            ui_log("[resolve] heap BM during klass walk inst=0x%llx score=%d",
-                   (unsigned long long)instance, heapScore);
-            return true;
-        }
-    }
-
     size_t bruteBudget = 0;
     for (const auto &m : maps) {
         if (m.perms[0] != 'r' || m.perms[1] != 'w') continue;
@@ -611,103 +514,26 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
     return klass != 0;
 }
 
-/** Memory-only Il2CppClass + static_fields (EspSource / no ptrace). */
-static bool find_klass_statics(pid_t pid, const std::vector<MapsReg> &maps, const char *name,
-                               uintptr_t &klassOut, uintptr_t &staticsOut) {
-    klassOut = staticsOut = 0;
-
-    if (g_il2_for_resolve && g_il2_for_resolve->libPath[0] && g_il2_for_resolve->base) {
-        uintptr_t k = 0;
-        if (typeinfo_from_file(pid, g_il2_for_resolve->base, g_il2_for_resolve->libPath, name,
-                               k)) {
-            uintptr_t st = 0, inst = 0;
-            if (statics_for(pid, k, Off::InstanceStatic, st, inst) && st) {
-                klassOut = k;
-                staticsOut = st;
-                return true;
-            }
-        }
-    }
-
-    std::vector<uintptr_t> strs;
-    scan_strings(pid, maps, name, strs);
-    if (strs.empty()) return false;
-
-    int best = -1;
-    static const uintptr_t kNameOffs[] = {0x10, 0x18, 0x08, 0x20};
-    auto try_cand = [&](uintptr_t cand) {
-        if (!klass_matches_name(pid, cand, name, &strs)) return;
-        uintptr_t st = 0, inst = 0;
-        if (!statics_for(pid, cand, Off::InstanceStatic, st, inst)) return;
-        const int sc = st ? 10 : 1;
-        if (sc > best) {
-            best = sc;
-            klassOut = cand;
-            staticsOut = st;
-        }
-    };
-
-    for (uintptr_t s : strs) {
-        for (uintptr_t nameOff : kNameOffs)
-            try_cand(s - nameOff);
-    }
-    for (const auto &m : maps) {
-        if (m.perms[0] != 'r' || m.perms[1] != 'w') continue;
-        const size_t sz = std::min((size_t)(m.end - m.start), (size_t)8 * 1024 * 1024);
-        const size_t chunk = 256 * 1024;
-        for (size_t off = 0; off < sz; off += chunk) {
-            const size_t n = std::min(chunk, sz - off);
-            std::vector<uint8_t> buf(n);
-            if (!mem_read(pid, m.start + off, buf.data(), n)) continue;
-            for (size_t i = 0; i + 8 <= n; i += 8) {
-                uintptr_t p = 0;
-                std::memcpy(&p, buf.data() + i, 8);
-                bool hit = false;
-                for (uintptr_t s : strs)
-                    if (p == s) { hit = true; break; }
-                if (!hit) continue;
-                for (uintptr_t nameOff : kNameOffs)
-                    try_cand(m.start + off + i - nameOff);
-            }
-        }
-    }
-    return staticsOut != 0;
-}
-
-static uintptr_t pick_battle_manager_instance(pid_t pid) {
-    if (g_bmInstancePin && mem_ptr_ok(g_bmInstancePin)) {
-        if (score_bm(pid, g_bmInstancePin) >= 0) return g_bmInstancePin;
-    }
-    if (g_bmKlass) {
-        uintptr_t st = 0, inst = 0;
-        if (statics_for(pid, g_bmKlass, Off::InstanceStatic, st, inst) && mem_ptr_ok(inst)) {
-            const int sc = score_bm(pid, inst);
-            if (sc >= 0 && (!g_bmInstancePin || sc >= score_bm(pid, g_bmInstancePin)))
-                return inst;
-        }
-    }
-    return g_bmInstancePin ? g_bmInstancePin : g_bmInstance;
+static void refresh_instance(pid_t pid) {
+    if (!g_bmStatics) return;
+    uintptr_t inst = 0;
+    if (mem_read(pid, g_bmStatics + Off::InstanceStatic, inst) && mem_ptr_ok(inst))
+        g_bmInstance = inst;
 }
 
 void esp_reset() {
     std::lock_guard<std::mutex> lock(g_mu);
-    mem_invalidate_maps_cache(g_pid);
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = 0;
-    g_bmInstancePin = 0;
     g_resolved = false;
-    g_resolved_flag.store(false, std::memory_order_release);
     esp_camera_reset();
 }
 
 EspStatus esp_attach(pid_t pid) {
     std::lock_guard<std::mutex> lock(g_mu);
     if (pid != g_pid) {
-        mem_invalidate_maps_cache(g_pid);
         g_bmKlass = g_bmStatics = g_bmInstance = 0;
-        g_bmInstancePin = 0;
         g_resolved = false;
-        g_resolved_flag.store(false, std::memory_order_release);
     }
     g_pid = pid;
     if (pid <= 0) return EspStatus::NoProcess;
@@ -717,7 +543,8 @@ EspStatus esp_attach(pid_t pid) {
 void esp_request_force_resolve() { g_forceResolve.store(true); }
 
 bool esp_is_resolved() {
-    return g_resolved_flag.load(std::memory_order_acquire);
+    std::lock_guard<std::mutex> lock(g_mu);
+    return g_resolved;
 }
 
 static void fill_report(EspResolveReport &r, EspStatus status, int mapsCount, bool probe,
@@ -749,156 +576,95 @@ static void merge_il2cpp_into_report(EspResolveReport &rep, const RemoteIl2CppIn
 }
 
 EspStatus esp_resolve(EspResolveReport *reportOut) {
-    struct ResolveBusy {
-        ResolveBusy() { g_resolve_busy.store(true, std::memory_order_release); }
-        ~ResolveBusy() { g_resolve_busy.store(false, std::memory_order_release); }
-    } busy;
-
-    pid_t pid = 0;
-    bool forceResolve = false;
-    {
-        std::lock_guard<std::mutex> lock(g_mu);
-        if (g_pid <= 0) {
-            EspResolveReport rep{};
-            rep.status = EspStatus::NoProcess;
-            std::snprintf(rep.detail, sizeof(rep.detail), "no pid attached");
-            g_lastReport = rep;
-            if (reportOut) *reportOut = rep;
-            return rep.status;
-        }
-        pid = g_pid;
-        forceResolve = g_forceResolve.exchange(false);
-        if (!forceResolve && g_resolved) {
-            if (reportOut) *reportOut = g_lastReport;
-            return g_lastReport.status;
-        }
-    }
-
+    std::lock_guard<std::mutex> lock(g_mu);
     EspResolveReport rep{};
+    if (g_pid <= 0) {
+        rep.status = EspStatus::NoProcess;
+        std::snprintf(rep.detail, sizeof(rep.detail), "no pid attached");
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        return rep.status;
+    }
     std::vector<MapsReg> maps;
-    if (!mem_maps(pid, maps)) {
+    if (!mem_maps(g_pid, maps)) {
         rep.status = EspStatus::NoRead;
         rep.mapsCount = 0;
         rep.readProbe = false;
         std::snprintf(rep.detail, sizeof(rep.detail),
-                      "cannot read /proc/%d/maps (root? process dead?)", (int)pid);
-        std::lock_guard<std::mutex> lock(g_mu);
+                      "cannot read /proc/%d/maps (root? process dead?)", (int)g_pid);
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;
     }
-
-    const bool probe = proc_probe_read(pid);
+    const bool probe = proc_probe_read(g_pid);
+    if (!g_forceResolve.exchange(false) && g_resolved) {
+        if (reportOut) *reportOut = g_lastReport;
+        return g_lastReport.status;
+    }
     RemoteIl2CppInfo il2{};
-    remote_detect_il2cpp(pid, il2);
-    remote_refresh_domain_ptr(pid, il2);
+    remote_detect_il2cpp(g_pid, il2);
+    remote_refresh_domain_ptr(g_pid, il2);
     merge_il2cpp_into_report(rep, il2);
-
     g_il2_for_resolve = &il2;
+
+    ConrentResolve cr{};
+    const bool crOk =
+        conrent_resolve_battle_manager(g_pid, maps, il2, cr) && cr.battle_manager;
+    esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
+    /* W2S on draw is memory-only (esp_camera); IL2 method ptrs from resolve are not used. */
+    esp_camera_set_il2cpp_w2s(g_pid, 0, 0, 0);
+    if (crOk) {
+        g_il2_for_resolve = nullptr;
+        g_bmKlass = cr.battle_manager_klass;
+        g_bmStatics = 0;
+        g_bmInstance = cr.battle_manager;
+        g_resolved = true;
+        BmFindMeta meta{};
+        meta.usedElf = false;
+        fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, cr.battle_manager_klass,
+                    0, cr.battle_manager);
+        std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1: %s", cr.detail);
+        ui_log("[resolve] OK %s", cr.detail);
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        return rep.status;
+    }
+    if (!cr.battle_manager && cr.detail[0])
+        ui_log("[resolve] conRent path: %s", cr.detail);
+
     BmFindMeta meta{};
     uintptr_t k = 0, st = 0, inst = 0;
-    uintptr_t sbcK = 0, gmK = 0, sbcStatics = 0, gmStatics = 0;
-    find_klass_statics(pid, maps, "ShowBattleCamera", sbcK, sbcStatics);
-    find_klass_statics(pid, maps, "GameMethod", gmK, gmStatics);
-    if (sbcStatics || gmStatics) {
-        esp_camera_set_static_bases(sbcStatics, gmStatics);
-        ui_log("[w2s] mem-only sbc=0x%llx gm=0x%llx (no ptrace)",
-               (unsigned long long)sbcStatics, (unsigned long long)gmStatics);
-    }
-    bool memOk = find_bm(pid, maps, k, st, inst, &meta);
+    if (!find_bm(g_pid, maps, k, st, inst, &meta)) {
+        ui_log("[resolve] no klass/heap — enter classic match, tap Resolve (conRent IL2CPP only)");
 
-    if (!inst) {
-        uintptr_t heapBm = 0;
-        int heapScore = 0;
-        if (heap_find_battle_manager(pid, maps, heapBm, heapScore)) {
-            inst = heapBm;
-            memOk = true;
-            ui_log("[resolve] heap BM inst=0x%llx score=%d (GSpace/no klass)",
-                   (unsigned long long)inst, heapScore);
+        g_il2_for_resolve = nullptr;
+        g_resolved = false;
+        fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, k, st, inst);
+        if (meta.nameStrings > 0) {
+            std::vector<uintptr_t> dbg;
+            scan_strings(g_pid, maps, "BattleManager", dbg);
+            for (size_t i = 0; i < dbg.size() && i < 5; ++i) {
+                char txt[64] = {};
+                mem_read(g_pid, dbg[i], txt, sizeof(txt) - 1);
+                ui_log("[resolve] BattleManager str@%llX = \"%s\"",
+                       (unsigned long long)dbg[i], txt);
+            }
         }
+        ui_log("[resolve] klass+heap both failed — need classic match (not lobby)");
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        return rep.status;
     }
-
-    bool haveBm = memOk && inst;
-    const bool needCamera = !sbcStatics && !gmStatics;
-
-    if (!haveBm || needCamera) {
-        ui_log("[resolve] %s — one-shot ptrace IL2CPP (ESP draw stays vm_read, no ptrace)",
-               !haveBm ? "BM missing after mem/heap" : "camera statics missing");
-        ConrentResolve cr{};
-        const bool crRan = conrent_resolve_battle_manager(pid, maps, il2, cr);
-        if (cr.show_battle_camera_statics || cr.game_method_statics) {
-            esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
-            ui_log("[w2s] ptrace-resolve sbc=0x%llx gm=0x%llx (draw: memory W2S only)",
-                   (unsigned long long)cr.show_battle_camera_statics,
-                   (unsigned long long)cr.game_method_statics);
-        }
-        if (cr.battle_manager) {
-            haveBm = true;
-            inst = cr.battle_manager;
-            if (cr.battle_manager_klass) k = cr.battle_manager_klass;
-            if (cr.battle_manager_statics) st = cr.battle_manager_statics;
-            memOk = true;
-        } else if (crRan && cr.battle_manager_klass && !k) {
-            k = cr.battle_manager_klass;
-            st = cr.battle_manager_statics;
-        }
-        if (cr.detail[0]) ui_log("[conrent] %s", cr.detail);
-    }
-
     g_il2_for_resolve = nullptr;
-
-    std::lock_guard<std::mutex> lock(g_mu);
-    if (g_pid != pid) {
-        rep.status = EspStatus::NoProcess;
-        std::snprintf(rep.detail, sizeof(rep.detail), "pid changed during resolve");
-        g_lastReport = rep;
-        if (reportOut) *reportOut = rep;
-        return rep.status;
-    }
-
-    if (haveBm && inst) {
-        g_bmKlass = k;
-        g_bmStatics = st;
-        g_bmInstance = inst;
-        g_bmInstancePin = inst;
-        g_resolved = true;
-        g_resolved_flag.store(true, std::memory_order_release);
-        ui_log("[resolve] OK BM klass=0x%llx inst=0x%llx | tick=vm_read draw=vm_read W2S",
-               (unsigned long long)k, (unsigned long long)inst);
-        fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, k, st, inst);
-        g_lastReport = rep;
-        if (reportOut) *reportOut = rep;
-        return rep.status;
-    }
-
-    if (k && !inst) {
-        g_bmKlass = k;
-        g_bmStatics = st;
-        g_resolved = true;
-        g_resolved_flag.store(true, std::memory_order_release);
-        fill_report(rep, EspStatus::NoInstance, (int)maps.size(), probe, meta, k, st, inst);
-        ui_log("[resolve] klass OK, Instance null — enter match then Resolve again");
-        g_lastReport = rep;
-        if (reportOut) *reportOut = rep;
-        return rep.status;
-    }
-
-    g_resolved = false;
-    g_resolved_flag.store(false, std::memory_order_release);
-    fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, k, st, inst);
-    if (meta.nameStrings > 0) {
-        std::vector<uintptr_t> dbg;
-        scan_strings(pid, maps, "BattleManager", dbg);
-        for (size_t i = 0; i < dbg.size() && i < 5; ++i) {
-            char txt[64] = {};
-            mem_read(pid, dbg[i], txt, sizeof(txt) - 1);
-            ui_log("[resolve] BattleManager str@%llX = \"%s\"", (unsigned long long)dbg[i], txt);
-        }
-    }
-    ui_log("[resolve] failed — in match, tap Resolve (ptrace resolve + mem draw)");
+    g_bmKlass = k;
+    g_bmStatics = st;
+    g_bmInstance = inst;
+    g_resolved = true;
+    const EspStatus stOut = inst ? EspStatus::Ready : EspStatus::NoInstance;
+    fill_report(rep, stOut, (int)maps.size(), probe, meta, k, st, inst);
     g_lastReport = rep;
     if (reportOut) *reportOut = rep;
-    return rep.status;
+    return stOut;
 }
 
 const EspResolveReport &esp_last_resolve_report() {
@@ -906,13 +672,8 @@ const EspResolveReport &esp_last_resolve_report() {
 }
 
 EspStatus esp_tick(EspFrame &out) {
+    std::lock_guard<std::mutex> lock(g_mu);
     out = EspFrame{};
-    std::unique_lock<std::mutex> lock(g_mu, std::try_to_lock);
-    if (!lock.owns_lock()) {
-        out.status = EspStatus::Resolving;
-        std::snprintf(out.hint, sizeof(out.hint), "Resolve in progress…");
-        return out.status;
-    }
     out.pid = g_pid;
     if (g_pid <= 0) {
         out.status = EspStatus::NoProcess;
@@ -924,15 +685,12 @@ EspStatus esp_tick(EspFrame &out) {
         std::snprintf(out.hint, sizeof(out.hint), "Tap Resolve (in match)");
         return out.status;
     }
-    if (!proc_alive(g_pid)) {
-        out.status = EspStatus::NoProcess;
-        g_bmInstance = g_bmInstancePin = 0;
-        std::snprintf(out.hint, sizeof(out.hint), "Game process gone");
-        return out.status;
+    if (!g_bmInstance && g_bmStatics) {
+        refresh_instance(g_pid);
     }
 
-    const uintptr_t bm = pick_battle_manager_instance(g_pid);
-    g_bmInstance = bm;
+    refresh_instance(g_pid);
+    const uintptr_t bm = g_bmInstance;
     if (!bm) {
         out.status = EspStatus::NoInstance;
         std::snprintf(out.hint, sizeof(out.hint), "BattleManager null — enter match");
@@ -942,7 +700,7 @@ EspStatus esp_tick(EspFrame &out) {
     uintptr_t local = 0;
     mem_read(g_pid, bm + Off::LocalPlayerShow, local);
     Vec3 self{};
-    if (local) read_entity_pos(g_pid, local, self);
+    if (local) mem_read(g_pid, local + Off::LastPosition, self);
     out.selfX = self.x;
     out.selfY = self.y;
     out.selfZ = self.z;
@@ -954,25 +712,6 @@ EspStatus esp_tick(EspFrame &out) {
     dict_entries(g_pid, pDict, players);
     dict_entries(g_pid, mDict, monsters);
 
-    if (players.empty()) {
-        uintptr_t pList = 0;
-        mem_read(g_pid, bm + Off::ListPlayerShow, pList);
-        std::vector<uintptr_t> listP;
-        if (list_entities(g_pid, pList, listP)) {
-            for (size_t i = 0; i < listP.size(); ++i)
-                players.emplace_back((int)i, listP[i]);
-        }
-    }
-    if (monsters.empty()) {
-        uintptr_t mList = 0;
-        mem_read(g_pid, bm + Off::ListMonsterShow, mList);
-        std::vector<uintptr_t> listM;
-        if (list_entities(g_pid, mList, listM)) {
-            for (size_t i = 0; i < listM.size(); ++i)
-                monsters.emplace_back((int)i, listM[i]);
-        }
-    }
-
     auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
         if (!v) return;
         uint8_t dead = 0, camp = 0;
@@ -982,7 +721,7 @@ EspStatus esp_tick(EspFrame &out) {
         mem_read(g_pid, v + Off::EntityId, id);
         if (kind == 1 && !monster_id(id)) return;
         Vec3 pos{};
-        if (!read_entity_pos(g_pid, v, pos)) return;
+        if (!mem_read(g_pid, v + Off::LastPosition, pos) || !pos_ok(pos)) return;
         EspTarget t{};
         t.worldX = pos.x;
         t.worldY = pos.y;

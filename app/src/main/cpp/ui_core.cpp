@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cmath>
 #include <cstdio>
 #include <mutex>
 #include <thread>
@@ -38,11 +37,6 @@ static std::mutex g_frameMu;
 static EspFrame g_frame;
 static std::atomic<pid_t> g_wantPid{0};
 static std::atomic<bool> g_needResolve{true};
-static std::atomic<pid_t> g_pendingAttachPid{0};
-static std::atomic<bool> g_requestScanMlbb{false};
-static std::atomic<pid_t> g_requestIl2ScanPid{0};
-static std::chrono::steady_clock::time_point g_lastResolveAttempt{};
-static constexpr auto kResolveCooldown = std::chrono::seconds(3);
 
 static bool g_autoFind = true;
 static bool g_fallbackPid = true;
@@ -121,7 +115,6 @@ static void scan_and_log_processes() {
 static void reader_loop();
 static void reader_start_once();
 
-/** Runs on reader thread only — never call from GL/ImGui thread. */
 static void attach_pid(pid_t p, const char *why) {
     if (p <= 0) {
         ui_log("[%s] no pid", why);
@@ -131,14 +124,14 @@ static void attach_pid(pid_t p, const char *why) {
     }
     char cmd[280];
     proc_format_cmdline(p, cmd, sizeof(cmd));
-    ui_log("[%s] pid=%d (probing…)", why, (int)p);
     const bool probe = proc_probe_read(p);
-    ui_log("[%s] probe=%s  cmd: %s", why, probe ? "OK" : "FAIL", cmd);
+    ui_log("[%s] pid=%d probe=%s", why, (int)p, probe ? "OK" : "FAIL");
+    ui_log("  cmd: %s", cmd);
     if (!probe)
         ui_log("  process_vm_readv failed — need root or correct target process");
     esp_attach(p);
     g_wantPid.store(p);
-    g_needResolve.store(true);
+    if (!esp_is_resolved()) g_needResolve.store(true);
 }
 
 static void reader_loop() {
@@ -147,12 +140,6 @@ static void reader_loop() {
     pid_t lastPid = 0;
 
     while (g_runReader.load()) {
-        const pid_t pendingAttach = g_pendingAttachPid.exchange(0);
-        if (pendingAttach > 0) attach_pid(pendingAttach, "find");
-        if (g_requestScanMlbb.exchange(false)) scan_and_log_processes();
-        const pid_t il2Pid = g_requestIl2ScanPid.exchange(0);
-        if (il2Pid > 0) log_il2cpp_scan(il2Pid);
-
         pid_t pid = g_wantPid.load();
 
         if (g_autoFind && pid <= 0) {
@@ -180,20 +167,10 @@ static void reader_loop() {
             lastPid = 0;
         } else if (pid > 0) {
             if (g_needResolve.exchange(false)) {
-                const auto now = std::chrono::steady_clock::now();
-                if (now - g_lastResolveAttempt < kResolveCooldown) {
-                    ui_log("[resolve] wait %ds between attempts (tap Resolve again to force)",
-                           (int)kResolveCooldown.count());
-                    g_needResolve.store(false);
-                } else {
-                    g_lastResolveAttempt = now;
-                    ui_log("[resolve] start pid=%d", (int)pid);
-                    EspResolveReport rep{};
-                    esp_resolve(&rep);
-                    log_resolve_result(rep);
-                    if (rep.status != EspStatus::Ready)
-                        g_needResolve.store(false);
-                }
+                ui_log("[resolve] start pid=%d", (int)pid);
+                EspResolveReport rep{};
+                esp_resolve(&rep);
+                log_resolve_result(rep);
             }
             EspFrame f;
             esp_tick(f);
@@ -211,7 +188,7 @@ static void reader_loop() {
             g_frame = std::move(f);
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        std::this_thread::sleep_for(std::chrono::milliseconds(80));
     }
 }
 
@@ -222,11 +199,8 @@ static void draw_ui() {
         fr = g_frame;
     }
     const EspResolveReport &rep = esp_last_resolve_report();
-    /* W2S must use the same size as the GL overlay surface (ImGui framebuffer). */
-    float sw = (float)g_width;
-    float sh = (float)g_height;
-    if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
-    if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
+    const float sw = g_displayW > 0 ? (float)g_displayW : (float)g_width;
+    const float sh = g_displayH > 0 ? (float)g_displayH : (float)g_height;
 
     esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
 
@@ -235,28 +209,19 @@ static void draw_ui() {
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("MLBB ESP", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("Resolve: mem + ptrace once. ESP draw/tick: vm_read only.");
+        ImGui::TextDisabled("Build #87 — Resolve may use ptrace once; ESP draw = vm_read only.");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
         if (ImGui::Button("Resolve")) {
             esp_request_force_resolve();
-            g_lastResolveAttempt = {};
             g_needResolve.store(true);
         }
         ImGui::SameLine();
         if (ImGui::Button("Find pid")) {
-            ui_ensure_reader_thread();
             pid_t p = proc_find_unity_kills();
             if (p <= 0 && g_fallbackPid) p = proc_find_mlbb_fallback();
-            if (p <= 0) {
-                ui_log("[find] no UnityKillsMe — open MLBB / GSpace first");
-            } else {
-                char cmd[280];
-                proc_format_cmdline(p, cmd, sizeof(cmd));
-                ui_log("[find] pid=%d  %s", (int)p, cmd);
-                g_pendingAttachPid.store(p);
-            }
+            attach_pid(p, "find");
         }
 
         ImGui::SeparatorText("Enemy");
@@ -282,7 +247,7 @@ static void draw_ui() {
             ImGui::Checkbox("Fallback MLBB pid", &g_fallbackPid);
             const pid_t pid = g_wantPid.load();
             ImGui::Text("PID: %d", (int)pid);
-            if (ImGui::Button("Scan MLBB")) g_requestScanMlbb.store(true);
+            if (ImGui::Button("Scan MLBB")) scan_and_log_processes();
             ImGui::SameLine();
             if (ImGui::Button("Copy logs")) {
                 static char logCopy[65536];
@@ -290,7 +255,7 @@ static void draw_ui() {
                 if (android_copy_to_clipboard(logCopy))
                     ui_log("[ui] logs copied");
             }
-            if (pid > 0 && ImGui::Button("Scan IL2CPP")) g_requestIl2ScanPid.store(pid);
+            if (pid > 0 && ImGui::Button("Scan IL2CPP")) log_il2cpp_scan(pid);
             ImGui::Text("IL2CPP: %s", rep.il2cppLib[0] ? rep.il2cppLib : "(none)");
             ImGui::TextWrapped("%s", rep.detail);
             ImGui::Checkbox("Log auto-scroll", &g_logScrollBottom);
@@ -398,8 +363,6 @@ static void reader_start_once() {
     g_runReader.store(true);
     g_reader = std::thread(reader_loop);
 }
-
-void ui_ensure_reader_thread() { reader_start_once(); }
 
 void ui_gl_surface_changed(int width, int height) {
     std::lock_guard<std::mutex> lock(g_glMu);
