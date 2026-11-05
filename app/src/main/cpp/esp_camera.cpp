@@ -5,21 +5,9 @@
 #include "remote_call.hpp"
 #include "ui_log.hpp"
 #include <cmath>
-#include <string>
-#include <vector>
 
 namespace {
 
-/** EXTERNAL-MLBB / EspSource Offsets::Camera */
-namespace CamOff {
-constexpr uintptr_t kMainCameraPtr = 0x635b620;
-constexpr uintptr_t kCameraData = 0xa8;
-constexpr uintptr_t kCameraData2 = 0x08;
-constexpr uintptr_t kSmoothFollow = 0x10;
-constexpr uintptr_t kViewMatrix = 0x5C;
-} // namespace CamOff
-
-/** EspSource: worldToCamera then projection at ViewMatrix. */
 struct BattleCameraMatrices {
     Matrix4x4 worldToCameraMatrix;
     Matrix4x4 projectionMatrix;
@@ -29,11 +17,12 @@ struct Quat {
     float x, y, z, w;
 };
 
+static EspCameraRuntime g_rt{};
 static uintptr_t g_sbcStatics = 0;
 static uintptr_t g_gmStatics = 0;
 static bool g_matrixReady = false;
-/** VP from EXTERNAL-style read (lib MainCamera chain or GameMethod), not manual ShowBattleCamera. */
-static bool g_matrixExternal = false;
+/** VP from IL2 Camera getters (runtime), not ShowBattleCamera fallback. */
+static bool g_matrixFromIl2Cam = false;
 static Matrix4x4 g_viewProj;
 static int g_matrixPathLog = 0;
 static float g_screenW = 0.f;
@@ -43,6 +32,8 @@ static pid_t g_il2Pid = 0;
 static uintptr_t g_rtInvoke = 0;
 static uintptr_t g_getMainMi = 0;
 static uintptr_t g_w2sMi = 0;
+static uintptr_t g_worldToCamMi = 0;
+static uintptr_t g_projectionMi = 0;
 static bool g_il2Ready = false;
 
 static RemoteSession g_sess{};
@@ -71,17 +62,6 @@ static void normalize_landscape(float &w, float &h) {
     }
 }
 
-static uintptr_t module_base_lowest(pid_t pid, const char *needle) {
-    std::vector<MapsReg> maps;
-    if (!mem_maps(pid, maps)) return 0;
-    uintptr_t base = 0;
-    for (const MapsReg &m : maps) {
-        if (m.path.find(needle) == std::string::npos) continue;
-        if (!base || m.start < base) base = m.start;
-    }
-    return base;
-}
-
 static bool matrix_sane(const Matrix4x4 &m) {
     if (!std::isfinite(m.m00) || !std::isfinite(m.m33)) return false;
     const float mag = std::fabs(m.m00) + std::fabs(m.m11) + std::fabs(m.m22) + std::fabs(m.m33);
@@ -93,57 +73,60 @@ static bool apply_battle_camera_matrices(const BattleCameraMatrices &cam) {
     return matrix_sane(g_viewProj);
 }
 
-/** EXTERNAL-MLBB GetMainCamera(): libbase+MainCameraPtr -> +0xa8 -> +0x08 */
-static uintptr_t external_get_main_cam3(pid_t pid, uintptr_t libbase) {
-    if (!libbase) return 0;
-    uintptr_t p = 0;
-    if (!mem_read(pid, libbase + CamOff::kMainCameraPtr, p) || !mem_ptr_ok(p)) return 0;
-    if (!mem_read(pid, p + CamOff::kCameraData, p) || !mem_ptr_ok(p)) return 0;
-    if (!mem_read(pid, p + CamOff::kCameraData2, p) || !mem_ptr_ok(p)) return 0;
-    return p;
-}
-
-/** EXTERNAL draw path: main_cam3 + SmoothFollow(0x10) -> matrix holder + ViewMatrix(0x5C). */
-static bool load_vp_from_main_cam3(pid_t pid, uintptr_t main_cam3) {
-    if (!mem_ptr_ok(main_cam3)) return false;
-
-    uintptr_t camera = 0;
-    mem_read(pid, main_cam3 + CamOff::kSmoothFollow, camera);
-
-    const uintptr_t candidates[] = {camera, main_cam3};
-    for (uintptr_t holder : candidates) {
-        if (!mem_ptr_ok(holder)) continue;
-        BattleCameraMatrices cam{};
-        if (!mem_read(pid, holder + CamOff::kViewMatrix, cam)) continue;
-        if (apply_battle_camera_matrices(cam)) return true;
-    }
+static bool read_matrix4_from_il2_obj(pid_t pid, uintptr_t obj, Matrix4x4 &out) {
+    if (!mem_ptr_ok(obj)) return false;
+    if (mem_read(pid, obj, out) && matrix_sane(out)) return true;
+    if (mem_read(pid, obj + 0x10, out) && matrix_sane(out)) return true;
     return false;
 }
 
-static bool load_vp_external_main_camera(pid_t pid) {
-    uintptr_t lib = module_base_lowest(pid, "libcsharp.so");
-    if (!lib) lib = module_base_lowest(pid, "libil2cpp.so");
-    if (!lib) return false;
-    const uintptr_t main_cam3 = external_get_main_cam3(pid, lib);
-    if (!main_cam3) return false;
-    return load_vp_from_main_cam3(pid, main_cam3);
+static bool il2_invoke_matrix_getter(uintptr_t method, uintptr_t cameraObj, Matrix4x4 &out) {
+    if (!g_inFrame || !g_rtInvoke || !method || !mem_ptr_ok(cameraObj)) return false;
+    uintptr_t exc = 0;
+    const uintptr_t excSlot = remote_session_scratch(g_sess, 3, 8);
+    if (excSlot) mem_write(g_il2Pid, excSlot, &exc, sizeof(exc));
+    uintptr_t ret = 0;
+    if (!remote_session_call(g_sess, g_rtInvoke, {method, cameraObj, excSlot, 0}, ret)) return false;
+    return read_matrix4_from_il2_obj(g_il2Pid, ret, out);
 }
 
-static bool load_vp_game_method(pid_t pid) {
-    if (!g_gmStatics) return false;
+static uintptr_t resolve_unity_camera(pid_t pid, uintptr_t smoothFollow) {
+    if (g_rt.sf_m_MainCamera && mem_ptr_ok(smoothFollow)) {
+        uintptr_t cam = 0;
+        if (mem_read(pid, smoothFollow + g_rt.sf_m_MainCamera, cam) && mem_ptr_ok(cam)) return cam;
+    }
+    if (!g_inFrame || !g_rtInvoke || !g_getMainMi) return 0;
+    uintptr_t cam = 0;
+    if (remote_session_call(g_sess, g_rtInvoke, {g_getMainMi, 0, 0, 0}, cam) && mem_ptr_ok(cam))
+        return cam;
+    return 0;
+}
+
+static bool load_vp_il2_camera_matrices(pid_t pid) {
+    if (!g_gmStatics || !g_rt.gm_mainCamera || !g_worldToCamMi || !g_projectionMi) return false;
     uintptr_t smooth = 0;
-    if (!mem_read(pid, g_gmStatics + 0x10, smooth) || !mem_ptr_ok(smooth)) return false;
-    return load_vp_from_main_cam3(pid, smooth);
+    if (!mem_read(pid, g_gmStatics + g_rt.gm_mainCamera, smooth) || !mem_ptr_ok(smooth))
+        return false;
+    const uintptr_t unityCam = resolve_unity_camera(pid, smooth);
+    if (!mem_ptr_ok(unityCam)) return false;
+
+    BattleCameraMatrices cam{};
+    if (!il2_invoke_matrix_getter(g_worldToCamMi, unityCam, cam.worldToCameraMatrix)) return false;
+    if (!il2_invoke_matrix_getter(g_projectionMi, unityCam, cam.projectionMatrix)) return false;
+    if (!apply_battle_camera_matrices(cam)) return false;
+    g_matrixFromIl2Cam = true;
+    return true;
 }
 
 static bool load_vp_show_battle_camera(pid_t pid) {
-    if (!g_sbcStatics) return false;
+    if (!g_sbcStatics || !g_rt.sbc_m_CamPos || !g_rt.sbc_m_CamRot) return false;
     Vec3 pos{};
     Quat rot{};
     int fov = 0;
-    if (!mem_read(pid, g_sbcStatics + 0x10, pos)) return false;
-    if (!mem_read(pid, g_sbcStatics + 0x58, rot)) return false;
-    mem_read(pid, g_sbcStatics + 0x8C, fov);
+    if (!mem_read(pid, g_sbcStatics + g_rt.sbc_m_CamPos, pos)) return false;
+    if (!mem_read(pid, g_sbcStatics + g_rt.sbc_m_CamRot, rot)) return false;
+    if (g_rt.sbc_m_iFieldOfView)
+        mem_read(pid, g_sbcStatics + g_rt.sbc_m_iFieldOfView, fov);
     if (fov < 10 || fov > 120) fov = 40;
     if (!std::isfinite(pos.x) || !std::isfinite(rot.w)) return false;
 
@@ -181,7 +164,7 @@ static bool load_vp_show_battle_camera(pid_t pid) {
                          0.f);
 
     g_viewProj = proj * view;
-    g_matrixExternal = false;
+    g_matrixFromIl2Cam = false;
     return matrix_sane(g_viewProj);
 }
 
@@ -267,15 +250,18 @@ static bool matrix_w2s(float wx, float wy, float wz, float &outX, float &outY) {
 } // namespace
 
 void esp_camera_reset() {
+    g_rt = {};
     g_sbcStatics = 0;
     g_gmStatics = 0;
     g_matrixReady = false;
-    g_matrixExternal = false;
+    g_matrixFromIl2Cam = false;
     g_matrixPathLog = 0;
     g_il2Pid = 0;
     g_rtInvoke = 0;
     g_getMainMi = 0;
     g_w2sMi = 0;
+    g_worldToCamMi = 0;
+    g_projectionMi = 0;
     g_il2Ready = false;
     g_useIl2 = false;
     g_mainCam = 0;
@@ -290,12 +276,16 @@ void esp_camera_set_static_bases(uintptr_t showBattleCameraStatics, uintptr_t ga
     g_gmStatics = gameMethodStatics;
 }
 
+void esp_camera_set_runtime(const EspCameraRuntime &runtime) { g_rt = runtime; }
+
 void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t get_main_method,
                                uintptr_t w2s_method) {
     g_il2Pid = pid;
     g_rtInvoke = runtime_invoke;
     g_getMainMi = get_main_method;
     g_w2sMi = w2s_method;
+    g_worldToCamMi = g_rt.camera_world_to_camera_method;
+    g_projectionMi = g_rt.camera_projection_matrix_method;
     g_il2Ready = runtime_invoke && get_main_method && w2s_method;
 }
 
@@ -304,47 +294,46 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     g_screenH = screenH;
     normalize_landscape(g_screenW, g_screenH);
     g_matrixReady = false;
-    g_matrixExternal = false;
+    g_matrixFromIl2Cam = false;
     g_useIl2 = false;
     g_mainCam = 0;
+    g_worldToCamMi = g_rt.camera_world_to_camera_method;
+    g_projectionMi = g_rt.camera_projection_matrix_method;
 
     if (g_inFrame) remote_session_end(g_sess);
     g_inFrame = false;
 
     g_w2sBudget = kMaxIl2W2sPerFrame;
 
+    const bool wantIl2 = allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke && pid > 0 &&
+                         proc_alive(pid);
+    const bool wantMatrixIl2 =
+        wantIl2 && g_gmStatics && g_rt.gm_mainCamera && g_worldToCamMi && g_projectionMi;
+
     if (pid > 0 && proc_alive(pid)) {
-        if (load_vp_external_main_camera(pid)) {
-            g_matrixReady = true;
-            g_matrixExternal = true;
-            if (g_matrixPathLog == 0) {
-                g_matrixPathLog = 1;
-                ui_log("[esp] W2S matrix: EXTERNAL MainCamera chain (lib+0x%x -> +0x5C)",
-                       (unsigned)CamOff::kMainCameraPtr);
+        if (wantMatrixIl2 && remote_session_begin_try(pid, g_sess)) {
+            g_inFrame = true;
+            if (load_vp_il2_camera_matrices(pid)) {
+                g_matrixReady = true;
+                if (g_matrixPathLog == 0) {
+                    g_matrixPathLog = 1;
+                    ui_log("[esp] W2S matrix: runtime GameMethod.mainCamera + "
+                           "Camera.get_worldToCameraMatrix/get_projectionMatrix");
+                }
             }
-        } else if (load_vp_game_method(pid)) {
+        }
+        if (!g_matrixReady && load_vp_show_battle_camera(pid)) {
             g_matrixReady = true;
-            g_matrixExternal = true;
             if (g_matrixPathLog == 0) {
                 g_matrixPathLog = 2;
-                ui_log("[esp] W2S matrix: GameMethod.mainCamera + SmoothFollow + ViewMatrix");
-            }
-        } else if (load_vp_show_battle_camera(pid)) {
-            g_matrixReady = true;
-            if (g_matrixPathLog == 0) {
-                g_matrixPathLog = 3;
-                ui_log("[esp] W2S matrix: ShowBattleCamera pos/rot fallback");
+                ui_log("[esp] W2S matrix: ShowBattleCamera (runtime field offsets)");
             }
         }
     }
 
-    /* IL2 W2S only when EXTERNAL matrix unavailable (same as EXTERNAL-MLBB read-only path). */
-    if (!g_matrixExternal && allowIl2Ptrace && g_il2Ready && pid == g_il2Pid && g_rtInvoke &&
-        pid > 0 && proc_alive(pid)) {
-        if (remote_session_begin_try(pid, g_sess)) {
-            g_inFrame = true;
-            g_useIl2 = true;
-        }
+    if (!g_matrixReady && wantIl2) {
+        if (!g_inFrame && remote_session_begin_try(pid, g_sess)) g_inFrame = true;
+        if (g_inFrame) g_useIl2 = true;
     }
 }
 

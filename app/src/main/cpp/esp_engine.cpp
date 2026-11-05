@@ -651,6 +651,15 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     const bool crRan = conrent_resolve_battle_manager(g_pid, maps, il2, cr);
     g_il2_for_resolve = nullptr;
     esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
+    EspCameraRuntime camRt{};
+    camRt.gm_mainCamera = cr.runtime_fields.gm_mainCamera;
+    camRt.sf_m_MainCamera = cr.runtime_fields.sf_m_MainCamera;
+    camRt.sbc_m_CamPos = cr.runtime_fields.sbc_m_CamPos;
+    camRt.sbc_m_CamRot = cr.runtime_fields.sbc_m_CamRot;
+    camRt.sbc_m_iFieldOfView = cr.runtime_fields.sbc_m_iFieldOfView;
+    camRt.camera_world_to_camera_method = cr.camera_world_to_camera_method;
+    camRt.camera_projection_matrix_method = cr.camera_projection_matrix_method;
+    esp_camera_set_runtime(camRt);
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
                               cr.camera_w2s_method);
 

@@ -1,8 +1,20 @@
 #pragma once
+#include <cstdint>
 #include <sys/types.h>
+
+struct EspCameraRuntime {
+    uintptr_t gm_mainCamera = 0;
+    uintptr_t sf_m_MainCamera = 0;
+    uintptr_t sbc_m_CamPos = 0;
+    uintptr_t sbc_m_CamRot = 0;
+    uintptr_t sbc_m_iFieldOfView = 0;
+    uintptr_t camera_world_to_camera_method = 0;
+    uintptr_t camera_projection_matrix_method = 0;
+};
 
 void esp_camera_reset();
 void esp_camera_set_static_bases(uintptr_t showBattleCameraStatics, uintptr_t gameMethodStatics);
+void esp_camera_set_runtime(const EspCameraRuntime &runtime);
 void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t get_main_method,
                                uintptr_t w2s_method);
 

@@ -253,6 +253,36 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
         out.runtime_fields.se_m_Hp = instance_field_offset(s, pid, il2, seKlass, "m_Hp");
         out.runtime_fields.se_m_HpMax = instance_field_offset(s, pid, il2, seKlass, "m_HpMax");
     }
+
+    const uintptr_t gmKlass = find_class_fast(s, pid, il2, images, "GameMethod", false);
+    if (gmKlass) {
+        out.runtime_fields.gm_mainCamera =
+            instance_field_offset(s, pid, il2, gmKlass, "mainCamera");
+    }
+    const uintptr_t sfKlass = find_class_fast(s, pid, il2, images, "SmoothFollow", false);
+    if (sfKlass) {
+        out.runtime_fields.sf_m_MainCamera =
+            instance_field_offset(s, pid, il2, sfKlass, "m_MainCamera");
+    }
+    const uintptr_t sbcKlass = find_class_fast(s, pid, il2, images, "ShowBattleCamera", false);
+    if (sbcKlass) {
+        out.runtime_fields.sbc_m_CamPos =
+            instance_field_offset(s, pid, il2, sbcKlass, "m_CamPos");
+        out.runtime_fields.sbc_m_CamRot =
+            instance_field_offset(s, pid, il2, sbcKlass, "m_CamRot");
+        out.runtime_fields.sbc_m_iFieldOfView =
+            instance_field_offset(s, pid, il2, sbcKlass, "m_iFieldOfView");
+    }
+
+    ui_log("[resolve] camera runtime (IL2CPP fields, no lib Offsets.h):");
+    ui_log("  GameMethod.mainCamera static off=0x%llx",
+           (unsigned long long)out.runtime_fields.gm_mainCamera);
+    ui_log("  SmoothFollow.m_MainCamera off=0x%llx",
+           (unsigned long long)out.runtime_fields.sf_m_MainCamera);
+    ui_log("  ShowBattleCamera m_CamPos=0x%llx m_CamRot=0x%llx FOV=0x%llx",
+           (unsigned long long)out.runtime_fields.sbc_m_CamPos,
+           (unsigned long long)out.runtime_fields.sbc_m_CamRot,
+           (unsigned long long)out.runtime_fields.sbc_m_iFieldOfView);
 }
 
 static uintptr_t static_field_ptr(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
@@ -397,8 +427,17 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
         out.camera_get_main_method = method_from_name(s, pid, il2, camKlass, "get_main", 0);
         out.camera_w2s_method =
             method_from_name(s, pid, il2, camKlass, "WorldToScreenPoint", 1);
+        out.camera_world_to_camera_method =
+            method_from_name(s, pid, il2, camKlass, "get_worldToCameraMatrix", 0);
+        out.camera_projection_matrix_method =
+            method_from_name(s, pid, il2, camKlass, "get_projectionMatrix", 0);
         out.camera_get_main_native = method_native_ptr(pid, out.camera_get_main_method);
         out.camera_w2s_native = method_native_ptr(pid, out.camera_w2s_method);
+        ui_log("[resolve] Camera methods: get_main=0x%llx w2s=0x%llx w2c=0x%llx proj=0x%llx",
+               (unsigned long long)out.camera_get_main_method,
+               (unsigned long long)out.camera_w2s_method,
+               (unsigned long long)out.camera_world_to_camera_method,
+               (unsigned long long)out.camera_projection_matrix_method);
     }
 
     const uintptr_t bdKlass = find_class_fast(s, pid, il2, images, "BattleData", false);

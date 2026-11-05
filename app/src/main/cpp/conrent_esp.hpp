@@ -21,6 +21,11 @@ struct ConrentRuntimeOffsets {
     uintptr_t se_m_Hp = 0;
     uintptr_t se_m_HpMax = 0;
     uintptr_t show_entity_klass = 0;
+    uintptr_t gm_mainCamera = 0;
+    uintptr_t sf_m_MainCamera = 0;
+    uintptr_t sbc_m_CamPos = 0;
+    uintptr_t sbc_m_CamRot = 0;
+    uintptr_t sbc_m_iFieldOfView = 0;
 };
 
 struct ConrentResolve {
@@ -33,6 +38,8 @@ struct ConrentResolve {
     uintptr_t game_method_statics = 0;
     uintptr_t camera_get_main_method = 0; /* MethodInfo* */
     uintptr_t camera_w2s_method = 0;
+    uintptr_t camera_world_to_camera_method = 0;
+    uintptr_t camera_projection_matrix_method = 0;
     uintptr_t camera_get_main_native = 0; /* methodPointer — conRent direct call */
     uintptr_t camera_w2s_native = 0;
     uintptr_t battle_bridge = 0;          /* BattleData.m_BattleBridge live ptr */
