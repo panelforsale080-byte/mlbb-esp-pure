@@ -36,6 +36,8 @@ struct ConrentResolve {
     uintptr_t battle_manager_statics = 0;
     uintptr_t show_battle_camera_statics = 0; /* Il2Cpp static_fields for m_CamPos/m_CamRot */
     uintptr_t game_method_statics = 0;
+    /** GameMethod.mainCamera SmoothFollow* from IL2CPP static_field_get_value */
+    uintptr_t game_method_main_camera_obj = 0;
     uintptr_t il2_lib_base = 0;
     /** Discovered at resolve: *(lib + RVA) == BattleManager Il2CppClass* */
     uintptr_t auto_rva_battle_manager_typeinfo = 0;

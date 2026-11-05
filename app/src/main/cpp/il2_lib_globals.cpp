@@ -1,53 +1,15 @@
 #include "il2_lib_globals.hpp"
+#include "camera_lib_chain.hpp"
 #include "il2_layout.hpp"
 #include "ui_log.hpp"
-#include <cmath>
-#include <cstring>
 #include <string>
 #include <vector>
 
 namespace {
 
-constexpr uintptr_t kGlobalCamChainA = 0xa8;
-constexpr uintptr_t kGlobalCamChainB = 0x08;
 /** EXTERNAL-MLBB Offsets.h — fixed; no memory scan. */
 constexpr uintptr_t kRvaBattleManagerTypeInfo = 0x635b290ULL;
 constexpr uintptr_t kRvaMainCameraRoot = 0x635b620ULL;
-
-struct BattleCameraMatricesRaw {
-    float worldToCamera[16];
-    float projection[16];
-};
-
-static bool matrix4_sane(const float m[16]) {
-    if (!std::isfinite(m[0]) || !std::isfinite(m[15])) return false;
-    const float mag =
-        std::fabs(m[0]) + std::fabs(m[5]) + std::fabs(m[10]) + std::fabs(m[15]);
-    return mag > 1e-4f && mag < 1e8f;
-}
-
-static bool vp_sane_at_holder(pid_t pid, uintptr_t holder) {
-    if (!mem_ptr_ok(holder)) return false;
-    BattleCameraMatricesRaw cam{};
-    if (!mem_read(pid, holder + 0x5C, cam)) return false;
-    return matrix4_sane(cam.worldToCamera) && matrix4_sane(cam.projection);
-}
-
-static bool vp_from_cam3(pid_t pid, uintptr_t cam3) {
-    if (!mem_ptr_ok(cam3)) return false;
-    uintptr_t inner = 0;
-    mem_read(pid, cam3 + 0x10, inner);
-    if (mem_ptr_ok(inner) && vp_sane_at_holder(pid, inner)) return true;
-    return vp_sane_at_holder(pid, cam3);
-}
-
-static bool main_camera_live_matches(pid_t pid, uintptr_t cam3, uintptr_t expectedLive) {
-    if (!expectedLive) return true;
-    if (cam3 == expectedLive) return true;
-    uintptr_t inner = 0;
-    if (mem_read(pid, cam3 + 0x10, inner) && inner == expectedLive) return true;
-    return vp_sane_at_holder(pid, expectedLive);
-}
 
 static uintptr_t klass_static_fields_match(pid_t pid, uintptr_t klass, uintptr_t expectedStatics) {
     if (!mem_ptr_ok(klass) || !expectedStatics) return 0;
@@ -57,14 +19,6 @@ static uintptr_t klass_static_fields_match(pid_t pid, uintptr_t klass, uintptr_t
         if (st == expectedStatics) return st;
     }
     return 0;
-}
-
-static uintptr_t follow_main_camera_root(pid_t pid, uintptr_t root) {
-    if (!mem_ptr_ok(root)) return 0;
-    uintptr_t p = 0;
-    if (!mem_read(pid, root + kGlobalCamChainA, p) || !mem_ptr_ok(p)) return 0;
-    if (!mem_read(pid, p + kGlobalCamChainB, p) || !mem_ptr_ok(p)) return 0;
-    return p;
 }
 
 static uintptr_t module_base_for_path(const std::vector<MapsReg> &maps, const char *needle) {
@@ -103,7 +57,6 @@ static void collect_unique_bases(uintptr_t csharp, uintptr_t logic, uintptr_t il
 
 struct SpyBmResult {
     uintptr_t slot = 0;
-    bool readOk = false;
     bool klassMatch = false;
     bool staticsMatch = false;
 };
@@ -112,35 +65,11 @@ static SpyBmResult spy_battle_manager_rva(pid_t pid, uintptr_t libBase, uintptr_
                                           uintptr_t bmStatics) {
     SpyBmResult r{};
     const uintptr_t addr = libBase + kRvaBattleManagerTypeInfo;
-    r.readOk = mem_read(pid, addr, r.slot);
-    if (!r.readOk || !mem_ptr_ok(r.slot)) return r;
+    if (!mem_read(pid, addr, r.slot)) return r;
+    r.slot = mem_ptr_normalize(r.slot);
+    if (!r.slot) return r;
     r.klassMatch = bmKlass && r.slot == bmKlass;
     r.staticsMatch = klass_static_fields_match(pid, r.slot, bmStatics) != 0;
-    return r;
-}
-
-struct SpyCamResult {
-    uintptr_t root = 0;
-    uintptr_t afterA8 = 0;
-    uintptr_t cam3 = 0;
-    uintptr_t inner10 = 0;
-    bool readRoot = false;
-    bool chainOk = false;
-    bool vpOk = false;
-    bool liveOk = false;
-};
-
-static SpyCamResult spy_main_camera_rva(pid_t pid, uintptr_t libBase, uintptr_t expectedLive) {
-    SpyCamResult r{};
-    const uintptr_t addr = libBase + kRvaMainCameraRoot;
-    r.readRoot = mem_read(pid, addr, r.root);
-    if (!r.readRoot || !mem_ptr_ok(r.root)) return r;
-    if (!mem_read(pid, r.root + kGlobalCamChainA, r.afterA8)) return r;
-    r.cam3 = follow_main_camera_root(pid, r.root);
-    r.chainOk = mem_ptr_ok(r.cam3);
-    if (r.chainOk) mem_read(pid, r.cam3 + 0x10, r.inner10);
-    if (r.chainOk) r.vpOk = vp_from_cam3(pid, r.cam3);
-    if (r.chainOk && r.vpOk) r.liveOk = main_camera_live_matches(pid, r.cam3, expectedLive);
     return r;
 }
 
@@ -159,18 +88,20 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
         return;
     }
 
-    uintptr_t expectedLive = 0;
-    if (resolve.game_method_statics && resolve.runtime_fields.gm_mainCamera)
-        mem_read(pid, resolve.game_method_statics + resolve.runtime_fields.gm_mainCamera,
-                 expectedLive);
+    uintptr_t expectedLive = mem_ptr_normalize(resolve.game_method_main_camera_obj);
+    if (!expectedLive && resolve.game_method_statics && resolve.runtime_fields.gm_mainCamera) {
+        uintptr_t raw = 0;
+        mem_read(pid, resolve.game_method_statics + resolve.runtime_fields.gm_mainCamera, raw);
+        expectedLive = mem_ptr_normalize(raw);
+    }
 
     const uintptr_t baseCsharp = module_base_for_path(maps, "libcsharp.so");
     const uintptr_t baseLogic = module_base_for_path(maps, "liblogic.so");
     const uintptr_t baseIl2cpp = module_base_for_path(maps, "libil2cpp.so");
 
-    ui_log("[resolve] GameMethod statics=0x%llx mainCamera live=0x%llx",
-           (unsigned long long)resolve.game_method_statics,
-           (unsigned long long)expectedLive);
+    ui_log("[resolve] GameMethod mainCamera live=0x%llx (IL2=0x%llx statics+0x10 raw norm)",
+           (unsigned long long)expectedLive,
+           (unsigned long long)resolve.game_method_main_camera_obj);
     ui_log("[resolve] RVA spy (fixed EXTERNAL offsets, no scan):");
     ui_log("  BM TypeInfo slot  lib+0x%llx", (unsigned long long)kRvaBattleManagerTypeInfo);
     ui_log("  MainCamera root   lib+0x%llx", (unsigned long long)kRvaMainCameraRoot);
@@ -194,15 +125,21 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
 
         if (!pickBmBase && bm.klassMatch && bm.staticsMatch) pickBmBase = libBase;
 
-        const SpyCamResult cam = spy_main_camera_rva(pid, libBase, expectedLive);
-        ui_log("  [%s] Cam lib+0x%llx -> root=0x%llx +0xA8=0x%llx cam3=0x%llx +0x10=0x%llx "
-               "chain=%s vp=%s live=%s",
-               label, (unsigned long long)kRvaMainCameraRoot, (unsigned long long)cam.root,
-               (unsigned long long)cam.afterA8, (unsigned long long)cam.cam3,
-               (unsigned long long)cam.inner10, cam.chainOk ? "OK" : "fail",
-               cam.vpOk ? "OK" : "fail", cam.liveOk ? "OK" : "no");
+        uintptr_t rootRaw = 0;
+        mem_read(pid, libBase + kRvaMainCameraRoot, rootRaw);
+        const LibMainCamChain chain =
+            camera_resolve_lib_main_cam_chain(pid, mem_ptr_normalize(rootRaw));
+        const bool liveOk =
+            chain.cam3 && camera_main_camera_live_matches(pid, chain.cam3, expectedLive);
 
-        if (!pickCamBase && cam.chainOk && cam.vpOk) pickCamBase = libBase;
+        ui_log("  [%s] Cam lib+0x%llx -> root=0x%llx +0xA8=0x%llx +0x08_raw=0x%llx "
+               "cam3=0x%llx chain=%s vp=%s live=%s",
+               label, (unsigned long long)kRvaMainCameraRoot, (unsigned long long)chain.root,
+               (unsigned long long)chain.afterA8, (unsigned long long)chain.rawAtA8Plus8,
+               (unsigned long long)chain.cam3, chain.variant, chain.vpOk ? "OK" : "fail",
+               liveOk ? "OK" : "no");
+
+        if (!pickCamBase && chain.cam3 && chain.vpOk) pickCamBase = libBase;
     }
 
     if (pickBmBase) {

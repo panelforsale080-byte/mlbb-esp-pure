@@ -1,4 +1,5 @@
 #include "conrent_esp.hpp"
+#include "camera_lib_chain.hpp"
 #include "il2_layout.hpp"
 #include "il2_lib_globals.hpp"
 #include "remote_call.hpp"
@@ -276,8 +277,9 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
     }
 
     ui_log("[resolve] camera runtime (IL2CPP fields, no lib Offsets.h):");
-    ui_log("  GameMethod statics=0x%llx ShowBattleCamera statics=0x%llx",
+    ui_log("  GameMethod statics=0x%llx mainCamera(IL2)=0x%llx ShowBattleCamera statics=0x%llx",
            (unsigned long long)out.game_method_statics,
+           (unsigned long long)out.game_method_main_camera_obj,
            (unsigned long long)out.show_battle_camera_statics);
     ui_log("  GameMethod.mainCamera static off=0x%llx",
            (unsigned long long)out.runtime_fields.gm_mainCamera);
@@ -423,7 +425,11 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
     const uintptr_t sbcKlass = find_class_fast(s, pid, il2, images, "ShowBattleCamera", false);
     if (sbcKlass) out.show_battle_camera_statics = klass_static_fields(pid, sbcKlass);
     const uintptr_t gmKlass = find_class_fast(s, pid, il2, images, "GameMethod", false);
-    if (gmKlass) out.game_method_statics = klass_static_fields(pid, gmKlass);
+    if (gmKlass) {
+        out.game_method_statics = klass_static_fields(pid, gmKlass);
+        out.game_method_main_camera_obj =
+            mem_ptr_normalize(static_field_ptr(s, pid, il2, gmKlass, "mainCamera"));
+    }
 
     const uintptr_t camKlass =
         find_class_fast(s, pid, il2, images, "UnityEngine.Camera", true);

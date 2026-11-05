@@ -1,4 +1,5 @@
 #include "esp_camera.hpp"
+#include "camera_lib_chain.hpp"
 #include "matrix4x4.hpp"
 #include "mem.hpp"
 #include "proc.hpp"
@@ -98,19 +99,19 @@ static bool load_vp_matrices_at_main_cam3(pid_t pid, uintptr_t mainCam3) {
 static bool load_vp_from_lib_main_camera_rva(pid_t pid) {
     if (!g_matrixLibBase || !g_matrixMainCamRva) return false;
     uintptr_t root = 0;
-    if (!mem_read(pid, g_matrixLibBase + g_matrixMainCamRva, root) || !mem_ptr_ok(root)) return false;
-    constexpr uintptr_t kChainA = 0xa8;
-    constexpr uintptr_t kChainB = 0x08;
-    uintptr_t p = 0;
-    if (!mem_read(pid, root + kChainA, p) || !mem_ptr_ok(p)) return false;
-    if (!mem_read(pid, p + kChainB, p) || !mem_ptr_ok(p)) return false;
-    return load_vp_matrices_at_main_cam3(pid, p);
+    if (!mem_read(pid, g_matrixLibBase + g_matrixMainCamRva, root)) return false;
+    const LibMainCamChain chain = camera_resolve_lib_main_cam_chain(pid, root);
+    if (!chain.cam3 || !chain.vpOk) return false;
+    return load_vp_matrices_at_main_cam3(pid, chain.cam3);
 }
 
 static bool load_vp_from_game_method_smooth(pid_t pid) {
-    if (!g_gmStatics || !g_rt.gm_mainCamera) return false;
-    uintptr_t smooth = 0;
-    if (!mem_read(pid, g_gmStatics + g_rt.gm_mainCamera, smooth) || !mem_ptr_ok(smooth)) return false;
+    uintptr_t smooth = mem_ptr_normalize(g_rt.game_method_main_camera_obj);
+    if (!smooth && g_gmStatics && g_rt.gm_mainCamera) {
+        uintptr_t raw = 0;
+        if (mem_read(pid, g_gmStatics + g_rt.gm_mainCamera, raw)) smooth = mem_ptr_normalize(raw);
+    }
+    if (!smooth) return false;
     return load_vp_matrices_at_main_cam3(pid, smooth);
 }
 
