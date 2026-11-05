@@ -227,6 +227,7 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
         return false;
     }
     out.battle_manager_klass = klass;
+    out.battle_manager_statics = klass_static_fields(pid, klass);
 
     const uintptr_t inst = static_field_ptr(s, pid, il2, klass, "Instance");
     out.battle_manager = inst;
@@ -243,6 +244,8 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
         out.camera_get_main_method = method_from_name(s, pid, il2, camKlass, "get_main", 0);
         out.camera_w2s_method = method_from_name(s, pid, il2, camKlass, "WorldToScreenPoint", 1);
     }
+    out.metadata_ready =
+        klass && out.camera_get_main_method && out.camera_w2s_method && out.runtime_ready;
     ui_log("[conrent] camera statics sbc=0x%llx gm=0x%llx w2s=%d",
            (unsigned long long)out.show_battle_camera_statics,
            (unsigned long long)out.game_method_statics,
@@ -252,9 +255,10 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
 
     if (!inst) {
         std::snprintf(out.detail, sizeof(out.detail),
-                      "staticFieldValue(BattleManager, Instance)=0 (lobby?)");
+                      "W2S metadata OK, Instance=0 (enter match) klass=0x%llx asm=%zu",
+                      (unsigned long long)klass, asmCount);
         ui_log("[conrent] %s", out.detail);
-        return false;
+        return out.metadata_ready;
     }
 
     std::snprintf(out.detail, sizeof(out.detail),
