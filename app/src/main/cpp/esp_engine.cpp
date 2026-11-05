@@ -1,5 +1,6 @@
 #include "esp_engine.hpp"
 #include "esp_camera.hpp"
+#include "conrent_esp.hpp"
 #include "offsets.hpp"
 #include "proc.hpp"
 #include "remote_il2cpp.hpp"
@@ -801,15 +802,43 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         }
     }
 
-    if (memOk && inst) {
-        g_il2_for_resolve = nullptr;
+    bool haveBm = memOk && inst;
+    const bool needCamera = !sbcStatics && !gmStatics;
+
+    if (!haveBm || needCamera) {
+        ui_log("[resolve] %s — one-shot ptrace IL2CPP (ESP draw stays vm_read, no ptrace)",
+               !haveBm ? "BM missing after mem/heap" : "camera statics missing");
+        ConrentResolve cr{};
+        const bool crRan = conrent_resolve_battle_manager(g_pid, maps, il2, cr);
+        if (cr.show_battle_camera_statics || cr.game_method_statics) {
+            esp_camera_set_static_bases(cr.show_battle_camera_statics, cr.game_method_statics);
+            ui_log("[w2s] ptrace-resolve sbc=0x%llx gm=0x%llx (draw: memory W2S only)",
+                   (unsigned long long)cr.show_battle_camera_statics,
+                   (unsigned long long)cr.game_method_statics);
+        }
+        if (cr.battle_manager) {
+            haveBm = true;
+            inst = cr.battle_manager;
+            if (cr.battle_manager_klass) k = cr.battle_manager_klass;
+            if (cr.battle_manager_statics) st = cr.battle_manager_statics;
+            memOk = true;
+        } else if (crRan && cr.battle_manager_klass && !k) {
+            k = cr.battle_manager_klass;
+            st = cr.battle_manager_statics;
+        }
+        if (cr.detail[0]) ui_log("[conrent] %s", cr.detail);
+    }
+
+    g_il2_for_resolve = nullptr;
+
+    if (haveBm && inst) {
         g_bmKlass = k;
         g_bmStatics = st;
         g_bmInstance = inst;
         g_bmInstancePin = inst;
         g_resolved = true;
         g_resolved_flag.store(true, std::memory_order_release);
-        ui_log("[resolve] mem-only BM klass=0x%llx inst=0x%llx (no ptrace)",
+        ui_log("[resolve] OK BM klass=0x%llx inst=0x%llx | tick=vm_read draw=vm_read W2S",
                (unsigned long long)k, (unsigned long long)inst);
         fill_report(rep, EspStatus::Ready, (int)maps.size(), probe, meta, k, st, inst);
         g_lastReport = rep;
@@ -817,7 +846,18 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         return rep.status;
     }
 
-    g_il2_for_resolve = nullptr;
+    if (k && !inst) {
+        g_bmKlass = k;
+        g_bmStatics = st;
+        g_resolved = true;
+        g_resolved_flag.store(true, std::memory_order_release);
+        fill_report(rep, EspStatus::NoInstance, (int)maps.size(), probe, meta, k, st, inst);
+        ui_log("[resolve] klass OK, Instance null — enter match then Resolve again");
+        g_lastReport = rep;
+        if (reportOut) *reportOut = rep;
+        return rep.status;
+    }
+
     g_resolved = false;
     g_resolved_flag.store(false, std::memory_order_release);
     fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, k, st, inst);
@@ -830,7 +870,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
             ui_log("[resolve] BattleManager str@%llX = \"%s\"", (unsigned long long)dbg[i], txt);
         }
     }
-    ui_log("[resolve] mem-only failed (no ptrace) — classic/training match, tap Resolve");
+    ui_log("[resolve] failed — in match, tap Resolve (ptrace resolve + mem draw)");
     g_lastReport = rep;
     if (reportOut) *reportOut = rep;
     return rep.status;
