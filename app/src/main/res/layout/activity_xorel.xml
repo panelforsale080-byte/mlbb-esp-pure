@@ -128,45 +128,9 @@
                 android:enabled="false"
                 android:text="@string/btn_start_overlay"
                 android:textAllCaps="false"
-                android:textColor="@color/xorel_bg_start"
+                android:textColor="@color/xorel_text_on_primary_btn"
                 android:textSize="16sp"
                 android:textStyle="bold" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
-                android:gravity="center"
-                android:orientation="horizontal">
-
-                <Button
-                    android:id="@+id/btnEspStart"
-                    android:layout_width="0dp"
-                    android:layout_height="52dp"
-                    android:layout_marginEnd="8dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/bg_fab_esp_start"
-                    android:enabled="false"
-                    android:text="@string/btn_launch_start_esp"
-                    android:textAllCaps="false"
-                    android:textColor="#FFFFFFFF"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-
-                <Button
-                    android:id="@+id/btnEspStop"
-                    android:layout_width="0dp"
-                    android:layout_height="52dp"
-                    android:layout_marginStart="8dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/bg_fab_esp_stop"
-                    android:enabled="false"
-                    android:text="@string/btn_launch_stop_esp"
-                    android:textAllCaps="false"
-                    android:textColor="#FFFFFFFF"
-                    android:textSize="14sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
 
             <Button
                 android:id="@+id/btnGame"

@@ -51,15 +51,31 @@ static std::atomic<bool> g_espActive{false};
 static void apply_menu_style() {
     ImGuiStyle &s = ImGui::GetStyle();
     ImVec4 *c = s.Colors;
-    s.WindowRounding = 10.f;
-    s.FrameRounding = 6.f;
-    s.WindowPadding = ImVec2(10.f, 10.f);
+    s.WindowRounding = 14.f;
+    s.FrameRounding = 8.f;
+    s.ChildRounding = 8.f;
+    s.WindowPadding = ImVec2(14.f, 14.f);
     s.WindowBorderSize = 1.f;
-    c[ImGuiCol_WindowBg] = ImVec4(0.07f, 0.08f, 0.10f, 0.92f);
-    c[ImGuiCol_TitleBgActive] = ImVec4(0.05f, 0.35f, 0.55f, 1.f);
-    c[ImGuiCol_Button] = ImVec4(0.10f, 0.45f, 0.68f, 0.70f);
-    c[ImGuiCol_ButtonHovered] = ImVec4(0.10f, 0.65f, 0.95f, 1.f);
-    c[ImGuiCol_CheckMark] = ImVec4(0.06f, 0.80f, 1.f, 1.f);
+    s.FramePadding = ImVec2(10.f, 8.f);
+    s.ItemSpacing = ImVec2(8.f, 8.f);
+    s.ScaleAllSizes(1.05f);
+    /* Grey + white panel */
+    c[ImGuiCol_Text] = ImVec4(0.12f, 0.16f, 0.22f, 1.f);
+    c[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.48f, 0.52f, 1.f);
+    c[ImGuiCol_WindowBg] = ImVec4(0.97f, 0.98f, 0.99f, 0.96f);
+    c[ImGuiCol_ChildBg] = ImVec4(0.93f, 0.94f, 0.96f, 1.f);
+    c[ImGuiCol_Border] = ImVec4(0.75f, 0.78f, 0.82f, 0.9f);
+    c[ImGuiCol_FrameBg] = ImVec4(0.91f, 0.92f, 0.94f, 1.f);
+    c[ImGuiCol_FrameBgHovered] = ImVec4(0.85f, 0.87f, 0.90f, 1.f);
+    c[ImGuiCol_FrameBgActive] = ImVec4(0.78f, 0.80f, 0.84f, 1.f);
+    c[ImGuiCol_TitleBg] = ImVec4(0.88f, 0.89f, 0.91f, 1.f);
+    c[ImGuiCol_TitleBgActive] = ImVec4(0.55f, 0.58f, 0.62f, 1.f);
+    c[ImGuiCol_Button] = ImVec4(0.42f, 0.45f, 0.50f, 0.95f);
+    c[ImGuiCol_ButtonHovered] = ImVec4(0.35f, 0.38f, 0.44f, 1.f);
+    c[ImGuiCol_ButtonActive] = ImVec4(0.28f, 0.31f, 0.37f, 1.f);
+    c[ImGuiCol_CheckMark] = ImVec4(0.25f, 0.28f, 0.33f, 1.f);
+    c[ImGuiCol_SliderGrab] = ImVec4(0.45f, 0.48f, 0.52f, 1.f);
+    c[ImGuiCol_Separator] = ImVec4(0.82f, 0.84f, 0.87f, 1.f);
 }
 
 static const char *status_name(EspStatus s) {
@@ -248,8 +264,16 @@ static void draw_ui() {
         ImGui::PopStyleVar(3);
     }
 
-    ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowBgAlpha(0.92f);
+    {
+        ImGuiIO &io = ImGui::GetIO();
+        const ImVec2 panelSz(400.f, 480.f);
+        if (io.DisplaySize.x > 1.f && io.DisplaySize.y > 1.f) {
+            ImVec2 pos((io.DisplaySize.x - panelSz.x) * 0.5f, (io.DisplaySize.y - panelSz.y) * 0.5f);
+            ImGui::SetNextWindowPos(pos, ImGuiCond_FirstUseEver);
+        }
+        ImGui::SetNextWindowSize(panelSz, ImGuiCond_FirstUseEver);
+    }
+    ImGui::SetNextWindowBgAlpha(0.98f);
     if (ImGui::Begin("Xorel", &g_showMenu, ImGuiWindowFlags_None)) {
         ImGui::TextDisabled("#147 ESP | IL2CPP runtime offsets only (conRentV1 accuracy)");
         ImGui::Text("Status: %s", status_name(fr.status));
@@ -348,7 +372,7 @@ static bool init_imgui_backends() {
         io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
         io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
         io.ConfigFlags &= ~ImGuiConfigFlags_DockingEnable;
-        ImGui::StyleColorsDark();
+        ImGui::StyleColorsLight();
         apply_menu_style();
         io.Fonts->AddFontDefault();
         ImGui::GetStyle().TouchExtraPadding = ImVec2(4.f, 4.f);

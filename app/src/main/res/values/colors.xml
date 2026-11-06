@@ -1,13 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="xorel_bg_start">#FF0A1628</color>
-    <color name="xorel_bg_end">#FF1A0A2E</color>
-    <color name="xorel_accent">#FF00D4FF</color>
-    <color name="xorel_accent_dim">#6600D4FF</color>
-    <color name="xorel_card">#F2141825</color>
-    <color name="xorel_text_primary">#FFF0F4FC</color>
-    <color name="xorel_text_secondary">#B3A8B8D8</color>
-    <color name="xorel_success">#FF34D399</color>
-    <color name="xorel_error">#FFFF6B6B</color>
-    <color name="xorel_glow">#3300D4FF</color>
+    <!-- Grey + white launcher / chrome -->
+    <color name="xorel_bg_start">#FF2B2E33</color>
+    <color name="xorel_bg_end">#FFF5F6F8</color>
+    <color name="xorel_accent">#FF6B7280</color>
+    <color name="xorel_accent_secondary">#FF9CA3AF</color>
+    <color name="xorel_accent_dim">#806B7280</color>
+    <color name="xorel_card">#F8FFFFFF</color>
+    <color name="xorel_text_primary">#FF1F2937</color>
+    <color name="xorel_text_secondary">#B31F2937</color>
+    <color name="xorel_text_on_primary_btn">#FFFFFFFF</color>
+    <color name="xorel_success">#FF059669</color>
+    <color name="xorel_error">#FFDC2626</color>
+    <color name="xorel_glow">#336B7280</color>
 </resources>
