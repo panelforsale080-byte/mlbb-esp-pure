@@ -91,6 +91,7 @@ public class OverlayService extends Service {
                         ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                         : WindowManager.LayoutParams.TYPE_PHONE;
 
+        /* Start pass-through so game receives touches; cleared when ImGui menu opens (setMenuTouch). */
         surfaceLp =
                 new WindowManager.LayoutParams(
                         WindowManager.LayoutParams.MATCH_PARENT,
@@ -112,7 +113,16 @@ public class OverlayService extends Service {
         int fabSize = dp(56);
         fabLogo.setMinimumWidth(fabSize);
         fabLogo.setMinimumHeight(fabSize);
-        fabLogo.setOnClickListener(v -> NativeBridge.nativeOpenMenu());
+        fabLogo.setOnClickListener(
+                v -> {
+                    NativeBridge.nativeOpenMenu();
+                    /* Ensure window is touchable immediately (JNI also notifies on next frame). */
+                    main.post(
+                            () -> {
+                                setMenuTouch(true);
+                                if (glView != null) glView.requestRender();
+                            });
+                });
 
         WindowManager.LayoutParams fabLp =
                 new WindowManager.LayoutParams(
