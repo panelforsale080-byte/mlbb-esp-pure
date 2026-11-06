@@ -39,4 +39,7 @@ android {
     }
 }
 
-dependencies {}
+dependencies {
+    /* EspActivity: ContextCompat for colors + notification permission check */
+    implementation("androidx.core:core:1.13.1")
+}
