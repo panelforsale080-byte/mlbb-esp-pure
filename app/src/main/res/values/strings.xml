@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Xorel</string>
+    <string name="xorel_tagline">Control layer for your session</string>
+    <string name="key_checking">Checking license…</string>
+    <string name="key_valid">License active</string>
+    <string name="key_expired">License expired</string>
+    <string name="key_network_error">Could not verify license (network)</string>
+    <string name="key_invalid_format">Invalid license data from server</string>
+    <string name="btn_overlay_perm">Allow display over apps</string>
+    <string name="btn_start_overlay">Launch overlay</string>
+    <string name="btn_open_game">Open game &amp; play</string>
+    <string name="card_steps_title">Quick start</string>
+    <string name="step_1">Allow overlay, then launch the floating layer.</string>
+    <string name="step_2">In match: Find pid → Resolve → Start ESP in the ≡ menu.</string>
+    <string name="step_3">Close the menu so touches pass through to the game.</string>
+    <string name="overlay_running">Overlay is already running</string>
+    <string name="toast_need_overlay">Allow overlay permission first</string>
+    <string name="toast_overlay_started">Xorel overlay started — switch to your game</string>
+    <string name="notif_channel">Xorel</string>
+    <string name="notif_title">Xorel</string>
+    <string name="notif_text">Tap ≡ for controls</string>
+</resources>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="xorel_bg_start">#FF0A1628</color>
+    <color name="xorel_bg_end">#FF1A0A2E</color>
+    <color name="xorel_accent">#FF00D4FF</color>
+    <color name="xorel_accent_dim">#6600D4FF</color>
+    <color name="xorel_card">#F2141825</color>
+    <color name="xorel_text_primary">#FFF0F4FC</color>
+    <color name="xorel_text_secondary">#B3A8B8D8</color>
+    <color name="xorel_success">#FF34D399</color>
+    <color name="xorel_error">#FFFF6B6B</color>
+    <color name="xorel_glow">#3300D4FF</color>
+</resources>

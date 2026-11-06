@@ -21,7 +21,7 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 
 public class OverlayService extends Service {
-    private static final String TAG = "MlbbEspOverlay";
+    private static final String TAG = "XorelOverlay";
     public static OverlayService instance;
 
     private WindowManager wm;
@@ -171,10 +171,10 @@ public class OverlayService extends Service {
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(
-                    new NotificationChannel("esp", "MLBB ESP", NotificationManager.IMPORTANCE_LOW));
+                    new NotificationChannel("esp", getString(R.string.notif_channel), NotificationManager.IMPORTANCE_LOW));
             Notification n = new Notification.Builder(this, "esp")
-                    .setContentTitle("MLBB ESP")
-                    .setContentText("Tap ≡ for menu")
+                    .setContentTitle(getString(R.string.notif_title))
+                    .setContentText(getString(R.string.notif_text))
                     .setSmallIcon(android.R.drawable.ic_menu_compass)
                     .build();
             try {
@@ -189,7 +189,7 @@ public class OverlayService extends Service {
         } else {
             @SuppressWarnings("deprecation")
             Notification n = new Notification.Builder(this)
-                    .setContentTitle("MLBB ESP")
+                    .setContentTitle(getString(R.string.notif_title))
                     .setSmallIcon(android.R.drawable.ic_menu_compass)
                     .build();
             startForeground(7, n);

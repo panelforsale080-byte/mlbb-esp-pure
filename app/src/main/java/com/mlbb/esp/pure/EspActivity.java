@@ -1,6 +1,9 @@
 package com.mlbb.esp.pure;
 
 import android.Manifest;
+import android.animation.AnimatorSet;
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -8,47 +11,162 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.view.View;
+import android.view.animation.AccelerateDecelerateInterpolator;
+import android.view.animation.OvershootInterpolator;
 import android.widget.Button;
-import android.widget.LinearLayout;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.core.content.ContextCompat;
+
 /**
- * Launcher only — ImGui + ESP run in {@link OverlayService} so touches pass to MLBB when menu is closed.
+ * Xorel launcher — license check, overlay permission, then floating UI.
  */
 public class EspActivity extends Activity {
     private static final int REQ_NOTIF = 1001;
+    private static final String MLBB_PACKAGE = "com.mobile.legends";
+
     private boolean pendingOverlay = false;
+    private boolean licenseOk = false;
+
+    private View contentColumn;
+    private ImageView logo;
+    private TextView title;
+    private TextView tagline;
+    private TextView keyStatus;
+    private ProgressBar keyProgress;
+    private Button btnOverlay;
+    private Button btnStart;
+    private Button btnGame;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_xorel);
 
-        LinearLayout shell = new LinearLayout(this);
-        shell.setOrientation(LinearLayout.VERTICAL);
-        shell.setBackgroundColor(0xFF121212);
-        shell.setPadding(32, 48, 32, 32);
+        contentColumn = findViewById(R.id.contentColumn);
+        logo = findViewById(R.id.logo);
+        title = findViewById(R.id.title);
+        tagline = findViewById(R.id.tagline);
+        keyStatus = findViewById(R.id.keyStatus);
+        keyProgress = findViewById(R.id.keyProgress);
+        btnOverlay = findViewById(R.id.btnOverlay);
+        btnStart = findViewById(R.id.btnStart);
+        btnGame = findViewById(R.id.btnGame);
 
-        TextView info = new TextView(this);
-        info.setTextColor(0xFFEEEEEE);
-        info.setText(
-                "1) Allow display over other apps\n"
-                        + "2) Start overlay — open MLBB\n"
-                        + "3) Tap ≡ for menu (game touch when menu closed)\n"
-                        + "4) Find pid → Resolve in match");
-        shell.addView(info);
+        btnOverlay.setOnClickListener(v -> openOverlaySettings());
+        btnStart.setOnClickListener(v -> tryStartOverlay());
+        btnGame.setOnClickListener(v -> openMobileLegends());
 
-        Button perm = new Button(this);
-        perm.setText("Allow display over other apps");
-        perm.setOnClickListener(v -> openOverlaySettings());
-        shell.addView(perm);
+        runEntranceAnimation();
+        verifyLicense();
+        refreshUiState();
+    }
 
-        Button start = new Button(this);
-        start.setText("Start overlay");
-        start.setOnClickListener(v -> tryStartOverlay());
-        shell.addView(start);
+    private void runEntranceAnimation() {
+        float dy = 48f;
+        contentColumn.setAlpha(0f);
+        contentColumn.setTranslationY(dy);
+        logo.setAlpha(0f);
+        logo.setScaleX(0.82f);
+        logo.setScaleY(0.82f);
+        title.setAlpha(0f);
+        title.setTranslationY(16f);
+        tagline.setAlpha(0f);
+        tagline.setTranslationY(12f);
 
-        setContentView(shell);
+        AnimatorSet rootIn = new AnimatorSet();
+        rootIn.playTogether(
+                ObjectAnimator.ofFloat(contentColumn, View.ALPHA, 0f, 1f),
+                ObjectAnimator.ofFloat(contentColumn, View.TRANSLATION_Y, dy, 0f));
+        rootIn.setDuration(520);
+        rootIn.setInterpolator(new AccelerateDecelerateInterpolator());
+
+        AnimatorSet hero = new AnimatorSet();
+        hero.playTogether(
+                ObjectAnimator.ofFloat(logo, View.ALPHA, 0f, 1f),
+                ObjectAnimator.ofFloat(logo, View.SCALE_X, 0.82f, 1f),
+                ObjectAnimator.ofFloat(logo, View.SCALE_Y, 0.82f, 1f));
+        hero.setDuration(640);
+        hero.setInterpolator(new OvershootInterpolator(0.9f));
+
+        AnimatorSet textIn = new AnimatorSet();
+        textIn.playTogether(
+                ObjectAnimator.ofFloat(title, View.ALPHA, 0f, 1f),
+                ObjectAnimator.ofFloat(title, View.TRANSLATION_Y, 16f, 0f),
+                ObjectAnimator.ofFloat(tagline, View.ALPHA, 0f, 1f),
+                ObjectAnimator.ofFloat(tagline, View.TRANSLATION_Y, 12f, 0f));
+        textIn.setDuration(400);
+        textIn.setStartDelay(120);
+
+        AnimatorSet all = new AnimatorSet();
+        all.playTogether(rootIn, hero);
+        all.play(textIn).after(hero);
+        all.start();
+
+        /* Subtle continuous pulse on logo */
+        logo.postDelayed(
+                () -> {
+                    if (isFinishing() || logo == null) return;
+                    ObjectAnimator pulseX = ObjectAnimator.ofFloat(logo, View.SCALE_X, 1f, 1.055f);
+                    pulseX.setRepeatCount(ValueAnimator.INFINITE);
+                    pulseX.setRepeatMode(ValueAnimator.REVERSE);
+                    pulseX.setDuration(1800);
+                    pulseX.setInterpolator(new AccelerateDecelerateInterpolator());
+                    ObjectAnimator pulseY = ObjectAnimator.ofFloat(logo, View.SCALE_Y, 1f, 1.055f);
+                    pulseY.setRepeatCount(ValueAnimator.INFINITE);
+                    pulseY.setRepeatMode(ValueAnimator.REVERSE);
+                    pulseY.setDuration(1800);
+                    pulseY.setInterpolator(new AccelerateDecelerateInterpolator());
+                    pulseX.start();
+                    pulseY.start();
+                },
+                900);
+    }
+
+    private void verifyLicense() {
+        keyProgress.setVisibility(View.VISIBLE);
+        keyStatus.setText(R.string.key_checking);
+        keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_text_primary));
+        btnStart.setEnabled(false);
+
+        LicenseGate.verifyAsync(
+                (ok, message) -> {
+                    licenseOk = ok;
+                    keyProgress.setVisibility(View.GONE);
+                    if (ok) {
+                        keyStatus.setText(R.string.key_valid);
+                        keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_success));
+                    } else {
+                        if ("expired".equals(message)) keyStatus.setText(R.string.key_expired);
+                        else if ("invalid".equals(message)) keyStatus.setText(R.string.key_invalid_format);
+                        else keyStatus.setText(R.string.key_network_error);
+                        keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_error));
+                    }
+                    refreshUiState();
+                    /* Small feedback scale on license card */
+                    FrameLayout card = findViewById(R.id.cardLicense);
+                    if (card != null) {
+                        card.setScaleX(0.97f);
+                        card.setScaleY(0.97f);
+                        card.animate().scaleX(1f).scaleY(1f).setDuration(280).start();
+                    }
+                });
+    }
+
+    private void refreshUiState() {
+        boolean overlayOk =
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this);
+        boolean notifOk =
+                Build.VERSION.SDK_INT < 33
+                        || ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                                == PackageManager.PERMISSION_GRANTED;
+        btnStart.setEnabled(licenseOk && overlayOk && notifOk);
+        btnStart.setAlpha(btnStart.isEnabled() ? 1f : 0.45f);
     }
 
     @Override
@@ -58,25 +176,32 @@ public class EspActivity extends Activity {
             pendingOverlay = false;
             startOverlay();
         }
+        refreshUiState();
     }
 
     private void openOverlaySettings() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             pendingOverlay = true;
-            startActivity(new Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName())));
+            startActivity(
+                    new Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + getPackageName())));
         }
     }
 
     private void tryStartOverlay() {
+        if (!licenseOk) {
+            Toast.makeText(this, R.string.key_expired, Toast.LENGTH_LONG).show();
+            verifyLicense();
+            return;
+        }
         if (!canOverlay()) {
             openOverlaySettings();
-            Toast.makeText(this, "Allow overlay permission first", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, R.string.toast_need_overlay, Toast.LENGTH_LONG).show();
             return;
         }
         if (Build.VERSION.SDK_INT >= 33) {
-            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                     != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIF);
                 pendingOverlay = true;
@@ -87,8 +212,12 @@ public class EspActivity extends Activity {
     }
 
     private void startOverlay() {
+        if (!licenseOk) {
+            Toast.makeText(this, R.string.key_expired, Toast.LENGTH_LONG).show();
+            return;
+        }
         if (OverlayService.instance != null) {
-            Toast.makeText(this, "Overlay already running", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, R.string.overlay_running, Toast.LENGTH_SHORT).show();
             moveTaskToBack(true);
             return;
         }
@@ -96,10 +225,24 @@ public class EspActivity extends Activity {
             Intent svc = new Intent(this, OverlayService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc);
             else startService(svc);
-            Toast.makeText(this, "Overlay started — open MLBB", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, R.string.toast_overlay_started, Toast.LENGTH_LONG).show();
             moveTaskToBack(true);
         } catch (Throwable t) {
-            Toast.makeText(this, "Failed: " + t.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, t.getMessage() != null ? t.getMessage() : "Failed", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void openMobileLegends() {
+        try {
+            Intent launch = getPackageManager().getLaunchIntentForPackage(MLBB_PACKAGE);
+            if (launch != null) {
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(launch);
+            } else {
+                Toast.makeText(this, "Game not installed", Toast.LENGTH_LONG).show();
+            }
+        } catch (Throwable t) {
+            Toast.makeText(this, "Cannot open game", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -111,5 +254,6 @@ public class EspActivity extends Activity {
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
         super.onRequestPermissionsResult(code, perms, results);
         if (code == REQ_NOTIF && pendingOverlay) tryStartOverlay();
+        refreshUiState();
     }
 }
