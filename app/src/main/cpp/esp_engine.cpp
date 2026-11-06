@@ -1033,8 +1033,14 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
     }
 
     esp_camera_frame_begin(frame.pid, screenW, screenH, true);
+    EspCameraProjSnap camSnap{};
+    esp_camera_acquire_proj_for_draw(frame.pid, camSnap);
     float sx = 0.f, sy = 0.f;
-    if (esp_camera_world_to_screen(frame.selfX, frame.selfY, frame.selfZ, sx, sy)) {
+    const bool selfOk =
+        camSnap.validMatrixProj
+            ? esp_camera_proj_snap_w2s(camSnap, frame.selfX, frame.selfY, frame.selfZ, sx, sy)
+            : esp_camera_world_to_screen(frame.selfX, frame.selfY, frame.selfZ, sx, sy);
+    if (selfOk) {
         frame.selfScreenX = sx;
         frame.selfScreenY = sy;
         g_selfSx = sx;
@@ -1061,7 +1067,11 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
         if (!t.ent) continue;
         const auto it = g_entScreen.find(t.ent);
         const bool hadPrev = it != g_entScreen.end();
-        if (esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy)) {
+        const bool ok =
+            camSnap.validMatrixProj
+                ? esp_camera_proj_snap_w2s(camSnap, t.worldX, t.worldY, t.worldZ, sx, sy)
+                : esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy);
+        if (ok) {
             t.screenX = sx;
             t.screenY = sy;
             t.screenValid = true;

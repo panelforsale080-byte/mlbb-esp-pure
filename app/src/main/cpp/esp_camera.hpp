@@ -1,4 +1,5 @@
 #pragma once
+#include "matrix4x4.hpp"
 #include <cstdint>
 #include <sys/types.h>
 
@@ -26,4 +27,18 @@ void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t ge
 void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowIl2Ptrace = false);
 void esp_camera_frame_end();
 bool esp_camera_ready();
+/** Acquired after frame_begin with matching pid: stable matrix+screen for all W2S in one draw pass. */
+struct EspCameraProjSnap {
+    pid_t pid = 0;
+    bool validMatrixProj = false;
+    bool useIl2Fallback = false;
+    float screenW = 0.f;
+    float screenH = 0.f;
+    Matrix4x4 viewProj{};
+};
+void esp_camera_acquire_proj_for_draw(pid_t pid, EspCameraProjSnap &out);
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY);
+
+/** Multiply world by snap.viewProj -> screen (no globals); valid only if validMatrixProj. */
+bool esp_camera_proj_snap_w2s(const EspCameraProjSnap &snap, float wx, float wy, float wz, float &outX,
+                              float &outY);

@@ -5,6 +5,7 @@
 #include "proc.hpp"
 #include "remote_call.hpp"
 #include "ui_log.hpp"
+#include <atomic>
 #include <cmath>
 
 namespace {
@@ -28,6 +29,31 @@ static uintptr_t g_matrixMainCamRva = 0;
 static uintptr_t g_mainCameraSlotVa = 0;
 static bool g_mainCameraSlotLiveOk = false;
 static Matrix4x4 g_viewProj;
+
+/* Double-buffer published projection after frame_begin — one consistent matrix for all W2S per pass. */
+static EspCameraProjSnap g_projSlots[2];
+static std::atomic<int> g_projLatest{-1};
+
+static void proj_publish(pid_t pid) {
+    if (pid <= 0) return;
+    const int cur = g_projLatest.load(std::memory_order_relaxed);
+    const int w = (cur < 0 || cur > 1) ? 0 : (1 - cur);
+    EspCameraProjSnap s{};
+    s.pid = pid;
+    s.screenW = g_screenW;
+    s.screenH = g_screenH;
+    if (g_matrixReady && !g_useIl2) {
+        s.validMatrixProj = true;
+        s.useIl2Fallback = false;
+        s.viewProj = g_viewProj;
+    } else if (g_useIl2) {
+        s.validMatrixProj = false;
+        s.useIl2Fallback = true;
+    }
+    g_projSlots[w] = s;
+    g_projLatest.store(w, std::memory_order_release);
+}
+
 static int g_matrixPathLog = 0;
 static int g_matrixFailLog = 0;
 static float g_screenW = 0.f;
@@ -299,6 +325,9 @@ static bool matrix_w2s(float wx, float wy, float wz, float &outX, float &outY) {
 } // namespace
 
 void esp_camera_reset() {
+    g_projLatest.store(-1, std::memory_order_release);
+    g_projSlots[0] = {};
+    g_projSlots[1] = {};
     g_rt = {};
     g_sbcStatics = 0;
     g_gmStatics = 0;
@@ -434,6 +463,8 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
                (unsigned long long)g_gmStatics, (unsigned long long)live,
                (unsigned long long)g_matrixLibBase, (unsigned long long)g_matrixMainCamRva);
     }
+
+    proj_publish(pid);
 }
 
 void esp_camera_frame_end() {
@@ -445,6 +476,30 @@ void esp_camera_frame_end() {
 }
 
 bool esp_camera_ready() { return g_useIl2 || g_matrixReady; }
+
+void esp_camera_acquire_proj_for_draw(pid_t pid, EspCameraProjSnap &out) {
+    out = {};
+    if (pid <= 0) return;
+    const int idx = g_projLatest.load(std::memory_order_acquire);
+    if (idx < 0 || idx > 1) return;
+    out = g_projSlots[idx];
+    if (out.pid != pid) out = {};
+}
+
+bool esp_camera_proj_snap_w2s(const EspCameraProjSnap &snap, float wx, float wy, float wz, float &outX,
+                              float &outY) {
+    if (!snap.validMatrixProj) return false;
+    const Vector3 from(wx, wy, wz);
+    const float w = snap.viewProj.m30 * from.X + snap.viewProj.m31 * from.Y +
+                    snap.viewProj.m32 * from.Z + snap.viewProj.m33;
+    if (w < 0.01f) return false;
+    const Vector3 clip = snap.viewProj.MultiplyPoint(from);
+    const float sx = (clip.X + 1.f) * 0.5f;
+    const float sy = (clip.Y + 1.f) * 0.5f;
+    outX = sx * snap.screenW;
+    outY = snap.screenH - sy * snap.screenH;
+    return std::isfinite(outX) && std::isfinite(outY);
+}
 
 bool esp_camera_world_to_screen(float wx, float wy, float wz, float &outX, float &outY) {
     /* EXTERNAL-MLBB WorldToScreen + Matrix4x4::MultiplyPoint */
