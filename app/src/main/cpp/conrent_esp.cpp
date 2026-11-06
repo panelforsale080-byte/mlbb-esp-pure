@@ -267,7 +267,11 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
             instance_field_offset(s, pid, il2, spKlass, "m_iSummonSkillId");
     }
 
-    uintptr_t sccKlass = find_class_fast(s, pid, il2, images, "ShowCoolDownComp", false);
+    /* dump.cs: Namespace Battle — unqualified name misses class_from_name and falls back to
+     * find_class_scan_images (slow: up to 6000 classes/image). */
+    uintptr_t sccKlass = find_class_fast(s, pid, il2, images, "Battle.ShowCoolDownComp", false);
+    if (!sccKlass)
+        sccKlass = find_class_fast(s, pid, il2, images, "ShowCoolDownComp", false);
     if (sccKlass) {
         out.runtime_fields.scc__dicCD =
             instance_field_offset(s, pid, il2, sccKlass, "_dicCD");
