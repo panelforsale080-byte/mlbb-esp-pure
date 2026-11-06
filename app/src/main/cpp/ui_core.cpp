@@ -16,6 +16,9 @@
 #include <mutex>
 #include <thread>
 
+/* Lock-free latest-frame handoff: reader writes slot (1-latest), publishes with release;
+ * GL/draw copies with acquire — no mutex wait on hot path. */
+
 #include "imgui.h"
 #include "imgui_impl_android.h"
 #include "imgui_impl_opengl3.h"
@@ -33,8 +36,8 @@ static const char *g_glslVersion = "#version 100";
 static std::atomic<bool> g_runReader{false};
 static std::thread g_reader;
 static std::atomic<bool> g_readerStarted{false};
-static std::mutex g_frameMu;
-static EspFrame g_frame;
+static EspFrame g_frameSlots[2];
+static std::atomic<int> g_frameLatest{0};
 static std::atomic<pid_t> g_wantPid{0};
 static std::atomic<bool> g_needResolve{true};
 
@@ -198,21 +201,22 @@ static void reader_loop() {
                 lastStatus = f.status;
                 lastPid = pid;
             }
-            std::lock_guard<std::mutex> lock(g_frameMu);
-            g_frame = std::move(f);
+            const int pub = g_frameLatest.load(std::memory_order_relaxed);
+            const int w = 1 - pub;
+            g_frameSlots[w] = std::move(f);
+            g_frameLatest.store(w, std::memory_order_release);
         }
 
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(g_espActive.load() ? 1 : 8));
+        if (g_espActive.load())
+            std::this_thread::yield(); /* no fixed ms delay — max read rate */
+        else
+            std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
 }
 
 static void draw_ui() {
-    EspFrame fr;
-    {
-        std::lock_guard<std::mutex> lock(g_frameMu);
-        fr = g_frame;
-    }
+    const int slot = g_frameLatest.load(std::memory_order_acquire);
+    EspFrame fr = g_frameSlots[slot];
     const EspResolveReport &rep = esp_last_resolve_report();
     float sw = (float)g_width;
     float sh = (float)g_height;
