@@ -30,6 +30,26 @@ static uintptr_t g_mainCameraSlotVa = 0;
 static bool g_mainCameraSlotLiveOk = false;
 static Matrix4x4 g_viewProj;
 
+static int g_matrixPathLog = 0;
+static int g_matrixFailLog = 0;
+static float g_screenW = 0.f;
+static float g_screenH = 0.f;
+
+static pid_t g_il2Pid = 0;
+static uintptr_t g_rtInvoke = 0;
+static uintptr_t g_getMainMi = 0;
+static uintptr_t g_w2sMi = 0;
+static uintptr_t g_worldToCamMi = 0;
+static uintptr_t g_projectionMi = 0;
+static bool g_il2Ready = false;
+
+static RemoteSession g_sess{};
+static bool g_inFrame = false;
+static uintptr_t g_mainCam = 0;
+static bool g_useIl2 = false;
+static int g_w2sBudget = 0;
+constexpr int kMaxIl2W2sPerFrame = 128;
+
 /* Double-buffer published projection after frame_begin — one consistent matrix for all W2S per pass. */
 static EspCameraProjSnap g_projSlots[2];
 static std::atomic<int> g_projLatest{-1};
@@ -53,26 +73,6 @@ static void proj_publish(pid_t pid) {
     g_projSlots[w] = s;
     g_projLatest.store(w, std::memory_order_release);
 }
-
-static int g_matrixPathLog = 0;
-static int g_matrixFailLog = 0;
-static float g_screenW = 0.f;
-static float g_screenH = 0.f;
-
-static pid_t g_il2Pid = 0;
-static uintptr_t g_rtInvoke = 0;
-static uintptr_t g_getMainMi = 0;
-static uintptr_t g_w2sMi = 0;
-static uintptr_t g_worldToCamMi = 0;
-static uintptr_t g_projectionMi = 0;
-static bool g_il2Ready = false;
-
-static RemoteSession g_sess{};
-static bool g_inFrame = false;
-static uintptr_t g_mainCam = 0;
-static bool g_useIl2 = false;
-static int g_w2sBudget = 0;
-constexpr int kMaxIl2W2sPerFrame = 128;
 
 static void quat_rotate(const Quat &q, float ix, float iy, float iz, float &ox, float &oy,
                         float &oz) {
