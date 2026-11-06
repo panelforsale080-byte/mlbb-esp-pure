@@ -1,10 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Flat, neutral base — avoids flashy AI-gradient look -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <gradient
-        android:type="linear"
-        android:angle="145"
-        android:startColor="@color/xorel_bg_start"
-        android:centerColor="#FFE8EAED"
-        android:endColor="@color/xorel_bg_end" />
+    <solid android:color="@color/xorel_screen_bg" />
 </shape>

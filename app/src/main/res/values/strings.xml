@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Xorel</string>
-    <string name="xorel_tagline">Minimal grey · full control</string>
+    <string name="xorel_tagline">Session tools</string>
+    <string name="section_license">License</string>
+    <string name="section_actions">Actions</string>
     <string name="key_checking">Checking license…</string>
     <string name="key_valid">License active</string>
     <string name="key_expired">License expired</string>

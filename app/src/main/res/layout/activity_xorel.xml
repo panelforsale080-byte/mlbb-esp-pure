@@ -6,151 +6,177 @@
     android:layout_height="match_parent"
     android:background="@drawable/bg_xorel_gradient">
 
-    <!-- Ambient glow orbs (static decorative layers behind scroll) -->
-    <View
-        android:layout_width="240dp"
-        android:layout_height="240dp"
-        android:layout_gravity="top|end"
-        android:layout_marginTop="-48dp"
-        android:layout_marginEnd="-72dp"
-        android:alpha="0.5"
-        android:background="@drawable/bg_xorel_glow_orb" />
-
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:clipToPadding="false"
         android:fillViewport="true"
-        android:padding="20dp"
+        android:overScrollMode="never"
+        android:paddingStart="20dp"
+        android:paddingEnd="20dp"
+        android:paddingTop="28dp"
+        android:paddingBottom="28dp"
         android:scrollbars="none">
 
         <LinearLayout
             android:id="@+id/contentColumn"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_horizontal"
-            android:orientation="vertical"
-            android:paddingBottom="32dp">
+            android:orientation="vertical">
 
-            <!-- Hero: logo + title -->
-            <ImageView
-                android:id="@+id/logo"
-                android:layout_width="88dp"
-                android:layout_height="88dp"
-                android:contentDescription="@string/app_name"
-                android:elevation="8dp"
-                android:src="@drawable/ic_xorel_logo" />
-
+            <!-- App bar -->
             <TextView
-                android:id="@+id/title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:fontFamily="sans-serif-medium"
-                android:letterSpacing="0.12"
+                android:letterSpacing="0.08"
                 android:text="@string/app_name"
                 android:textAllCaps="true"
-                android:textColor="@color/xorel_text_primary"
-                android:textSize="32sp" />
+                android:textColor="@color/xorel_text_muted"
+                android:textSize="11sp"
+                android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/tagline"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:gravity="center"
-                android:text="@string/xorel_tagline"
-                android:textColor="@color/xorel_text_secondary"
-                android:textSize="14sp" />
-
-            <!-- License strip -->
-            <FrameLayout
-                android:id="@+id/cardLicense"
+            <!-- Hero card: logo + titles -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="28dp"
+                android:layout_marginTop="16dp"
                 android:background="@drawable/bg_xorel_card"
-                android:elevation="6dp"
-                android:padding="18dp">
+                android:elevation="2dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="20dp">
+
+                <ImageView
+                    android:id="@+id/logo"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:contentDescription="@string/app_name"
+                    android:src="@drawable/ic_xorel_logo" />
 
                 <LinearLayout
-                    android:layout_width="match_parent"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp"
+                    android:layout_weight="1"
                     android:orientation="vertical">
 
                     <TextView
+                        android:id="@+id/title"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="License"
-                        android:textColor="@color/xorel_accent"
-                        android:textSize="12sp"
-                        android:textStyle="bold" />
+                        android:fontFamily="sans-serif-medium"
+                        android:text="@string/app_name"
+                        android:textColor="@color/xorel_text_primary"
+                        android:textSize="22sp" />
 
                     <TextView
-                        android:id="@+id/keyStatus"
-                        android:layout_width="match_parent"
+                        android:id="@+id/tagline"
+                        android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:text="@string/key_checking"
-                        android:textColor="@color/xorel_text_primary"
-                        android:textSize="15sp"
-                        tools:text="License active" />
-
-                    <ProgressBar
-                        android:id="@+id/keyProgress"
-                        style="@android:style/Widget.ProgressBar.Horizontal"
-                        android:layout_width="match_parent"
-                        android:layout_height="4dp"
-                        android:layout_marginTop="12dp"
-                        android:indeterminate="true"
-                        android:indeterminateTint="@color/xorel_accent" />
+                        android:layout_marginTop="4dp"
+                        android:text="@string/xorel_tagline"
+                        android:textColor="@color/xorel_text_secondary"
+                        android:textSize="13sp" />
                 </LinearLayout>
-            </FrameLayout>
+            </LinearLayout>
+
+            <!-- License -->
+            <LinearLayout
+                android:id="@+id/cardLicense"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/bg_xorel_card"
+                android:elevation="2dp"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/section_license"
+                    android:textColor="@color/xorel_text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="12dp"
+                    android:background="@drawable/bg_xorel_divider" />
+
+                <TextView
+                    android:id="@+id/keyStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/key_checking"
+                    android:textColor="@color/xorel_text_secondary"
+                    android:textSize="14sp"
+                    tools:text="License active" />
+
+                <ProgressBar
+                    android:id="@+id/keyProgress"
+                    style="@android:style/Widget.ProgressBar.Horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="3dp"
+                    android:layout_marginTop="14dp"
+                    android:indeterminate="true"
+                    android:indeterminateTint="@color/xorel_btn_primary" />
+            </LinearLayout>
 
             <!-- Actions -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="22dp"
+                android:text="@string/section_actions"
+                android:textColor="@color/xorel_text_primary"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
             <Button
                 android:id="@+id/btnOverlay"
                 android:layout_width="match_parent"
-                android:layout_height="56dp"
-                android:layout_marginTop="18dp"
+                android:layout_height="48dp"
+                android:layout_marginTop="10dp"
                 android:background="@drawable/bg_xorel_button_outline"
                 android:text="@string/btn_overlay_perm"
                 android:textAllCaps="false"
                 android:textColor="@color/xorel_text_primary"
-                android:textSize="15sp" />
+                android:textSize="14sp" />
 
             <Button
                 android:id="@+id/btnStart"
                 android:layout_width="match_parent"
-                android:layout_height="56dp"
-                android:layout_marginTop="12dp"
+                android:layout_height="48dp"
+                android:layout_marginTop="8dp"
                 android:background="@drawable/bg_xorel_button"
                 android:enabled="false"
                 android:text="@string/btn_start_overlay"
                 android:textAllCaps="false"
                 android:textColor="@color/xorel_text_on_primary_btn"
-                android:textSize="16sp"
+                android:textSize="14sp"
                 android:textStyle="bold" />
 
             <Button
                 android:id="@+id/btnGame"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
                 android:layout_marginTop="8dp"
-                android:background="@android:color/transparent"
-                android:minHeight="0dp"
-                android:padding="12dp"
+                android:background="@drawable/bg_xorel_button_outline"
                 android:text="@string/btn_open_game"
                 android:textAllCaps="false"
-                android:textColor="@color/xorel_accent" />
+                android:textColor="@color/xorel_text_primary"
+                android:textSize="14sp" />
 
-            <!-- Steps card -->
+            <!-- Steps -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
+                android:layout_marginTop="20dp"
                 android:background="@drawable/bg_xorel_card"
-                android:elevation="4dp"
+                android:elevation="2dp"
                 android:orientation="vertical"
                 android:padding="18dp">
 
@@ -159,33 +185,80 @@
                     android:layout_height="wrap_content"
                     android:text="@string/card_steps_title"
                     android:textColor="@color/xorel_text_primary"
-                    android:textSize="16sp"
+                    android:textSize="13sp"
                     android:textStyle="bold" />
 
-                <TextView
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:drawablePadding="10dp"
-                    android:text="@string/step_1"
-                    android:textColor="@color/xorel_text_secondary"
-                    android:textSize="14sp" />
+                    android:orientation="horizontal">
 
-                <TextView
+                    <TextView
+                        android:layout_width="24dp"
+                        android:layout_height="wrap_content"
+                        android:text="1"
+                        android:textColor="@color/xorel_text_muted"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/step_1"
+                        android:textColor="@color/xorel_text_secondary"
+                        android:textSize="13sp"
+                        android:lineSpacingMultiplier="1.15" />
+                </LinearLayout>
+
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:text="@string/step_2"
-                    android:textColor="@color/xorel_text_secondary"
-                    android:textSize="14sp" />
+                    android:orientation="horizontal">
 
-                <TextView
+                    <TextView
+                        android:layout_width="24dp"
+                        android:layout_height="wrap_content"
+                        android:text="2"
+                        android:textColor="@color/xorel_text_muted"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/step_2"
+                        android:textColor="@color/xorel_text_secondary"
+                        android:textSize="13sp"
+                        android:lineSpacingMultiplier="1.15" />
+                </LinearLayout>
+
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:text="@string/step_3"
-                    android:textColor="@color/xorel_text_secondary"
-                    android:textSize="14sp" />
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="24dp"
+                        android:layout_height="wrap_content"
+                        android:text="3"
+                        android:textColor="@color/xorel_text_muted"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/step_3"
+                        android:textColor="@color/xorel_text_secondary"
+                        android:textSize="13sp"
+                        android:lineSpacingMultiplier="1.15" />
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
     </ScrollView>

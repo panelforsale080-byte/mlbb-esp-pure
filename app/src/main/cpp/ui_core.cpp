@@ -51,31 +51,41 @@ static std::atomic<bool> g_espActive{false};
 static void apply_menu_style() {
     ImGuiStyle &s = ImGui::GetStyle();
     ImVec4 *c = s.Colors;
-    s.WindowRounding = 14.f;
-    s.FrameRounding = 8.f;
-    s.ChildRounding = 8.f;
-    s.WindowPadding = ImVec2(14.f, 14.f);
+    s.WindowRounding = 10.f;
+    s.FrameRounding = 6.f;
+    s.ChildRounding = 6.f;
+    s.WindowPadding = ImVec2(14.f, 12.f);
     s.WindowBorderSize = 1.f;
-    s.FramePadding = ImVec2(10.f, 8.f);
-    s.ItemSpacing = ImVec2(8.f, 8.f);
-    s.ScaleAllSizes(1.05f);
-    /* Grey + white panel */
-    c[ImGuiCol_Text] = ImVec4(0.12f, 0.16f, 0.22f, 1.f);
-    c[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.48f, 0.52f, 1.f);
-    c[ImGuiCol_WindowBg] = ImVec4(0.97f, 0.98f, 0.99f, 0.96f);
-    c[ImGuiCol_ChildBg] = ImVec4(0.93f, 0.94f, 0.96f, 1.f);
-    c[ImGuiCol_Border] = ImVec4(0.75f, 0.78f, 0.82f, 0.9f);
-    c[ImGuiCol_FrameBg] = ImVec4(0.91f, 0.92f, 0.94f, 1.f);
-    c[ImGuiCol_FrameBgHovered] = ImVec4(0.85f, 0.87f, 0.90f, 1.f);
-    c[ImGuiCol_FrameBgActive] = ImVec4(0.78f, 0.80f, 0.84f, 1.f);
-    c[ImGuiCol_TitleBg] = ImVec4(0.88f, 0.89f, 0.91f, 1.f);
-    c[ImGuiCol_TitleBgActive] = ImVec4(0.55f, 0.58f, 0.62f, 1.f);
-    c[ImGuiCol_Button] = ImVec4(0.42f, 0.45f, 0.50f, 0.95f);
-    c[ImGuiCol_ButtonHovered] = ImVec4(0.35f, 0.38f, 0.44f, 1.f);
-    c[ImGuiCol_ButtonActive] = ImVec4(0.28f, 0.31f, 0.37f, 1.f);
-    c[ImGuiCol_CheckMark] = ImVec4(0.25f, 0.28f, 0.33f, 1.f);
-    c[ImGuiCol_SliderGrab] = ImVec4(0.45f, 0.48f, 0.52f, 1.f);
-    c[ImGuiCol_Separator] = ImVec4(0.82f, 0.84f, 0.87f, 1.f);
+    s.FramePadding = ImVec2(10.f, 7.f);
+    s.ItemSpacing = ImVec2(8.f, 7.f);
+    s.ScrollbarSize = 12.f;
+    /* Slate-grey overlay — readable on game, not “neon AI” */
+    const ImVec4 g0 = ImVec4(0.11f, 0.13f, 0.16f, 0.97f); /* window */
+    const ImVec4 g1 = ImVec4(0.16f, 0.18f, 0.22f, 1.f);  /* child / frames */
+    const ImVec4 g2 = ImVec4(0.22f, 0.24f, 0.28f, 1.f);  /* hovered */
+    const ImVec4 g3 = ImVec4(0.28f, 0.30f, 0.35f, 1.f);  /* active */
+    c[ImGuiCol_Text] = ImVec4(0.93f, 0.94f, 0.96f, 1.f);
+    c[ImGuiCol_TextDisabled] = ImVec4(0.50f, 0.53f, 0.58f, 1.f);
+    c[ImGuiCol_WindowBg] = g0;
+    c[ImGuiCol_ChildBg] = g1;
+    c[ImGuiCol_PopupBg] = g0;
+    c[ImGuiCol_Border] = ImVec4(0.32f, 0.35f, 0.40f, 0.85f);
+    c[ImGuiCol_FrameBg] = g1;
+    c[ImGuiCol_FrameBgHovered] = g2;
+    c[ImGuiCol_FrameBgActive] = g3;
+    c[ImGuiCol_TitleBg] = ImVec4(0.13f, 0.15f, 0.18f, 1.f);
+    c[ImGuiCol_TitleBgActive] = ImVec4(0.20f, 0.22f, 0.26f, 1.f);
+    c[ImGuiCol_Button] = ImVec4(0.32f, 0.35f, 0.40f, 1.f);
+    c[ImGuiCol_ButtonHovered] = ImVec4(0.38f, 0.41f, 0.47f, 1.f);
+    c[ImGuiCol_ButtonActive] = ImVec4(0.45f, 0.48f, 0.54f, 1.f);
+    c[ImGuiCol_CheckMark] = ImVec4(0.85f, 0.87f, 0.91f, 1.f);
+    c[ImGuiCol_SliderGrab] = ImVec4(0.55f, 0.58f, 0.63f, 1.f);
+    c[ImGuiCol_SliderGrabActive] = ImVec4(0.65f, 0.68f, 0.73f, 1.f);
+    c[ImGuiCol_Separator] = ImVec4(0.35f, 0.38f, 0.43f, 0.9f);
+    c[ImGuiCol_ScrollbarBg] = ImVec4(0.10f, 0.11f, 0.13f, 0.6f);
+    c[ImGuiCol_ScrollbarGrab] = g2;
+    c[ImGuiCol_ScrollbarGrabHovered] = g3;
+    c[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.50f, 0.52f, 0.58f, 1.f);
 }
 
 static const char *status_name(EspStatus s) {
@@ -372,7 +382,7 @@ static bool init_imgui_backends() {
         io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
         io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
         io.ConfigFlags &= ~ImGuiConfigFlags_DockingEnable;
-        ImGui::StyleColorsLight();
+        ImGui::StyleColorsDark();
         apply_menu_style();
         io.Fonts->AddFontDefault();
         ImGui::GetStyle().TouchExtraPadding = ImVec2(4.f, 4.f);
