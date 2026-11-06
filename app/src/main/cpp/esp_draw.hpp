@@ -7,6 +7,7 @@ struct EspFeatures {
     bool line = true;
     bool health = true;
     bool name = true;
+    bool enemyCooldown = true;
     bool distance = true;
     bool monsterBox = true;
     bool monsterName = true;

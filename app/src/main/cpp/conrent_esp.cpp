@@ -254,6 +254,33 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
             instance_field_offset(s, pid, il2, seKlass, "m_bSameCampType");
         out.runtime_fields.se_m_Hp = instance_field_offset(s, pid, il2, seKlass, "m_Hp");
         out.runtime_fields.se_m_HpMax = instance_field_offset(s, pid, il2, seKlass, "m_HpMax");
+        out.runtime_fields.se_m_ShowCoolDownComp =
+            instance_field_offset(s, pid, il2, seKlass, "m_ShowCoolDownComp");
+    }
+
+    uintptr_t spKlass = find_class_fast(s, pid, il2, images, "ShowPlayer", false);
+    out.runtime_fields.show_player_klass = spKlass;
+    if (spKlass) {
+        out.runtime_fields.sp_m_HeroName =
+            instance_field_offset(s, pid, il2, spKlass, "m_HeroName");
+        out.runtime_fields.sp_m_iSummonSkillId =
+            instance_field_offset(s, pid, il2, spKlass, "m_iSummonSkillId");
+    }
+
+    uintptr_t sccKlass = find_class_fast(s, pid, il2, images, "ShowCoolDownComp", false);
+    if (sccKlass) {
+        out.runtime_fields.scc__dicCD =
+            instance_field_offset(s, pid, il2, sccKlass, "_dicCD");
+    }
+
+    uintptr_t cddKlass = find_class_fast(s, pid, il2, images, "Battle.CoolDownData", false);
+    if (!cddKlass) cddKlass = find_class_fast(s, pid, il2, images, "CoolDownData", false);
+    if (cddKlass) {
+        out.runtime_fields.cdd_iSpellID = instance_field_offset(s, pid, il2, cddKlass, "iSpellID");
+        out.runtime_fields.cdd_uiCoolTime =
+            instance_field_offset(s, pid, il2, cddKlass, "uiCoolTime");
+        out.runtime_fields.cdd_uiStartTime =
+            instance_field_offset(s, pid, il2, cddKlass, "uiStartTime");
     }
 
     const uintptr_t gmKlass = find_class_fast(s, pid, il2, images, "GameMethod", false);

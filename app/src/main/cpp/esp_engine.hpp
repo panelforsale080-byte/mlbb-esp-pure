@@ -22,7 +22,9 @@ struct EspTarget {
     int meters = 0;
     int hp = 0, hpMax = 0;
     int kind = 0; /* 0 player 1 monster */
-    char label[24] = {};
+    char label[192] = {};
+    int cdSkill1 = 0, cdSkill2 = 0, cdSkill3 = 0, cdSpell = 0;
+    bool cdValid = false;
 };
 
 struct EspFrame {

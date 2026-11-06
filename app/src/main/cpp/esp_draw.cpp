@@ -21,7 +21,8 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
     const bool anyBox = monster ? feat.monsterBox : feat.box;
     const bool anyName = monster ? feat.monsterName : feat.name;
     const bool anyHp = monster ? feat.monsterHealth : feat.health;
-    if (!anyBox && !anyName && !anyHp && !feat.line && !feat.distance) return;
+    const bool anyCd = !monster && feat.enemyCooldown;
+    if (!anyBox && !anyName && !anyHp && !feat.line && !feat.distance && !anyCd) return;
     if (!t.screenValid) return;
 
     const ImVec2 root{t.screenX, t.screenY};
@@ -48,6 +49,7 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
         const ImU32 col = monster ? IM_COL32(255, 255, 255, 200) : IM_COL32(255, 255, 255, 230);
         entity_box(draw, boxStart, boxEnd, col, monster ? 6.f : 8.f);
     }
+    float textYBelowBar = boxEnd.y + 6.f;
     if (anyHp && t.hpMax > 0) {
         const float pct = std::clamp((float)t.hp / (float)t.hpMax, 0.f, 1.f);
         const ImVec2 barStart{boxStart.x, boxEnd.y + 3.f};
@@ -61,6 +63,16 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
             draw->AddText(ImVec2(barEnd.x + 4.f, barStart.y - 2.f), IM_COL32(255, 255, 255, 220),
                           hpTxt);
         }
+        textYBelowBar = barEnd.y + 6.f;
+    }
+    if (anyCd && t.cdValid && !monster) {
+        char line[56];
+        std::snprintf(line, sizeof(line), "CD %d/%d/%d SP%d", t.cdSkill1, t.cdSkill2, t.cdSkill3,
+                      t.cdSpell);
+        const ImVec2 ts = ImGui::CalcTextSize(line);
+        draw->AddText(ImVec2(centerX - ts.x * 0.5f, textYBelowBar), IM_COL32(180, 220, 255, 230),
+                      line);
+        textYBelowBar += ts.y + 2.f;
     }
     if (anyName && t.label[0]) {
         const ImVec2 ts = ImGui::CalcTextSize(t.label);
@@ -71,7 +83,7 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
         char dist[24];
         std::snprintf(dist, sizeof(dist), "%dm", t.meters);
         const ImVec2 ts = ImGui::CalcTextSize(dist);
-        draw->AddText(ImVec2(centerX - ts.x * 0.5f, boxEnd.y + 34.f), IM_COL32(200, 200, 200, 220),
+        draw->AddText(ImVec2(centerX - ts.x * 0.5f, textYBelowBar), IM_COL32(200, 200, 200, 220),
                       dist);
     }
 }
@@ -83,7 +95,8 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     if (!draw || screenW < 1.f || screenH < 1.f) return;
     if (frame.status != EspStatus::Ready) return;
 
-    const bool anyPlayer = feat.box || feat.line || feat.health || feat.name || feat.distance;
+    const bool anyPlayer =
+        feat.box || feat.line || feat.health || feat.name || feat.distance || feat.enemyCooldown;
     const bool anyMon =
         feat.monsterBox || feat.monsterName || feat.monsterHealth;
     if (!anyPlayer && !anyMon) return;

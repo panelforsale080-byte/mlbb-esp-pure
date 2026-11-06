@@ -18,6 +18,13 @@ struct EspRuntimeOff {
     uintptr_t sameCamp = 0;
     uintptr_t hp = 0;
     uintptr_t hpMax = 0;
+    uintptr_t showCooldownComp = 0;
+    uintptr_t heroName = 0;
+    uintptr_t summonSkillId = 0;
+    uintptr_t showCdDic = 0;
+    uintptr_t cddSpellId = 0;
+    uintptr_t cddCoolTime = 0;
+    uintptr_t cddStartTime = 0;
 };
 
 void esp_runtime_off_apply(const ConrentResolve &cr);

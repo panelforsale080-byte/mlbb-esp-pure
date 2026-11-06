@@ -261,6 +261,7 @@ static void draw_ui() {
         ImGui::Checkbox("Name", &g_feat.name);
         ImGui::SameLine();
         ImGui::Checkbox("Distance", &g_feat.distance);
+        ImGui::Checkbox("Enemy CD", &g_feat.enemyCooldown);
 
         ImGui::SeparatorText("Monster");
         ImGui::Checkbox("Box##m", &g_feat.monsterBox);

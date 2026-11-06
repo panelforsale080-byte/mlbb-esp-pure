@@ -9,12 +9,15 @@
 #include "remote_elf.hpp"
 #include "ui_log.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <elf.h>
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 static std::mutex g_mu;
 static pid_t g_pid = 0;
@@ -123,6 +126,143 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
         if ((int)out.size() >= count) break;
     }
     return !out.empty();
+}
+
+static bool utf16le_to_utf8(const std::vector<uint16_t> &units, char *out, size_t outSz) {
+    if (!out || outSz == 0) return false;
+    out[0] = '\0';
+    size_t o = 0;
+    const size_t n = units.size();
+    for (size_t i = 0; i < n && o + 4 < outSz;) {
+        uint32_t c = units[i];
+        if (c >= 0xD800u && c <= 0xDBFFu && i + 1 < n) {
+            const uint32_t low = units[i + 1];
+            if (low >= 0xDC00u && low <= 0xDFFFu) {
+                c = 0x10000u + ((c - 0xD800u) << 10) + (low - 0xDC00u);
+                i += 2;
+            } else
+                ++i;
+        } else
+            ++i;
+        if (c < 0x80u) {
+            out[o++] = static_cast<char>(c);
+        } else if (c < 0x800u) {
+            out[o++] = static_cast<char>(0xC0u | (c >> 6));
+            out[o++] = static_cast<char>(0x80u | (c & 0x3Fu));
+        } else if (c < 0x10000u) {
+            out[o++] = static_cast<char>(0xE0u | (c >> 12));
+            out[o++] = static_cast<char>(0x80u | ((c >> 6) & 0x3Fu));
+            out[o++] = static_cast<char>(0x80u | (c & 0x3Fu));
+        } else {
+            out[o++] = static_cast<char>(0xF0u | (c >> 18));
+            out[o++] = static_cast<char>(0x80u | ((c >> 12) & 0x3Fu));
+            out[o++] = static_cast<char>(0x80u | ((c >> 6) & 0x3Fu));
+            out[o++] = static_cast<char>(0x80u | (c & 0x3Fu));
+        }
+    }
+    if (o < outSz) out[o] = '\0';
+    else out[outSz - 1] = '\0';
+    return o > 0;
+}
+
+static bool read_il2_managed_string(pid_t pid, uintptr_t strObj, char *out, size_t outSz) {
+    if (!out || outSz == 0) return false;
+    out[0] = '\0';
+    if (!strObj || !mem_ptr_ok(strObj)) return false;
+    int32_t len = 0;
+    if (!mem_read(pid, strObj + 0x10, len) || len <= 0 || len > 96) return false;
+    std::vector<uint8_t> raw((size_t)len * 2);
+    if (!mem_read(pid, strObj + 0x14, raw.data(), raw.size())) return false;
+    std::vector<uint16_t> units((size_t)len);
+    for (int32_t i = 0; i < len; ++i)
+        units[(size_t)i] =
+            (uint16_t)raw[(size_t)i * 2] | ((uint16_t)raw[(size_t)i * 2 + 1] << 8);
+    return utf16le_to_utf8(units, out, outSz);
+}
+
+struct CoolDownTimerState {
+    uint32_t startTime = 0;
+    uint32_t durationMs = 0;
+    std::chrono::steady_clock::time_point observedAt{};
+    bool valid = false;
+};
+
+static std::unordered_map<uintptr_t, CoolDownTimerState> g_cooldownTimers;
+
+static void apply_cooldown_skill_slot(int skillID, int playerSpellId, int timeLeftSec,
+                                      int &s1, int &s2, int &s3, int &spell, int &regen) {
+    const int fSkill = skillID % 100;
+    if (skillID < 20000) {
+        switch (fSkill) {
+        case 10:
+            if (timeLeftSec > s1) s1 = timeLeftSec;
+            break;
+        case 20:
+            if (timeLeftSec > s2) s2 = timeLeftSec;
+            break;
+        case 30:
+            if (timeLeftSec > s3) s3 = timeLeftSec;
+            break;
+        default:
+            break;
+        }
+    } else {
+        if (skillID == 21010 || skillID == 2101 || skillID == 20010) {
+            if (timeLeftSec > regen) regen = timeLeftSec;
+        } else if (skillID == playerSpellId || (playerSpellId > 0 && (skillID / 10) == playerSpellId)) {
+            if (timeLeftSec > spell) spell = timeLeftSec;
+        } else if (fSkill == 10 || (skillID <= 20500 && (skillID % 10) == 0)) {
+            if (timeLeftSec > spell) spell = timeLeftSec;
+        }
+    }
+}
+
+static bool fill_show_cooldowns(pid_t pid, uintptr_t showEnt, int playerSpellId, EspTarget &t) {
+    const EspRuntimeOff &R = esp_runtime_off();
+    t.cdSkill1 = t.cdSkill2 = t.cdSkill3 = t.cdSpell = 0;
+    t.cdValid = false;
+    if (!R.showCooldownComp || !R.showCdDic || !R.cddSpellId || !R.cddCoolTime || !R.cddStartTime)
+        return false;
+    uintptr_t cdComp = 0;
+    if (!mem_read(pid, showEnt + R.showCooldownComp, cdComp) || !cdComp || !mem_ptr_ok(cdComp))
+        return false;
+    uintptr_t dic = 0;
+    if (!mem_read(pid, cdComp + R.showCdDic, dic) || !dic || !mem_ptr_ok(dic)) return false;
+    std::vector<std::pair<int, uintptr_t>> items;
+    if (!dict_entries(pid, dic, items) || items.empty()) return false;
+    int s1 = 0, s2 = 0, s3 = 0, spell = 0, regen = 0;
+    const auto now = std::chrono::steady_clock::now();
+    for (const auto &kv : items) {
+        const int skillID = kv.first;
+        const uintptr_t cdAddr = kv.second;
+        if (skillID <= 0 || !cdAddr || !mem_ptr_ok(cdAddr)) continue;
+        uint32_t startTime = 0, coolTime = 0;
+        if (!mem_read(pid, cdAddr + R.cddStartTime, startTime) ||
+            !mem_read(pid, cdAddr + R.cddCoolTime, coolTime))
+            continue;
+        if (coolTime == 0) continue;
+        auto &timer = g_cooldownTimers[cdAddr];
+        if (timer.startTime != startTime || !timer.valid) {
+            timer.startTime = startTime;
+            timer.durationMs = coolTime;
+            timer.observedAt = now;
+            timer.valid = true;
+        }
+        const auto elapsedMs = static_cast<uint32_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - timer.observedAt).count());
+        const uint32_t remainingMs =
+            elapsedMs >= timer.durationMs ? 0u : (timer.durationMs - elapsedMs);
+        if (remainingMs == 0) continue;
+        const int timeLeftSec = static_cast<int>((remainingMs + 999u) / 1000u);
+        apply_cooldown_skill_slot(skillID, playerSpellId, timeLeftSec, s1, s2, s3, spell, regen);
+    }
+    t.cdSkill1 = s1;
+    t.cdSkill2 = s2;
+    t.cdSkill3 = s3;
+    t.cdSpell = spell;
+    (void)regen;
+    t.cdValid = true;
+    return true;
 }
 
 static bool list_entities(pid_t pid, uintptr_t list, std::vector<uintptr_t> &out) {
@@ -561,6 +701,7 @@ void esp_reset() {
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
     g_resolved = false;
+    g_cooldownTimers.clear();
     esp_runtime_off_clear();
     esp_camera_reset();
 }
@@ -786,8 +927,23 @@ EspStatus esp_tick(EspFrame &out) {
             std::snprintf(t.label, sizeof(t.label), "%s", labelOverride);
         else if (kind == 1)
             std::snprintf(t.label, sizeof(t.label), "%s", esp_monster_label(id));
-        else
-            std::snprintf(t.label, sizeof(t.label), "P%d", id);
+        else {
+            t.label[0] = '\0';
+            if (R.heroName) {
+                uintptr_t strPtr = 0;
+                if (mem_read(g_pid, v + R.heroName, strPtr) && strPtr && mem_ptr_ok(strPtr)) {
+                    char hn[180] = {};
+                    if (read_il2_managed_string(g_pid, strPtr, hn, sizeof(hn)))
+                        std::snprintf(t.label, sizeof(t.label), "%s", hn);
+                }
+            }
+            if (!t.label[0])
+                std::snprintf(t.label, sizeof(t.label), "P%d", id);
+            const bool isLocal = local && (v == local);
+            int spellId = 0;
+            if (R.summonSkillId) mem_read(g_pid, v + R.summonSkillId, spellId);
+            if (!isLocal) fill_show_cooldowns(g_pid, v, spellId, t);
+        }
         out.targets.push_back(t);
     };
 
