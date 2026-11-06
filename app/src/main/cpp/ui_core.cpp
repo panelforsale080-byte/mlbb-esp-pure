@@ -229,6 +229,25 @@ static void draw_ui() {
 
     if (!g_showMenu) return;
 
+    /* Full-screen invisible layer behind the panel: tap outside window closes menu (pass-through on next frame). */
+    {
+        ImGuiIO &io = ImGui::GetIO();
+        ImGui::SetNextWindowPos(ImVec2(0.f, 0.f));
+        ImGui::SetNextWindowSize(io.DisplaySize);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
+        ImGui::Begin(
+                "##xorel_backdrop", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings
+                        | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove);
+        ImGui::InvisibleButton("##backdrop_hit", io.DisplaySize);
+        if (ImGui::IsItemClicked(0))
+            g_showMenu = false;
+        ImGui::End();
+        ImGui::PopStyleVar(3);
+    }
+
     ImGui::SetNextWindowSize({360, 420}, ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.92f);
     if (ImGui::Begin("Xorel", &g_showMenu, ImGuiWindowFlags_None)) {
@@ -394,7 +413,7 @@ void ui_gl_surface_created() {
     if (!init_imgui_backends()) return;
     g_glReady = true;
     reader_start_once();
-    ui_log("Xorel overlay — tap ≡ for menu, touches pass to game when closed");
+    ui_log("Xorel overlay — tap icon for menu; tap outside panel to close & play");
 }
 
 static void reader_start_once() {

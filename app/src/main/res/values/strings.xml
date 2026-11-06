@@ -25,5 +25,5 @@
     <string name="toast_overlay_not_running">Start the overlay first</string>
     <string name="notif_channel">Xorel</string>
     <string name="notif_title">Xorel</string>
-    <string name="notif_text">Tap Xorel icon for menu · green/red = ESP</string>
+    <string name="notif_text">Tap Xorel icon — Start/Stop ESP is inside the menu</string>
 </resources>

@@ -20,7 +20,6 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
-import android.widget.TextView;
 
 public class OverlayService extends Service {
     public static final String EXTRA_CMD = "xorel_cmd";
@@ -34,8 +33,6 @@ public class OverlayService extends Service {
     private FrameLayout root;
     private GlImGuiView glView;
     private ImageButton fabLogo;
-    private TextView fabStart;
-    private TextView fabStop;
     private WindowManager.LayoutParams surfaceLp;
     private final Handler main = new Handler(Looper.getMainLooper());
     private volatile boolean glReady = false;
@@ -79,7 +76,7 @@ public class OverlayService extends Service {
                     glReady = true;
                     NativeBridge.nativeMinimizeMenu();
                     flushPendingCmd();
-                    Log.i(TAG, "GL ready — menu minimized; tap Xorel icon for panel");
+                    Log.i(TAG, "GL ready — tap Xorel icon for menu");
                 }));
         root.addView(
                 glView,
@@ -91,7 +88,6 @@ public class OverlayService extends Service {
                         ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                         : WindowManager.LayoutParams.TYPE_PHONE;
 
-        /* Start pass-through so game receives touches; cleared when ImGui menu opens (setMenuTouch). */
         surfaceLp =
                 new WindowManager.LayoutParams(
                         WindowManager.LayoutParams.MATCH_PARENT,
@@ -116,7 +112,6 @@ public class OverlayService extends Service {
         fabLogo.setOnClickListener(
                 v -> {
                     NativeBridge.nativeOpenMenu();
-                    /* Ensure window is touchable immediately (JNI also notifies on next frame). */
                     main.post(
                             () -> {
                                 setMenuTouch(true);
@@ -136,61 +131,8 @@ public class OverlayService extends Service {
         fabLp.x = dp(16);
         fabLp.y = dp(52);
 
-        fabStart = new TextView(this);
-        fabStart.setText(R.string.fab_start_esp);
-        fabStart.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
-        fabStart.setPadding(dp(18), dp(12), dp(18), dp(12));
-        fabStart.setBackgroundResource(R.drawable.bg_fab_esp_start);
-        fabStart.setTextColor(0xFFFFFFFF);
-        fabStart.setElevation(dp(4));
-        fabStart.setOnClickListener(
-                v -> {
-                    NativeBridge.nativeStartEsp();
-                    NativeBridge.nativeMinimizeMenu();
-                });
-
-        fabStop = new TextView(this);
-        fabStop.setText(R.string.fab_stop_esp);
-        fabStop.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
-        fabStop.setPadding(dp(18), dp(12), dp(18), dp(12));
-        fabStop.setBackgroundResource(R.drawable.bg_fab_esp_stop);
-        fabStop.setTextColor(0xFFFFFFFF);
-        fabStop.setElevation(dp(4));
-        fabStop.setOnClickListener(
-                v -> {
-                    NativeBridge.nativeStopEsp();
-                    NativeBridge.nativeMinimizeMenu();
-                });
-
-        int rowW = WindowManager.LayoutParams.WRAP_CONTENT;
-        WindowManager.LayoutParams startLp =
-                new WindowManager.LayoutParams(
-                        rowW,
-                        WindowManager.LayoutParams.WRAP_CONTENT,
-                        overlayType,
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                        PixelFormat.TRANSLUCENT);
-        startLp.gravity = Gravity.TOP | Gravity.END;
-        startLp.x = dp(16);
-        startLp.y = dp(120);
-
-        WindowManager.LayoutParams stopLp =
-                new WindowManager.LayoutParams(
-                        rowW,
-                        WindowManager.LayoutParams.WRAP_CONTENT,
-                        overlayType,
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                        PixelFormat.TRANSLUCENT);
-        stopLp.gravity = Gravity.TOP | Gravity.END;
-        stopLp.x = dp(16);
-        stopLp.y = dp(172);
-
         wm.addView(root, surfaceLp);
         wm.addView(fabLogo, fabLp);
-        wm.addView(fabStart, startLp);
-        wm.addView(fabStop, stopLp);
     }
 
     private void flushPendingCmd() {
@@ -199,10 +141,8 @@ public class OverlayService extends Service {
         pendingCmd = null;
         if (CMD_START_ESP.equals(c)) {
             NativeBridge.nativeStartEsp();
-            NativeBridge.nativeMinimizeMenu();
         } else if (CMD_STOP_ESP.equals(c)) {
             NativeBridge.nativeStopEsp();
-            NativeBridge.nativeMinimizeMenu();
         }
     }
 
@@ -222,11 +162,8 @@ public class OverlayService extends Service {
                         } catch (Throwable ignored) {
                         }
                     }
-                    /* Menu open: hide FAB row. Menu closed: show Xorel + ESP shortcuts */
-                    int miniVis = interactive ? View.GONE : View.VISIBLE;
-                    if (fabLogo != null) fabLogo.setVisibility(miniVis);
-                    if (fabStart != null) fabStart.setVisibility(miniVis);
-                    if (fabStop != null) fabStop.setVisibility(miniVis);
+                    if (fabLogo != null)
+                        fabLogo.setVisibility(interactive ? View.GONE : View.VISIBLE);
                     if (glView != null) glView.requestRender();
                 });
     }
@@ -269,14 +206,6 @@ public class OverlayService extends Service {
             if (glView != null) glView.releaseGl();
         } catch (Throwable t) {
             Log.e(TAG, "releaseGl", t);
-        }
-        try {
-            if (fabStop != null) wm.removeView(fabStop);
-        } catch (Throwable ignored) {
-        }
-        try {
-            if (fabStart != null) wm.removeView(fabStart);
-        } catch (Throwable ignored) {
         }
         try {
             if (fabLogo != null) wm.removeView(fabLogo);
