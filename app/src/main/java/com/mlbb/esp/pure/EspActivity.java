@@ -15,7 +15,6 @@ import android.view.View;
 import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.OvershootInterpolator;
 import android.widget.Button;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -148,8 +147,8 @@ public class EspActivity extends Activity {
                         keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_error));
                     }
                     refreshUiState();
-                    /* Small feedback scale on license card */
-                    FrameLayout card = findViewById(R.id.cardLicense);
+                    /* Small feedback scale on license card (must match root type in layout — LinearLayout) */
+                    View card = findViewById(R.id.cardLicense);
                     if (card != null) {
                         card.setScaleX(0.97f);
                         card.setScaleY(0.97f);
