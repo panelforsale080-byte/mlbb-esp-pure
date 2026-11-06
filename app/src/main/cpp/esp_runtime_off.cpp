@@ -22,6 +22,12 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     g_off.hp = rt.se_m_Hp;
     g_off.hpMax = rt.se_m_HpMax;
     g_off.showCooldownComp = rt.se_m_ShowCoolDownComp;
+    g_off.heroName = rt.sp_m_HeroName;
+    g_off.summonSkillId = rt.sp_m_iSummonSkillId;
+    g_off.showCdDic = rt.scc__dicCD;
+    g_off.cddSpellId = rt.cdd_iSpellID;
+    g_off.cddCoolTime = rt.cdd_uiCoolTime;
+    g_off.cddStartTime = rt.cdd_uiStartTime;
     g_off.ready = cr.runtime_ready && g_off.localPlayerShow && g_off.dicPlayerShow &&
                   g_off.dicMonsterShow && g_off.lastPosition && g_off.entityDeath &&
                   g_off.sameCamp && g_off.entityId;
@@ -33,10 +39,9 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
            (unsigned long long)g_off.lastPosition, (unsigned long long)g_off.entityId,
            (unsigned long long)g_off.entityDeath, (unsigned long long)g_off.sameCamp,
            (unsigned long long)g_off.hp);
-    ui_log("  hero/CD: SE.m_ShowCoolDownComp=0x%llx (fixed SP/CD layout 0x%llx/0x%llx dic=0x%llx)",
-           (unsigned long long)g_off.showCooldownComp,
-           (unsigned long long)EspRuntimeOff::heroName, (unsigned long long)EspRuntimeOff::summonSkillId,
-           (unsigned long long)EspRuntimeOff::showCdDic);
+    ui_log("  hero/CD off: SE.m_ShowCoolDownComp=0x%llx SP.m_HeroName=0x%llx _dicCD=0x%llx",
+           (unsigned long long)g_off.showCooldownComp, (unsigned long long)g_off.heroName,
+           (unsigned long long)g_off.showCdDic);
     if (!g_off.ready) ui_log("[resolve] WARN: incomplete runtime field offsets");
 }
 

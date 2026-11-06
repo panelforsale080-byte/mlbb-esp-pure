@@ -18,17 +18,13 @@ struct EspRuntimeOff {
     uintptr_t sameCamp = 0;
     uintptr_t hp = 0;
     uintptr_t hpMax = 0;
-    /** From ShowEntity only — same extra path as #213 + one field. */
     uintptr_t showCooldownComp = 0;
-    /** ShowPlayer fields on player ShowEntity* (dump.cs — avoids extra FindClass). */
-    static constexpr uintptr_t heroName = 0x8f0;
-    static constexpr uintptr_t summonSkillId = 0x984;
-    /** ShowCoolDownComp._dicCD */
-    static constexpr uintptr_t showCdDic = 0x18;
-    /** Battle.CoolDownData */
-    static constexpr uintptr_t cddSpellId = 0x10;
-    static constexpr uintptr_t cddCoolTime = 0x14;
-    static constexpr uintptr_t cddStartTime = 0x1c;
+    uintptr_t heroName = 0;
+    uintptr_t summonSkillId = 0;
+    uintptr_t showCdDic = 0;
+    uintptr_t cddSpellId = 0;
+    uintptr_t cddCoolTime = 0;
+    uintptr_t cddStartTime = 0;
 };
 
 void esp_runtime_off_apply(const ConrentResolve &cr);
