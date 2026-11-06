@@ -268,6 +268,9 @@ static void draw_ui() {
         ImGui::SameLine();
         ImGui::Checkbox("Distance", &g_feat.distance);
         ImGui::Checkbox("Enemy CD", &g_feat.enemyCooldown);
+        ImGui::Indent();
+        ImGui::Checkbox("CD side panel (transparent)", &g_feat.enemyCdSidePanel);
+        ImGui::Unindent();
 
         ImGui::SeparatorText("Monster");
         ImGui::Checkbox("Box##m", &g_feat.monsterBox);

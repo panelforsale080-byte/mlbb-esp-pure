@@ -8,6 +8,8 @@ struct EspFeatures {
     bool health = true;
     bool name = true;
     bool enemyCooldown = true;
+    /** When on with Enemy CD: show cooldowns in transparent side panels instead of under each box. */
+    bool enemyCdSidePanel = true;
     bool distance = true;
     bool monsterBox = true;
     bool monsterName = true;
