@@ -40,7 +40,11 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
     const bool anyHp = monster ? feat.monsterHealth : feat.health;
     const bool anyCd = !monster && feat.enemyCooldown;
     const bool cdUnderEntity = anyCd && !feat.enemyCdSidePanel;
-    if (!anyBox && !anyName && !anyHp && !feat.line && !feat.distance && !cdUnderEntity) return;
+    /* Side-panel-only CD still needs per-entity pass if Box/Name/HP/Line/Dist are on; if all off, skip entity. */
+    if (!anyBox && !anyName && !anyHp && !feat.line && !feat.distance && !cdUnderEntity
+        && !(anyCd && feat.enemyCdSidePanel && !monster)) {
+        return;
+    }
     if (!t.screenValid) return;
 
     const ImVec2 root{t.screenX, t.screenY};
@@ -123,7 +127,9 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
 
 static bool enemy_cd_cmp(const EspTarget *a, const EspTarget *b) {
     if (a->meters != b->meters) return a->meters < b->meters;
-    return std::strcmp(a->label, b->label) < 0;
+    int c = std::strcmp(a->label, b->label);
+    if (c != 0) return c < 0;
+    return a->ent < b->ent;
 }
 
 static void draw_enemy_cd_side_panels(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
@@ -133,7 +139,7 @@ static void draw_enemy_cd_side_panels(ImDrawList *draw, float screenW, float scr
     ImFont *font = ImGui::GetFont();
     std::vector<const EspTarget *> rows;
     for (const EspTarget &t : frame.targets) {
-        if (t.kind != 0 || !t.cdValid) continue;
+        if (t.kind != 0) continue;
         rows.push_back(&t);
     }
     if (rows.empty()) return;
@@ -145,13 +151,16 @@ static void draw_enemy_cd_side_panels(ImDrawList *draw, float screenW, float scr
     const float lineStep = fontSize + 5.f;
 
     char sample[192];
-    float maxW = 0.f;
+    float maxW = font ? font->CalcTextSizeA(fontSize, FLT_MAX, 0.f, "Enemy cooldown").x : 120.f;
     const size_t nShow = std::min(rows.size(), (size_t)kCdSideMaxLines);
     for (size_t i = 0; i < nShow; ++i) {
         const EspTarget &t = *rows[i];
         const char *nm = t.label[0] ? t.label : "?";
-        std::snprintf(sample, sizeof(sample), "%s  %dm  %d/%d/%d SP%d", nm, t.meters, t.cdSkill1, t.cdSkill2,
-                      t.cdSkill3, t.cdSpell);
+        if (t.cdValid)
+            std::snprintf(sample, sizeof(sample), "%s  %dm  %d/%d/%d SP%d", nm, t.meters, t.cdSkill1, t.cdSkill2,
+                          t.cdSkill3, t.cdSpell);
+        else
+            std::snprintf(sample, sizeof(sample), "%s  %dm  CD …", nm, t.meters);
         ImVec2 tw = font ? font->CalcTextSizeA(fontSize, FLT_MAX, 0.f, sample) : ImGui::CalcTextSize(sample);
         maxW = std::max(maxW, tw.x);
     }
@@ -181,8 +190,11 @@ static void draw_enemy_cd_side_panels(ImDrawList *draw, float screenW, float scr
     for (size_t i = 0; i < nShow; ++i) {
         const EspTarget &t = *rows[i];
         const char *nm = t.label[0] ? t.label : "?";
-        std::snprintf(sample, sizeof(sample), "%s  %dm  %d/%d/%d SP%d", nm, t.meters, t.cdSkill1, t.cdSkill2,
-                      t.cdSkill3, t.cdSpell);
+        if (t.cdValid)
+            std::snprintf(sample, sizeof(sample), "%s  %dm  %d/%d/%d SP%d", nm, t.meters, t.cdSkill1, t.cdSkill2,
+                          t.cdSkill3, t.cdSpell);
+        else
+            std::snprintf(sample, sizeof(sample), "%s  %dm  CD …", nm, t.meters);
         if (font)
             draw->AddText(font, fontSize, ImVec2(r0.x + panelPad, y), IM_COL32(200, 230, 255, 245), sample);
         else
