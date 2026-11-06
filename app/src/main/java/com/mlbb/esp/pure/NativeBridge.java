@@ -17,6 +17,8 @@ public final class NativeBridge {
     public static native void nativeTouch(int action, float x, float y);
     public static native void nativeOpenMenu();
     public static native void nativeToggleMenu();
+    /** ImGui menu off + overlay pass-through (FABs visible). */
+    public static native void nativeMinimizeMenu();
     public static native boolean nativeIsMenuInteractive();
     public static native void nativeStartEsp();
     public static native void nativeStopEsp();

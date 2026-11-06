@@ -14,24 +14,32 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.TextView;
 
 public class OverlayService extends Service {
+    public static final String EXTRA_CMD = "xorel_cmd";
+    public static final String CMD_START_ESP = "start_esp";
+    public static final String CMD_STOP_ESP = "stop_esp";
+
     private static final String TAG = "XorelOverlay";
     public static OverlayService instance;
 
     private WindowManager wm;
     private FrameLayout root;
     private GlImGuiView glView;
-    private View fab;
-    private View fabStart;
-    private View fabStop;
+    private ImageButton fabLogo;
+    private TextView fabStart;
+    private TextView fabStop;
     private WindowManager.LayoutParams surfaceLp;
     private final Handler main = new Handler(Looper.getMainLooper());
+    private volatile boolean glReady = false;
+    private String pendingCmd = null;
 
     @Override
     public void onCreate() {
@@ -57,126 +65,174 @@ public class OverlayService extends Service {
         }
     }
 
+    private int dp(int v) {
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
+    }
+
     private void attachWindows() {
         root = new FrameLayout(this);
         glView = new GlImGuiView(this);
         glView.configureOverlaySurface();
-        glView.setOnGlReadyListener(v -> main.post(() -> {
-            setMenuTouch(false);
-            Log.i(TAG, "overlay ready — touches pass to game until you tap ≡");
-        }));
-        root.addView(glView, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT));
+        glView.setOnGlReadyListener(
+                v -> main.post(() -> {
+                    glReady = true;
+                    NativeBridge.nativeMinimizeMenu();
+                    flushPendingCmd();
+                    Log.i(TAG, "GL ready — menu minimized; tap Xorel icon for panel");
+                }));
+        root.addView(
+                glView,
+                new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        final int overlayType = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                : WindowManager.LayoutParams.TYPE_PHONE;
+        final int overlayType =
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                        ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                        : WindowManager.LayoutParams.TYPE_PHONE;
 
-        surfaceLp = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                overlayType,
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-                PixelFormat.TRANSLUCENT);
+        surfaceLp =
+                new WindowManager.LayoutParams(
+                        WindowManager.LayoutParams.MATCH_PARENT,
+                        WindowManager.LayoutParams.MATCH_PARENT,
+                        overlayType,
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                                | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                        PixelFormat.TRANSLUCENT);
         surfaceLp.gravity = Gravity.TOP | Gravity.START;
 
-        fab = new TextView(this);
-        ((TextView) fab).setText("≡");
-        ((TextView) fab).setTextSize(22f);
-        ((TextView) fab).setPadding(28, 18, 28, 18);
-        fab.setBackgroundColor(0xCC0A3555);
-        fab.setOnClickListener(v -> NativeBridge.nativeToggleMenu());
+        fabLogo = new ImageButton(this);
+        fabLogo.setBackgroundResource(R.drawable.bg_fab_xorel);
+        fabLogo.setImageResource(R.drawable.ic_xorel_logo);
+        fabLogo.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
+        fabLogo.setPadding(dp(10), dp(10), dp(10), dp(10));
+        fabLogo.setContentDescription(getString(R.string.fab_open_menu));
+        int fabSize = dp(56);
+        fabLogo.setMinimumWidth(fabSize);
+        fabLogo.setMinimumHeight(fabSize);
+        fabLogo.setOnClickListener(v -> NativeBridge.nativeOpenMenu());
 
-        WindowManager.LayoutParams fabLp = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                overlayType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT);
+        WindowManager.LayoutParams fabLp =
+                new WindowManager.LayoutParams(
+                        fabSize,
+                        fabSize,
+                        overlayType,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                        PixelFormat.TRANSLUCENT);
         fabLp.gravity = Gravity.TOP | Gravity.END;
-        fabLp.x = 24;
-        fabLp.y = 56;
+        fabLp.x = dp(16);
+        fabLp.y = dp(52);
 
         fabStart = new TextView(this);
-        ((TextView) fabStart).setText("Start ESP");
-        ((TextView) fabStart).setTextSize(13f);
-        ((TextView) fabStart).setPadding(22, 14, 22, 14);
-        fabStart.setBackgroundColor(0xCC1B5E20);
-        fabStart.setOnClickListener(v -> NativeBridge.nativeStartEsp());
+        fabStart.setText(R.string.fab_start_esp);
+        fabStart.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        fabStart.setPadding(dp(18), dp(12), dp(18), dp(12));
+        fabStart.setBackgroundResource(R.drawable.bg_fab_esp_start);
+        fabStart.setTextColor(0xFFFFFFFF);
+        fabStart.setElevation(dp(4));
+        fabStart.setOnClickListener(
+                v -> {
+                    NativeBridge.nativeStartEsp();
+                    NativeBridge.nativeMinimizeMenu();
+                });
 
         fabStop = new TextView(this);
-        ((TextView) fabStop).setText("Stop ESP");
-        ((TextView) fabStop).setTextSize(13f);
-        ((TextView) fabStop).setPadding(22, 14, 22, 14);
-        fabStop.setBackgroundColor(0xCC8B1A1A);
-        fabStop.setOnClickListener(v -> NativeBridge.nativeStopEsp());
+        fabStop.setText(R.string.fab_stop_esp);
+        fabStop.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        fabStop.setPadding(dp(18), dp(12), dp(18), dp(12));
+        fabStop.setBackgroundResource(R.drawable.bg_fab_esp_stop);
+        fabStop.setTextColor(0xFFFFFFFF);
+        fabStop.setElevation(dp(4));
+        fabStop.setOnClickListener(
+                v -> {
+                    NativeBridge.nativeStopEsp();
+                    NativeBridge.nativeMinimizeMenu();
+                });
 
-        WindowManager.LayoutParams startLp = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                overlayType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT);
+        int rowW = WindowManager.LayoutParams.WRAP_CONTENT;
+        WindowManager.LayoutParams startLp =
+                new WindowManager.LayoutParams(
+                        rowW,
+                        WindowManager.LayoutParams.WRAP_CONTENT,
+                        overlayType,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                        PixelFormat.TRANSLUCENT);
         startLp.gravity = Gravity.TOP | Gravity.END;
-        startLp.x = 24;
-        startLp.y = 124;
+        startLp.x = dp(16);
+        startLp.y = dp(120);
 
-        WindowManager.LayoutParams stopLp = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                overlayType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT);
+        WindowManager.LayoutParams stopLp =
+                new WindowManager.LayoutParams(
+                        rowW,
+                        WindowManager.LayoutParams.WRAP_CONTENT,
+                        overlayType,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                        PixelFormat.TRANSLUCENT);
         stopLp.gravity = Gravity.TOP | Gravity.END;
-        stopLp.x = 24;
-        stopLp.y = 188;
+        stopLp.x = dp(16);
+        stopLp.y = dp(172);
 
         wm.addView(root, surfaceLp);
-        wm.addView(fab, fabLp);
+        wm.addView(fabLogo, fabLp);
         wm.addView(fabStart, startLp);
         wm.addView(fabStop, stopLp);
     }
 
+    private void flushPendingCmd() {
+        if (!glReady || pendingCmd == null) return;
+        String c = pendingCmd;
+        pendingCmd = null;
+        if (CMD_START_ESP.equals(c)) {
+            NativeBridge.nativeStartEsp();
+            NativeBridge.nativeMinimizeMenu();
+        } else if (CMD_STOP_ESP.equals(c)) {
+            NativeBridge.nativeStopEsp();
+            NativeBridge.nativeMinimizeMenu();
+        }
+    }
+
     void setMenuTouch(boolean interactive) {
-        main.post(() -> {
-            if (surfaceLp != null && wm != null && root != null) {
-                if (interactive) {
-                    surfaceLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-                    surfaceLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-                } else {
-                    surfaceLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-                    surfaceLp.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-                }
-                try {
-                    wm.updateViewLayout(root, surfaceLp);
-                } catch (Throwable ignored) {
-                }
-            }
-            int fabVis = interactive ? View.GONE : View.VISIBLE;
-            if (fab != null) fab.setVisibility(fabVis);
-            if (fabStart != null) fabStart.setVisibility(fabVis);
-            if (fabStop != null) fabStop.setVisibility(fabVis);
-            if (glView != null) glView.requestRender();
-        });
+        main.post(
+                () -> {
+                    if (surfaceLp != null && wm != null && root != null) {
+                        if (interactive) {
+                            surfaceLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                            surfaceLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+                        } else {
+                            surfaceLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                            surfaceLp.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+                        }
+                        try {
+                            wm.updateViewLayout(root, surfaceLp);
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    /* Menu open: hide FAB row. Menu closed: show Xorel + ESP shortcuts */
+                    int miniVis = interactive ? View.GONE : View.VISIBLE;
+                    if (fabLogo != null) fabLogo.setVisibility(miniVis);
+                    if (fabStart != null) fabStart.setVisibility(miniVis);
+                    if (fabStop != null) fabStop.setVisibility(miniVis);
+                    if (glView != null) glView.requestRender();
+                });
     }
 
     private void startForegroundNotif() {
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(
-                    new NotificationChannel("esp", getString(R.string.notif_channel), NotificationManager.IMPORTANCE_LOW));
-            Notification n = new Notification.Builder(this, "esp")
-                    .setContentTitle(getString(R.string.notif_title))
-                    .setContentText(getString(R.string.notif_text))
-                    .setSmallIcon(android.R.drawable.ic_menu_compass)
-                    .build();
+                    new NotificationChannel(
+                            "esp", getString(R.string.notif_channel), NotificationManager.IMPORTANCE_LOW));
+            Notification n =
+                    new Notification.Builder(this, "esp")
+                            .setContentTitle(getString(R.string.notif_title))
+                            .setContentText(getString(R.string.notif_text))
+                            .setSmallIcon(android.R.drawable.ic_menu_compass)
+                            .build();
             try {
                 if (Build.VERSION.SDK_INT >= 34) {
                     startForeground(7, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
@@ -188,10 +244,11 @@ public class OverlayService extends Service {
             }
         } else {
             @SuppressWarnings("deprecation")
-            Notification n = new Notification.Builder(this)
-                    .setContentTitle(getString(R.string.notif_title))
-                    .setSmallIcon(android.R.drawable.ic_menu_compass)
-                    .build();
+            Notification n =
+                    new Notification.Builder(this)
+                            .setContentTitle(getString(R.string.notif_title))
+                            .setSmallIcon(android.R.drawable.ic_menu_compass)
+                            .build();
             startForeground(7, n);
         }
     }
@@ -212,7 +269,7 @@ public class OverlayService extends Service {
         } catch (Throwable ignored) {
         }
         try {
-            if (fab != null) wm.removeView(fab);
+            if (fabLogo != null) wm.removeView(fabLogo);
         } catch (Throwable ignored) {
         }
         try {
@@ -225,6 +282,13 @@ public class OverlayService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null) {
+            String cmd = intent.getStringExtra(EXTRA_CMD);
+            if (cmd != null) {
+                pendingCmd = cmd;
+                flushPendingCmd();
+            }
+        }
         return START_STICKY;
     }
 

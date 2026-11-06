@@ -394,7 +394,7 @@ void ui_gl_surface_created() {
     if (!init_imgui_backends()) return;
     g_glReady = true;
     reader_start_once();
-    ui_log("MLBB ESP overlay — tap ≡ for menu, touches pass to game when closed");
+    ui_log("Xorel overlay — tap ≡ for menu, touches pass to game when closed");
 }
 
 static void reader_start_once() {
@@ -447,6 +447,8 @@ void ui_touch(int action, float x, float y) {
 void ui_open_menu() { g_showMenu = true; }
 
 void ui_toggle_menu() { g_showMenu = !g_showMenu; }
+
+void ui_minimize_menu() { g_showMenu = false; }
 
 bool ui_menu_interactive() { return g_showMenu; }
 

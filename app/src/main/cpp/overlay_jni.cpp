@@ -80,6 +80,12 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeToggleMenu(JNIEnv *, jclass) {
     notify_menu_touch(ui_menu_interactive());
 }
 
+extern "C" JNIEXPORT void JNICALL
+Java_com_mlbb_esp_pure_NativeBridge_nativeMinimizeMenu(JNIEnv *, jclass) {
+    ui_minimize_menu();
+    notify_menu_touch(false);
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeIsMenuInteractive(JNIEnv *, jclass) {
     return ui_menu_interactive() ? JNI_TRUE : JNI_FALSE;

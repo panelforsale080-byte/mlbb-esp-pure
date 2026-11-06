@@ -41,6 +41,8 @@ public class EspActivity extends Activity {
     private ProgressBar keyProgress;
     private Button btnOverlay;
     private Button btnStart;
+    private Button btnEspStart;
+    private Button btnEspStop;
     private Button btnGame;
 
     @Override
@@ -56,10 +58,14 @@ public class EspActivity extends Activity {
         keyProgress = findViewById(R.id.keyProgress);
         btnOverlay = findViewById(R.id.btnOverlay);
         btnStart = findViewById(R.id.btnStart);
+        btnEspStart = findViewById(R.id.btnEspStart);
+        btnEspStop = findViewById(R.id.btnEspStop);
         btnGame = findViewById(R.id.btnGame);
 
         btnOverlay.setOnClickListener(v -> openOverlaySettings());
         btnStart.setOnClickListener(v -> tryStartOverlay());
+        btnEspStart.setOnClickListener(v -> signalOverlayStartEsp());
+        btnEspStop.setOnClickListener(v -> signalOverlayStopEsp());
         btnGame.setOnClickListener(v -> openMobileLegends());
 
         runEntranceAnimation();
@@ -167,6 +173,11 @@ public class EspActivity extends Activity {
                                 == PackageManager.PERMISSION_GRANTED;
         btnStart.setEnabled(licenseOk && overlayOk && notifOk);
         btnStart.setAlpha(btnStart.isEnabled() ? 1f : 0.45f);
+        boolean svc = OverlayService.instance != null;
+        btnEspStart.setEnabled(licenseOk && svc);
+        btnEspStop.setEnabled(licenseOk && svc);
+        btnEspStart.setAlpha(btnEspStart.isEnabled() ? 1f : 0.45f);
+        btnEspStop.setAlpha(btnEspStop.isEnabled() ? 1f : 0.45f);
     }
 
     @Override
@@ -211,6 +222,32 @@ public class EspActivity extends Activity {
         startOverlay();
     }
 
+    private void signalOverlayStartEsp() {
+        if (!licenseOk) {
+            Toast.makeText(this, R.string.key_expired, Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (OverlayService.instance == null) {
+            Toast.makeText(this, R.string.toast_overlay_not_running, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent i = new Intent(this, OverlayService.class).putExtra(OverlayService.EXTRA_CMD, OverlayService.CMD_START_ESP);
+        ContextCompat.startForegroundService(this, i);
+    }
+
+    private void signalOverlayStopEsp() {
+        if (!licenseOk) {
+            Toast.makeText(this, R.string.key_expired, Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (OverlayService.instance == null) {
+            Toast.makeText(this, R.string.toast_overlay_not_running, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Intent i = new Intent(this, OverlayService.class).putExtra(OverlayService.EXTRA_CMD, OverlayService.CMD_STOP_ESP);
+        ContextCompat.startForegroundService(this, i);
+    }
+
     private void startOverlay() {
         if (!licenseOk) {
             Toast.makeText(this, R.string.key_expired, Toast.LENGTH_LONG).show();
@@ -226,6 +263,7 @@ public class EspActivity extends Activity {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc);
             else startService(svc);
             Toast.makeText(this, R.string.toast_overlay_started, Toast.LENGTH_LONG).show();
+            refreshUiState();
             moveTaskToBack(true);
         } catch (Throwable t) {
             Toast.makeText(this, t.getMessage() != null ? t.getMessage() : "Failed", Toast.LENGTH_LONG).show();

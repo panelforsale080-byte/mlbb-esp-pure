@@ -10,14 +10,20 @@
     <string name="btn_overlay_perm">Allow display over apps</string>
     <string name="btn_start_overlay">Launch overlay</string>
     <string name="btn_open_game">Open game &amp; play</string>
+    <string name="btn_launch_start_esp">Start ESP</string>
+    <string name="btn_launch_stop_esp">Stop ESP</string>
+    <string name="fab_open_menu">Open Xorel menu</string>
+    <string name="fab_start_esp">Start ESP</string>
+    <string name="fab_stop_esp">Stop ESP</string>
     <string name="card_steps_title">Quick start</string>
     <string name="step_1">Allow overlay, then launch the floating layer.</string>
-    <string name="step_2">In match: Find pid → Resolve → Start ESP in the ≡ menu.</string>
-    <string name="step_3">Close the menu so touches pass through to the game.</string>
+    <string name="step_2">In match: Find pid → Resolve, then Start ESP here or from the floating strip.</string>
+    <string name="step_3">Tap the Xorel icon to open settings; close the window for touch-through play.</string>
     <string name="overlay_running">Overlay is already running</string>
     <string name="toast_need_overlay">Allow overlay permission first</string>
     <string name="toast_overlay_started">Xorel overlay started — switch to your game</string>
+    <string name="toast_overlay_not_running">Start the overlay first</string>
     <string name="notif_channel">Xorel</string>
     <string name="notif_title">Xorel</string>
-    <string name="notif_text">Tap ≡ for controls</string>
+    <string name="notif_text">Tap Xorel icon for menu · green/red = ESP</string>
 </resources>
