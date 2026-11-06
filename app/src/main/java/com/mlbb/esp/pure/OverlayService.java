@@ -16,6 +16,7 @@ import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
@@ -34,9 +35,15 @@ public class OverlayService extends Service {
     private GlImGuiView glView;
     private ImageButton fabLogo;
     private WindowManager.LayoutParams surfaceLp;
+    private WindowManager.LayoutParams fabLp;
     private final Handler main = new Handler(Looper.getMainLooper());
     private volatile boolean glReady = false;
     private String pendingCmd = null;
+    private float fabTouchLastRawX;
+    private float fabTouchLastRawY;
+    private float fabTouchDownRawX;
+    private float fabTouchDownRawY;
+    private boolean fabDragging;
 
     @Override
     public void onCreate() {
@@ -65,6 +72,28 @@ public class OverlayService extends Service {
     private int dp(int v) {
         return (int) TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
+    }
+
+    private void getScreenSize(int[] out) {
+        DisplayMetrics dm = new DisplayMetrics();
+        wm.getDefaultDisplay().getRealMetrics(dm);
+        out[0] = Math.max(dm.widthPixels, 1);
+        out[1] = Math.max(dm.heightPixels, 1);
+    }
+
+    private void clampFabToScreen() {
+        if (fabLp == null || fabLogo == null || wm == null) return;
+        int[] wh = new int[2];
+        getScreenSize(wh);
+        fabLogo.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        int fw = fabLogo.getMeasuredWidth() > 0 ? fabLogo.getMeasuredWidth() : fabLogo.getWidth();
+        int fh = fabLogo.getMeasuredHeight() > 0 ? fabLogo.getMeasuredHeight() : fabLogo.getHeight();
+        if (fw <= 0) fw = dp(56);
+        if (fh <= 0) fh = dp(56);
+        if (fabLp.x < 0) fabLp.x = 0;
+        if (fabLp.y < 0) fabLp.y = 0;
+        if (fabLp.x > wh[0] - fw) fabLp.x = Math.max(0, wh[0] - fw);
+        if (fabLp.y > wh[1] - fh) fabLp.y = Math.max(0, wh[1] - fh);
     }
 
     private void attachWindows() {
@@ -109,17 +138,8 @@ public class OverlayService extends Service {
         int fabSize = dp(56);
         fabLogo.setMinimumWidth(fabSize);
         fabLogo.setMinimumHeight(fabSize);
-        fabLogo.setOnClickListener(
-                v -> {
-                    NativeBridge.nativeOpenMenu();
-                    main.post(
-                            () -> {
-                                setMenuTouch(true);
-                                if (glView != null) glView.requestRender();
-                            });
-                });
 
-        WindowManager.LayoutParams fabLp =
+        fabLp =
                 new WindowManager.LayoutParams(
                         fabSize,
                         fabSize,
@@ -127,9 +147,58 @@ public class OverlayService extends Service {
                         WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                                 | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                         PixelFormat.TRANSLUCENT);
-        fabLp.gravity = Gravity.TOP | Gravity.END;
-        fabLp.x = dp(16);
+        /* TOP|START so x,y are unambiguous for dragging */
+        fabLp.gravity = Gravity.TOP | Gravity.START;
+        int[] wh = new int[2];
+        getScreenSize(wh);
+        fabLp.x = wh[0] - fabSize - dp(16);
         fabLp.y = dp(52);
+
+        final int dragSlopPx = dp(10);
+        fabLogo.setOnTouchListener(
+                (v, event) -> {
+                    switch (event.getActionMasked()) {
+                        case MotionEvent.ACTION_DOWN:
+                            fabTouchDownRawX = event.getRawX();
+                            fabTouchDownRawY = event.getRawY();
+                            fabTouchLastRawX = fabTouchDownRawX;
+                            fabTouchLastRawY = fabTouchDownRawY;
+                            fabDragging = false;
+                            return true;
+                        case MotionEvent.ACTION_MOVE:
+                            float dx = event.getRawX() - fabTouchLastRawX;
+                            float dy = event.getRawY() - fabTouchLastRawY;
+                            fabTouchLastRawX = event.getRawX();
+                            fabTouchLastRawY = event.getRawY();
+                            float dist =
+                                    (float) Math.hypot(
+                                            event.getRawX() - fabTouchDownRawX,
+                                            event.getRawY() - fabTouchDownRawY);
+                            if (dist > dragSlopPx) fabDragging = true;
+                            fabLp.x += (int) dx;
+                            fabLp.y += (int) dy;
+                            clampFabToScreen();
+                            try {
+                                wm.updateViewLayout(fabLogo, fabLp);
+                            } catch (Throwable ignored) {
+                            }
+                            return true;
+                        case MotionEvent.ACTION_UP:
+                            if (!fabDragging) {
+                                NativeBridge.nativeOpenMenu();
+                                main.post(
+                                        () -> {
+                                            setMenuTouch(true);
+                                            if (glView != null) glView.requestRender();
+                                        });
+                            }
+                            return true;
+                        case MotionEvent.ACTION_CANCEL:
+                            return true;
+                        default:
+                            return false;
+                    }
+                });
 
         wm.addView(root, surfaceLp);
         wm.addView(fabLogo, fabLp);
