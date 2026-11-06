@@ -19,6 +19,24 @@
 #include <unordered_map>
 #include <vector>
 
+static std::atomic<bool> g_tickHeroName{true};
+static std::atomic<bool> g_tickEnemyCd{true};
+
+void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown) {
+    g_tickHeroName.store(heroName);
+    g_tickEnemyCd.store(enemyCooldown);
+}
+
+static bool read_u32_pair(pid_t pid, uintptr_t offStart, uintptr_t offCool, uint32_t &startTime,
+                        uint32_t &coolTime) {
+    std::vector<std::pair<uintptr_t, size_t>> req = {{offStart, 4}, {offCool, 4}};
+    std::vector<std::vector<uint8_t>> out;
+    if (!mem_read_batch(pid, req, out) || out.size() != 2) return false;
+    std::memcpy(&startTime, out[0].data(), sizeof(startTime));
+    std::memcpy(&coolTime, out[1].data(), sizeof(coolTime));
+    return true;
+}
+
 static std::mutex g_mu;
 static pid_t g_pid = 0;
 static uintptr_t g_bmKlass = 0;
@@ -115,13 +133,18 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
     if (!mem_read(pid, entries + Il2::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
         return false;
     const uintptr_t data = entries + Il2::ArrData;
+    const size_t slotBytes = (size_t)maxLength * Il2::EntryStride;
+    std::vector<uint8_t> raw(slotBytes);
+    if (!mem_read(pid, data, raw.data(), raw.size())) return false;
     for (int i = 0; i < maxLength; ++i) {
-        const uintptr_t entry = data + (uintptr_t)i * Il2::EntryStride;
+        const uint8_t *base = raw.data() + (size_t)i * Il2::EntryStride;
         int hash = 0, key = 0;
         uintptr_t value = 0;
-        if (!mem_read(pid, entry + Il2::EntryHash, hash) || hash < 0) continue;
-        if (!mem_read(pid, entry + Il2::EntryKey, key)) continue;
-        if (!mem_read(pid, entry + Il2::EntryValue, value) || !value) continue;
+        std::memcpy(&hash, base + Il2::EntryHash, sizeof(hash));
+        if (hash < 0) continue;
+        std::memcpy(&key, base + Il2::EntryKey, sizeof(key));
+        std::memcpy(&value, base + Il2::EntryValue, sizeof(value));
+        if (!value) continue;
         out.emplace_back(key, value);
         if ((int)out.size() >= count) break;
     }
@@ -169,10 +192,13 @@ static bool read_il2_managed_string(pid_t pid, uintptr_t strObj, char *out, size
     if (!out || outSz == 0) return false;
     out[0] = '\0';
     if (!strObj || !mem_ptr_ok(strObj)) return false;
+    /* One vm_read: length @ +0x10 then up to 96 UTF-16 chars (cap). */
+    alignas(4) uint8_t blob[4 + 96 * 2];
+    if (!mem_read(pid, strObj + 0x10, blob, sizeof(blob))) return false;
     int32_t len = 0;
-    if (!mem_read(pid, strObj + 0x10, len) || len <= 0 || len > 96) return false;
-    std::vector<uint8_t> raw((size_t)len * 2);
-    if (!mem_read(pid, strObj + 0x14, raw.data(), raw.size())) return false;
+    std::memcpy(&len, blob, sizeof(len));
+    if (len <= 0 || len > 96) return false;
+    const uint8_t *raw = blob + 4;
     std::vector<uint16_t> units((size_t)len);
     for (int32_t i = 0; i < len; ++i)
         units[(size_t)i] =
@@ -221,6 +247,7 @@ static bool fill_show_cooldowns(pid_t pid, uintptr_t showEnt, int playerSpellId,
     const EspRuntimeOff &R = esp_runtime_off();
     t.cdSkill1 = t.cdSkill2 = t.cdSkill3 = t.cdSpell = 0;
     t.cdValid = false;
+    if (!g_tickEnemyCd.load()) return false;
     if (!R.showCooldownComp || !R.showCdDic || !R.cddSpellId || !R.cddCoolTime || !R.cddStartTime)
         return false;
     uintptr_t cdComp = 0;
@@ -237,8 +264,7 @@ static bool fill_show_cooldowns(pid_t pid, uintptr_t showEnt, int playerSpellId,
         const uintptr_t cdAddr = kv.second;
         if (skillID <= 0 || !cdAddr || !mem_ptr_ok(cdAddr)) continue;
         uint32_t startTime = 0, coolTime = 0;
-        if (!mem_read(pid, cdAddr + R.cddStartTime, startTime) ||
-            !mem_read(pid, cdAddr + R.cddCoolTime, coolTime))
+        if (!read_u32_pair(pid, cdAddr + R.cddStartTime, cdAddr + R.cddCoolTime, startTime, coolTime))
             continue;
         if (coolTime == 0) continue;
         auto &timer = g_cooldownTimers[cdAddr];
@@ -277,10 +303,12 @@ static bool list_entities(pid_t pid, uintptr_t list, std::vector<uintptr_t> &out
         return false;
     const uintptr_t data = arr + Il2::ArrData;
     const int n = std::min(size, maxLength);
+    std::vector<uint8_t> raw((size_t)n * sizeof(uintptr_t));
+    if (!mem_read(pid, data, raw.data(), raw.size())) return false;
     for (int i = 0; i < n; ++i) {
         uintptr_t p = 0;
-        if (mem_read(pid, data + (uintptr_t)i * sizeof(uintptr_t), p) && p && mem_ptr_ok(p))
-            out.push_back(p);
+        std::memcpy(&p, raw.data() + (size_t)i * sizeof(uintptr_t), sizeof(p));
+        if (p && mem_ptr_ok(p)) out.push_back(p);
     }
     return !out.empty();
 }
@@ -701,6 +729,8 @@ void esp_reset() {
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
     g_resolved = false;
+    g_tickHeroName.store(true);
+    g_tickEnemyCd.store(true);
     g_cooldownTimers.clear();
     esp_runtime_off_clear();
     esp_camera_reset();
@@ -929,7 +959,7 @@ EspStatus esp_tick(EspFrame &out) {
             std::snprintf(t.label, sizeof(t.label), "%s", esp_monster_label(id));
         else {
             t.label[0] = '\0';
-            if (R.heroName) {
+            if (g_tickHeroName.load() && R.heroName) {
                 uintptr_t strPtr = 0;
                 if (mem_read(g_pid, v + R.heroName, strPtr) && strPtr && mem_ptr_ok(strPtr)) {
                     char hn[180] = {};
@@ -941,7 +971,7 @@ EspStatus esp_tick(EspFrame &out) {
                 std::snprintf(t.label, sizeof(t.label), "P%d", id);
             const bool isLocal = local && (v == local);
             int spellId = 0;
-            if (R.summonSkillId) mem_read(g_pid, v + R.summonSkillId, spellId);
+            if (g_tickEnemyCd.load() && R.summonSkillId) mem_read(g_pid, v + R.summonSkillId, spellId);
             if (!isLocal) fill_show_cooldowns(g_pid, v, spellId, t);
         }
         out.targets.push_back(t);

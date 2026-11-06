@@ -168,6 +168,7 @@ static void reader_loop() {
             g_needResolve.store(true);
             lastPid = 0;
         } else if (pid > 0) {
+            esp_tick_set_feature_flags(g_feat.name, g_feat.enemyCooldown);
             if (g_needResolve.load()) {
                 if (g_espActive.load()) {
                     /* #147: vm_read tick only while ESP on; Resolve runs when ESP off */
@@ -201,7 +202,8 @@ static void reader_loop() {
             g_frame = std::move(f);
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(g_espActive.load() ? 1 : 8));
     }
 }
 

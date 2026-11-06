@@ -70,6 +70,8 @@ EspStatus esp_attach(pid_t pid);
 EspStatus esp_resolve(EspResolveReport *reportOut = nullptr);
 void esp_request_force_resolve();
 bool esp_is_resolved();
+/** Reader thread: skip expensive per-entity reads when overlay toggles off (reduces syscall load). */
+void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown);
 EspStatus esp_tick(EspFrame &out);
 /** conRent IL2 W2S on reader thread (not GL) — fills screen* fields. */
 void esp_project_screens(EspFrame &frame, float screenW, float screenH);
