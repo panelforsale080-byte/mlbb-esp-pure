@@ -8,16 +8,35 @@
 
 namespace {
 
-/** Slightly larger HUD text and boxes vs baseline #147. */
-constexpr float kTextScale = 1.14f;
-constexpr float kBoxScalePlayer = 6.15f;  /* was 6.5f — bigger box */
-constexpr float kBoxScaleMonster = 6.45f;  /* was 6.8f */
+/** Readable HUD: slightly larger text/boxes vs baseline #147. */
+constexpr float kTextScale = 1.22f;
+constexpr float kBoxScalePlayer = 5.95f;   /* larger on-screen box */
+constexpr float kBoxScaleMonster = 6.25f;
 constexpr int kCdSideMaxLines = 10;
 
 static float overlay_font_size() {
     ImFont *f = ImGui::GetFont();
     if (f && f->FontSize > 1.f) return f->FontSize * kTextScale;
-    return 15.f;
+    return 16.f;
+}
+
+/** Dark outline behind text for readability on busy backgrounds. */
+static void draw_text_shadow(ImDrawList *draw, ImFont *font, float size, const ImVec2 &pos, ImU32 col,
+                            const char *txt) {
+    if (!txt) return;
+    const ImU32 sh = IM_COL32(0, 0, 0, 210);
+    const float o = 1.2f;
+    if (font) {
+        for (int i = -1; i <= 1; i++)
+            for (int j = -1; j <= 1; j++) {
+                if (i == 0 && j == 0) continue;
+                draw->AddText(font, size, ImVec2(pos.x + i * o, pos.y + j * o), sh, txt);
+            }
+        draw->AddText(font, size, pos, col, txt);
+    } else {
+        draw->AddText(ImVec2(pos.x + o, pos.y + o), sh, txt);
+        draw->AddText(pos, col, txt);
+    }
 }
 
 static ImU32 health_color(int hp, int hpMax) {
@@ -28,7 +47,9 @@ static ImU32 health_color(int hp, int hpMax) {
 }
 
 static void entity_box(ImDrawList *draw, const ImVec2 &a, const ImVec2 &b, ImU32 col, float r) {
-    draw->AddRect(a, b, col, r, 0, 2.f);
+    const float thick = 2.8f;
+    draw->AddRect(ImVec2(a.x - 1.f, a.y - 1.f), ImVec2(b.x + 1.f, b.y + 1.f), IM_COL32(0, 0, 0, 140), r, 0, thick + 1.2f);
+    draw->AddRect(a, b, col, r, 0, thick);
 }
 
 static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
@@ -57,7 +78,8 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
             anchor = {frame.selfScreenX, frame.selfScreenY};
         else
             anchor = {screenW * 0.5f, screenH * 0.92f};
-        draw->AddLine(anchor, root, IM_COL32(255, 255, 255, 180), 2.f);
+        draw->AddLine(anchor, root, IM_COL32(255, 220, 80, 200), 4.f);
+        draw->AddLine(anchor, root, IM_COL32(255, 255, 255, 255), 2.2f);
     }
     if (!onScreen) return;
 
@@ -68,26 +90,23 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
     const float centerX = root.x;
 
     if (anyBox) {
-        const ImU32 col = monster ? IM_COL32(255, 255, 255, 210) : IM_COL32(255, 255, 255, 235);
+        const ImU32 col = monster ? IM_COL32(255, 230, 120, 245) : IM_COL32(120, 220, 255, 255);
         entity_box(draw, boxStart, boxEnd, col, monster ? 6.f : 9.f);
     }
     float textYBelowBar = boxEnd.y + 8.f;
     if (anyHp && t.hpMax > 0) {
         const float pct = std::clamp((float)t.hp / (float)t.hpMax, 0.f, 1.f);
-        const float barH = monster ? 6.f : 5.f;
+        const float barH = monster ? 7.f : 6.f;
         const ImVec2 barStart{boxStart.x, boxEnd.y + 4.f};
         const ImVec2 barEnd{boxEnd.x, barStart.y + barH};
-        draw->AddRectFilled(barStart, barEnd, IM_COL32(30, 30, 30, 200), 3.f);
+        draw->AddRectFilled(barStart, barEnd, IM_COL32(15, 15, 20, 230), 3.f);
         draw->AddRectFilled(barStart, ImVec2(barStart.x + boxW * pct, barEnd.y),
                             health_color(t.hp, t.hpMax), 3.f);
         if (!monster) {
             char hpTxt[16];
             std::snprintf(hpTxt, sizeof(hpTxt), "%d", t.hp);
-            if (font)
-                draw->AddText(font, fontSize, ImVec2(barEnd.x + 6.f, barStart.y - 3.f), IM_COL32(255, 255, 255, 235),
-                              hpTxt);
-            else
-                draw->AddText(ImVec2(barEnd.x + 6.f, barStart.y - 3.f), IM_COL32(255, 255, 255, 235), hpTxt);
+            draw_text_shadow(draw, font, fontSize * 1.05f, ImVec2(barEnd.x + 6.f, barStart.y - 4.f),
+                             IM_COL32(255, 255, 255, 255), hpTxt);
         }
         textYBelowBar = barEnd.y + 8.f;
     }
@@ -97,31 +116,24 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
                       t.cdSpell);
         ImVec2 ts = font ? font->CalcTextSizeA(fontSize, FLT_MAX, 0.f, line)
                          : ImGui::CalcTextSize(line);
-        if (font)
-            draw->AddText(font, fontSize, ImVec2(centerX - ts.x * 0.5f, textYBelowBar), IM_COL32(190, 225, 255, 245),
-                          line);
-        else
-            draw->AddText(ImVec2(centerX - ts.x * 0.5f, textYBelowBar), IM_COL32(190, 225, 255, 245), line);
+        draw_text_shadow(draw, font, fontSize, ImVec2(centerX - ts.x * 0.5f, textYBelowBar),
+                         IM_COL32(160, 240, 255, 255), line);
         textYBelowBar += ts.y + 3.f;
     }
     if (anyName && t.label[0]) {
         ImVec2 ts =
                 font ? font->CalcTextSizeA(fontSize, FLT_MAX, 0.f, t.label) : ImGui::CalcTextSize(t.label);
-        const ImU32 ncol = monster ? IM_COL32(255, 200, 100, 255) : IM_COL32(255, 255, 255, 255);
-        if (font)
-            draw->AddText(font, fontSize, ImVec2(centerX - ts.x * 0.5f, boxStart.y - ts.y - 5.f), ncol, t.label);
-        else
-            draw->AddText(ImVec2(centerX - ts.x * 0.5f, boxStart.y - ts.y - 5.f), ncol, t.label);
+        const ImU32 ncol = monster ? IM_COL32(255, 215, 90, 255) : IM_COL32(255, 255, 255, 255);
+        draw_text_shadow(draw, font, fontSize * 1.05f, ImVec2(centerX - ts.x * 0.5f, boxStart.y - ts.y - 6.f), ncol,
+                         t.label);
     }
     if (feat.distance && !monster) {
-        char dist[24];
+        char dist[32];
         std::snprintf(dist, sizeof(dist), "%dm", t.meters);
-        ImVec2 ts = font ? font->CalcTextSizeA(fontSize, FLT_MAX, 0.f, dist) : ImGui::CalcTextSize(dist);
-        if (font)
-            draw->AddText(font, fontSize, ImVec2(centerX - ts.x * 0.5f, textYBelowBar), IM_COL32(210, 210, 210, 235),
-                          dist);
-        else
-            draw->AddText(ImVec2(centerX - ts.x * 0.5f, textYBelowBar), IM_COL32(210, 210, 210, 235), dist);
+        const float dsz = fontSize * 1.1f;
+        ImVec2 ts = font ? font->CalcTextSizeA(dsz, FLT_MAX, 0.f, dist) : ImGui::CalcTextSize(dist);
+        draw_text_shadow(draw, font, dsz, ImVec2(centerX - ts.x * 0.5f, textYBelowBar), IM_COL32(255, 255, 140, 255),
+                         dist);
     }
 }
 
@@ -168,23 +180,18 @@ static void draw_enemy_cd_side_panels(ImDrawList *draw, float screenW, float scr
     float panelW = panelInnerW + panelPad * 2.f;
     float panelH = titleH + lineStep * (float)nShow + panelPad * 2.f;
 
-    /* Right side (does not cover minimap area too much — narrow strip) */
-    const ImVec2 r0(screenW - margin - panelW, screenH * 0.20f);
-    const ImVec2 r1(screenW - margin, r0.y + panelH);
+    /* Left side — avoids ML right-side skill/minimap/FAB overlap */
+    const ImVec2 r0(margin, screenH * 0.16f);
+    const ImVec2 r1(margin + panelW, r0.y + panelH);
 
-    draw->AddRectFilled(r0, r1, IM_COL32(12, 18, 28, 115), 8.f);
-    draw->AddRect(r0, r1, IM_COL32(255, 255, 255, 95), 8.f, 0, 1.25f);
+    draw->AddRectFilled(r0, r1, IM_COL32(10, 14, 22, 130), 8.f);
+    draw->AddRect(r0, r1, IM_COL32(180, 220, 255, 120), 8.f, 0, 1.5f);
 
     const char *title = "Enemy cooldown";
     ImVec2 titleSz = font ? font->CalcTextSizeA(fontSize * 1.06f, FLT_MAX, 0.f, title)
                           : ImGui::CalcTextSize(title);
-    if (font)
-        draw->AddText(font, fontSize * 1.06f,
-                      ImVec2(r0.x + (panelW - titleSz.x) * 0.5f, r0.y + panelPad),
-                      IM_COL32(220, 240, 255, 250), title);
-    else
-        draw->AddText(ImVec2(r0.x + (panelW - titleSz.x) * 0.5f, r0.y + panelPad),
-                      IM_COL32(220, 240, 255, 250), title);
+    draw_text_shadow(draw, font, fontSize * 1.08f, ImVec2(r0.x + (panelW - titleSz.x) * 0.5f, r0.y + panelPad),
+                     IM_COL32(230, 245, 255, 255), title);
 
     float y = r0.y + panelPad + titleH;
     for (size_t i = 0; i < nShow; ++i) {
@@ -195,10 +202,8 @@ static void draw_enemy_cd_side_panels(ImDrawList *draw, float screenW, float scr
                           t.cdSkill3, t.cdSpell);
         else
             std::snprintf(sample, sizeof(sample), "%s  %dm  CD …", nm, t.meters);
-        if (font)
-            draw->AddText(font, fontSize, ImVec2(r0.x + panelPad, y), IM_COL32(200, 230, 255, 245), sample);
-        else
-            draw->AddText(ImVec2(r0.x + panelPad, y), IM_COL32(200, 230, 255, 245), sample);
+        draw_text_shadow(draw, font, fontSize * 1.02f, ImVec2(r0.x + panelPad, y), IM_COL32(210, 235, 255, 255),
+                         sample);
         y += lineStep;
     }
 }
