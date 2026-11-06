@@ -144,6 +144,89 @@ static bool enemy_cd_cmp(const EspTarget *a, const EspTarget *b) {
     return a->ent < b->ent;
 }
 
+/** High-contrast red alert when an enemy hero is within 12 m. */
+static void draw_proximity_alert_12m(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
+                                     float fontSize) {
+    ImFont *font = ImGui::GetFont();
+    std::vector<const EspTarget *> near;
+    near.reserve(16);
+    for (const EspTarget &t : frame.targets) {
+        if (t.kind != 0) continue;
+        if (t.meters > 12) continue;
+        if (frame.localPlayerEnt && t.ent == frame.localPlayerEnt) continue;
+        near.push_back(&t);
+    }
+    if (near.empty()) return;
+
+    std::sort(near.begin(), near.end(), [](const EspTarget *a, const EspTarget *b) {
+        if (a->meters != b->meters) return a->meters < b->meters;
+        return a->ent < b->ent;
+    });
+
+    constexpr int kMaxLines = 8;
+    const size_t nShow = std::min(near.size(), (size_t)kMaxLines);
+    const size_t nExtra = near.size() > nShow ? (near.size() - nShow) : 0;
+
+    char lineBuf[220];
+    float maxLineW = 0.f;
+    const char *title = "ENEMY — WITHIN 12 METERS";
+    const float titleScale = 1.28f;
+    ImVec2 titleSz = font ? font->CalcTextSizeA(fontSize * titleScale, FLT_MAX, 0.f, title)
+                          : ImGui::CalcTextSize(title);
+    maxLineW = titleSz.x;
+
+    for (size_t i = 0; i < nShow; ++i) {
+        const EspTarget &t = *near[i];
+        const char *nm = (t.label[0] ? t.label : "?");
+        std::snprintf(lineBuf, sizeof(lineBuf), "%s   %dm", nm, t.meters);
+        ImVec2 tw = font ? font->CalcTextSizeA(fontSize * 1.08f, FLT_MAX, 0.f, lineBuf) : ImGui::CalcTextSize(lineBuf);
+        maxLineW = std::max(maxLineW, tw.x);
+    }
+    char extraBuf[48] = {};
+    if (nExtra > 0) {
+        std::snprintf(extraBuf, sizeof(extraBuf), "+%zu more enemy nearby", nExtra);
+        ImVec2 tw = font ? font->CalcTextSizeA(fontSize, FLT_MAX, 0.f, extraBuf) : ImGui::CalcTextSize(extraBuf);
+        maxLineW = std::max(maxLineW, tw.x);
+    }
+
+    const float padX = 22.f;
+    const float padY = 14.f;
+    const float lineH = fontSize + 7.f;
+    const float titleBlockH = titleSz.y + 10.f;
+    float boxH = padY * 2.f + titleBlockH + lineH * (float)nShow + (nExtra ? lineH : 0.f);
+    const float boxW = std::min(maxLineW + padX * 2.f, screenW - 24.f);
+
+    const float cx = screenW * 0.5f;
+    const float top = screenH * 0.04f;
+    const ImVec2 r0(cx - boxW * 0.5f, top);
+    const ImVec2 r1(cx + boxW * 0.5f, top + boxH);
+
+    /* Outer dark outline + bright red panel */
+    draw->AddRectFilled(ImVec2(r0.x - 4.f, r0.y - 4.f), ImVec2(r1.x + 4.f, r1.y + 4.f), IM_COL32(0, 0, 0, 230), 14.f);
+    draw->AddRectFilled(r0, r1, IM_COL32(215, 25, 25, 250), 12.f);
+    draw->AddRect(r0, r1, IM_COL32(255, 220, 220, 255), 12.f, 0, 3.5f);
+    draw->AddRect(ImVec2(r0.x + 2.f, r0.y + 2.f), ImVec2(r1.x - 2.f, r1.y - 2.f), IM_COL32(120, 0, 0, 200), 10.f, 0, 1.5f);
+
+    float y = r0.y + padY;
+    draw_text_shadow(draw, font, fontSize * titleScale, ImVec2(cx - titleSz.x * 0.5f, y), IM_COL32(255, 255, 255, 255),
+                     title);
+    y += titleBlockH;
+    for (size_t i = 0; i < nShow; ++i) {
+        const EspTarget &t = *near[i];
+        const char *nm = (t.label[0] ? t.label : "?");
+        std::snprintf(lineBuf, sizeof(lineBuf), "%s   %dm", nm, t.meters);
+        ImVec2 tw =
+                font ? font->CalcTextSizeA(fontSize * 1.08f, FLT_MAX, 0.f, lineBuf) : ImGui::CalcTextSize(lineBuf);
+        draw_text_shadow(draw, font, fontSize * 1.08f, ImVec2(cx - tw.x * 0.5f, y), IM_COL32(255, 255, 255, 255),
+                         lineBuf);
+        y += lineH;
+    }
+    if (nExtra > 0) {
+        ImVec2 tw = font ? font->CalcTextSizeA(fontSize, FLT_MAX, 0.f, extraBuf) : ImGui::CalcTextSize(extraBuf);
+        draw_text_shadow(draw, font, fontSize, ImVec2(cx - tw.x * 0.5f, y), IM_COL32(255, 230, 230, 240), extraBuf);
+    }
+}
+
 static void draw_enemy_cd_side_panels(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
                                       const EspFeatures &feat, float fontSize) {
     if (!feat.enemyCooldown || !feat.enemyCdSidePanel) return;
@@ -215,8 +298,8 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     if (!draw || screenW < 1.f || screenH < 1.f) return;
     if (frame.status != EspStatus::Ready) return;
 
-    const bool anyPlayer =
-        feat.box || feat.line || feat.health || feat.name || feat.distance || feat.enemyCooldown;
+    const bool anyPlayer = feat.box || feat.line || feat.health || feat.name || feat.distance || feat.enemyCooldown
+                           || feat.proximityAlert12m;
     const bool anyMon =
         feat.monsterBox || feat.monsterName || feat.monsterHealth;
     if (!anyPlayer && !anyMon) return;
@@ -228,5 +311,6 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
         if (t.kind == 1 && anyMon) draw_one(draw, screenW, screenH, frame, t, feat, true, fontSize);
     }
 
+    if (feat.proximityAlert12m) draw_proximity_alert_12m(draw, screenW, screenH, frame, fontSize);
     if (anyPlayer) draw_enemy_cd_side_panels(draw, screenW, screenH, frame, feat, fontSize);
 }

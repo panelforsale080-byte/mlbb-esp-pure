@@ -267,6 +267,7 @@ static void draw_ui() {
         ImGui::Checkbox("Name", &g_feat.name);
         ImGui::SameLine();
         ImGui::Checkbox("Distance", &g_feat.distance);
+        ImGui::Checkbox("12m red alert (enemy name)", &g_feat.proximityAlert12m);
         ImGui::Checkbox("Enemy CD", &g_feat.enemyCooldown);
         ImGui::Indent();
         ImGui::Checkbox("CD side panel (transparent)", &g_feat.enemyCdSidePanel);

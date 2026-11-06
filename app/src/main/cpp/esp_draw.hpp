@@ -11,6 +11,8 @@ struct EspFeatures {
     /** When on with Enemy CD: show cooldowns in transparent side panels instead of under each box. */
     bool enemyCdSidePanel = true;
     bool distance = true;
+    /** Red top banner listing enemy hero names within 12 m (same label source as Name ESP). Default on. */
+    bool proximityAlert12m = true;
     bool monsterBox = true;
     bool monsterName = true;
     bool monsterHealth = true;
