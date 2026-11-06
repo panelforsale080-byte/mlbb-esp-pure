@@ -244,40 +244,34 @@ void il2_discover_lib_global_rvas(pid_t pid, uintptr_t il2LibBase, ConrentResolv
         expectedLive = mem_ptr_normalize(raw);
     }
 
-    const uintptr_t baseCsharp = module_base_for_path(maps, "libcsharp.so");
-
     ui_log("[resolve] GameMethod mainCamera live=0x%llx", (unsigned long long)expectedLive);
     ui_log("[resolve] lib global discover (accurate slot when live=OK — else GameMethod/IL2CPP):");
 
-    DiscoverPick bmPick{};
     DiscoverPick camPick{};
+
+    const bool il2MatrixPath =
+        resolve.camera_world_to_camera_method && resolve.camera_projection_matrix_method &&
+        resolve.game_method_statics && resolve.runtime_fields.gm_mainCamera;
+    const bool gameMethodSmoothPath =
+        resolve.game_method_statics && resolve.runtime_fields.gm_mainCamera &&
+        resolve.runtime_fields.sf_m_MainCamera;
+    const bool canSkipRwMainCam = il2MatrixPath || gameMethodSmoothPath;
 
     if (resolve.game_method_statics)
         discover_cam_from_gm_statics(pid, maps, resolve.game_method_statics, expectedLive, camPick);
 
-    if (!camPick.slotVa) {
+    /* esp_camera_frame_begin uses live-validated slot, else GameMethod+SmoothFollow (VM matrices),
+     * else IL2CPP Camera matrix getters. rw-auto scans RW libs (8192 probes × pass) and dominates
+     * resolve time when gm-statics candidates miss. */
+    if (!camPick.slotVa && !canSkipRwMainCam) {
         ui_log("[resolve] rw-auto MainCamera global...");
         discover_main_cam_rw_auto(pid, maps, resolve.game_method_statics, expectedLive, camPick,
                                   true);
         if (!camPick.slotVa)
             discover_main_cam_rw_auto(pid, maps, resolve.game_method_statics, expectedLive,
                                       camPick, false);
-    }
-
-    if (baseCsharp) {
-        ui_log("[resolve] rw-auto BattleManager TypeInfo...");
-        discover_bm_rw_auto(pid, maps, baseCsharp, resolve.battle_manager_klass,
-                            resolve.battle_manager_statics, resolve.battle_manager_statics,
-                            bmPick);
-    }
-
-    if (bmPick.slotVa) {
-        resolve.bm_global_slot_va = bmPick.slotVa;
-        resolve.auto_rva_battle_manager_typeinfo = bmPick.computedRva;
-        ui_log("[resolve] BM STORED slot_va=0x%llx lib+0x%llx (%s)",
-               (unsigned long long)bmPick.slotVa, (unsigned long long)bmPick.computedRva,
-               bmPick.via);
-    }
+    } else if (!camPick.slotVa && canSkipRwMainCam)
+        ui_log("[resolve] MainCamera rw-auto skipped (GameMethod/IL2CPP W2S path sufficient)");
 
     if (camPick.slotVa) {
         resolve.main_camera_global_slot_va = camPick.slotVa;
