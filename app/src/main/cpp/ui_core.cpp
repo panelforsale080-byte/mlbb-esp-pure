@@ -44,6 +44,7 @@ static std::atomic<bool> g_needResolve{true};
 static bool g_autoFind = true;
 static bool g_fallbackPid = true;
 static bool g_showMenu = false;
+static bool g_menuLayoutReset = false;
 static bool g_logScrollBottom = true;
 static EspFeatures g_feat{};
 static std::atomic<bool> g_espActive{false};
@@ -270,7 +271,7 @@ static void draw_ui() {
                         | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove);
         ImGui::InvisibleButton("##backdrop_hit", io.DisplaySize);
         if (ImGui::IsItemClicked(0))
-            g_showMenu = false;
+            ui_minimize_menu();
         ImGui::End();
         ImGui::PopStyleVar(3);
     }
@@ -280,9 +281,11 @@ static void draw_ui() {
         const ImVec2 panelSz(400.f, 480.f);
         if (io.DisplaySize.x > 1.f && io.DisplaySize.y > 1.f) {
             ImVec2 pos((io.DisplaySize.x - panelSz.x) * 0.5f, (io.DisplaySize.y - panelSz.y) * 0.5f);
-            ImGui::SetNextWindowPos(pos, ImGuiCond_FirstUseEver);
+            const ImGuiCond cond = g_menuLayoutReset ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+            ImGui::SetNextWindowPos(pos, cond);
+            ImGui::SetNextWindowSize(panelSz, cond);
+            if (g_menuLayoutReset) g_menuLayoutReset = false;
         }
-        ImGui::SetNextWindowSize(panelSz, ImGuiCond_FirstUseEver);
     }
     ImGui::SetNextWindowBgAlpha(0.98f);
     if (ImGui::Begin("Xorel", &g_showMenu, ImGuiWindowFlags_None)) {
@@ -435,6 +438,12 @@ void ui_set_display_size(int width, int height) {
         g_displayH = height;
         if (initialScreenSize.x <= 0.f)
             initialScreenSize = ImVec2((float)width, (float)height);
+        if (ImGui::GetCurrentContext()) {
+            ImGuiIO &io = ImGui::GetIO();
+            const float w = g_width > 0 ? (float)g_width : (float)width;
+            const float h = g_height > 0 ? (float)g_height : (float)height;
+            io.DisplaySize = ImVec2(w, h);
+        }
     }
 }
 
@@ -498,11 +507,17 @@ void ui_touch(int action, float x, float y) {
     }
 }
 
-void ui_open_menu() { g_showMenu = true; }
+void ui_open_menu() {
+    g_showMenu = true;
+    g_menuLayoutReset = true;
+}
 
 void ui_toggle_menu() { g_showMenu = !g_showMenu; }
 
-void ui_minimize_menu() { g_showMenu = false; }
+void ui_minimize_menu() {
+    g_showMenu = false;
+    g_menuLayoutReset = false;
+}
 
 bool ui_menu_interactive() { return g_showMenu; }
 

@@ -7,6 +7,7 @@ import android.app.Service;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.PixelFormat;
+import android.hardware.display.DisplayManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -44,6 +45,18 @@ public class OverlayService extends Service {
     private float fabTouchDownRawX;
     private float fabTouchDownRawY;
     private boolean fabDragging;
+    private DisplayManager displayManager;
+    private DisplayManager.DisplayListener displayListener;
+
+    private static final int SURFACE_FLAGS_PASS =
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                    | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+    private static final int SURFACE_FLAGS_MENU =
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
 
     @Override
     public void onCreate() {
@@ -63,6 +76,7 @@ public class OverlayService extends Service {
             NativeBridge.nativeSetDisplaySize(
                     Math.max(dm.widthPixels, 1), Math.max(dm.heightPixels, 1));
             attachWindows();
+            registerDisplayListener();
         } catch (Throwable t) {
             Log.e(TAG, "onCreate", t);
             stopSelf();
@@ -79,6 +93,55 @@ public class OverlayService extends Service {
         wm.getDefaultDisplay().getRealMetrics(dm);
         out[0] = Math.max(dm.widthPixels, 1);
         out[1] = Math.max(dm.heightPixels, 1);
+    }
+
+    private void registerDisplayListener() {
+        displayManager = (DisplayManager) getSystemService(DISPLAY_SERVICE);
+        if (displayManager == null) return;
+        displayListener =
+                new DisplayManager.DisplayListener() {
+                    @Override
+                    public void onDisplayAdded(int displayId) {}
+
+                    @Override
+                    public void onDisplayRemoved(int displayId) {}
+
+                    @Override
+                    public void onDisplayChanged(int displayId) {
+                        if (displayId == android.view.Display.DEFAULT_DISPLAY) {
+                            main.post(OverlayService.this::applyDisplayGeometry);
+                        }
+                    }
+                };
+        displayManager.registerDisplayListener(displayListener, main);
+    }
+
+    /** Rotation / resolution change (e.g. MLBB landscape): sync FAB + ImGui + ESP screen size. */
+    void applyDisplayGeometry() {
+        if (wm == null) return;
+        int[] wh = new int[2];
+        getScreenSize(wh);
+        NativeBridge.nativeSetDisplaySize(wh[0], wh[1]);
+        if (surfaceLp != null && root != null) {
+            surfaceLp.width = WindowManager.LayoutParams.MATCH_PARENT;
+            surfaceLp.height = WindowManager.LayoutParams.MATCH_PARENT;
+            try {
+                wm.updateViewLayout(root, surfaceLp);
+            } catch (Throwable t) {
+                Log.w(TAG, "applyDisplayGeometry surface", t);
+            }
+        }
+        if (fabLp != null && fabLogo != null) {
+            clampFabToScreen();
+            try {
+                wm.updateViewLayout(fabLogo, fabLp);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (glView != null) {
+            glView.requestLayout();
+            glView.requestRender();
+        }
     }
 
     private void clampFabToScreen() {
@@ -122,10 +185,7 @@ public class OverlayService extends Service {
                         WindowManager.LayoutParams.MATCH_PARENT,
                         WindowManager.LayoutParams.MATCH_PARENT,
                         overlayType,
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                                | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                                | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                        SURFACE_FLAGS_PASS,
                         PixelFormat.TRANSLUCENT);
         surfaceLp.gravity = Gravity.TOP | Gravity.START;
 
@@ -185,12 +245,9 @@ public class OverlayService extends Service {
                             return true;
                         case MotionEvent.ACTION_UP:
                             if (!fabDragging) {
+                                applyDisplayGeometry();
                                 NativeBridge.nativeOpenMenu();
-                                main.post(
-                                        () -> {
-                                            setMenuTouch(true);
-                                            if (glView != null) glView.requestRender();
-                                        });
+                                if (glView != null) glView.requestRender();
                             }
                             return true;
                         case MotionEvent.ACTION_CANCEL:
@@ -199,6 +256,13 @@ public class OverlayService extends Service {
                             return false;
                     }
                 });
+
+        root.setClickable(false);
+        root.setFocusable(false);
+        root.setFocusableInTouchMode(false);
+        glView.setClickable(false);
+        glView.setFocusable(false);
+        glView.setFocusableInTouchMode(false);
 
         wm.addView(root, surfaceLp);
         wm.addView(fabLogo, fabLp);
@@ -216,25 +280,43 @@ public class OverlayService extends Service {
     }
 
     void setMenuTouch(boolean interactive) {
-        main.post(
-                () -> {
-                    if (surfaceLp != null && wm != null && root != null) {
-                        if (interactive) {
-                            surfaceLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-                            surfaceLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-                        } else {
-                            surfaceLp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-                            surfaceLp.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-                        }
-                        try {
-                            wm.updateViewLayout(root, surfaceLp);
-                        } catch (Throwable ignored) {
-                        }
-                    }
-                    if (fabLogo != null)
-                        fabLogo.setVisibility(interactive ? View.GONE : View.VISIBLE);
-                    if (glView != null) glView.requestRender();
-                });
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            applyMenuTouchFlags(interactive);
+        } else {
+            main.post(() -> applyMenuTouchFlags(interactive));
+        }
+    }
+
+    private void applyMenuTouchFlags(boolean interactive) {
+        if (surfaceLp == null || wm == null || root == null) return;
+        if (!interactive && NativeBridge.nativeIsMenuInteractive()) {
+            NativeBridge.nativeMinimizeMenu();
+        }
+        surfaceLp.flags = interactive ? SURFACE_FLAGS_MENU : SURFACE_FLAGS_PASS;
+        root.setClickable(interactive);
+        root.setFocusable(interactive);
+        root.setFocusableInTouchMode(interactive);
+        if (glView != null) {
+            glView.setClickable(interactive);
+            glView.setFocusable(interactive);
+            glView.setFocusableInTouchMode(interactive);
+        }
+        try {
+            wm.updateViewLayout(root, surfaceLp);
+        } catch (Throwable t) {
+            Log.w(TAG, "applyMenuTouchFlags surface", t);
+        }
+        if (fabLogo != null) {
+            fabLogo.setVisibility(interactive ? View.GONE : View.VISIBLE);
+            if (!interactive && fabLp != null) {
+                clampFabToScreen();
+                try {
+                    wm.updateViewLayout(fabLogo, fabLp);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        if (glView != null) glView.requestRender();
     }
 
     private void startForegroundNotif() {
@@ -271,6 +353,12 @@ public class OverlayService extends Service {
 
     @Override
     public void onDestroy() {
+        if (displayManager != null && displayListener != null) {
+            try {
+                displayManager.unregisterDisplayListener(displayListener);
+            } catch (Throwable ignored) {
+            }
+        }
         try {
             if (glView != null) glView.releaseGl();
         } catch (Throwable t) {

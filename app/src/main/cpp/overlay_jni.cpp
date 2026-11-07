@@ -52,15 +52,19 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeGlSurfaceDestroyed(JNIEnv *, jclass) {
     ui_gl_surface_destroyed();
 }
 
+static bool g_menuTouchNotified = false;
+
+static void sync_menu_touch_to_java() {
+    const bool now = ui_menu_interactive();
+    if (now == g_menuTouchNotified) return;
+    g_menuTouchNotified = now;
+    notify_menu_touch(now);
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeGlDrawFrame(JNIEnv *, jclass) {
     ui_gl_draw_frame();
-    static bool lastMenu = false;
-    const bool now = ui_menu_interactive();
-    if (now != lastMenu) {
-        lastMenu = now;
-        notify_menu_touch(now);
-    }
+    sync_menu_touch_to_java();
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -71,18 +75,21 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeTouch(JNIEnv *, jclass, jint action, j
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeOpenMenu(JNIEnv *, jclass) {
     ui_open_menu();
+    g_menuTouchNotified = true;
     notify_menu_touch(true);
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeToggleMenu(JNIEnv *, jclass) {
     ui_toggle_menu();
-    notify_menu_touch(ui_menu_interactive());
+    g_menuTouchNotified = ui_menu_interactive();
+    notify_menu_touch(g_menuTouchNotified);
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeMinimizeMenu(JNIEnv *, jclass) {
     ui_minimize_menu();
+    g_menuTouchNotified = false;
     notify_menu_touch(false);
 }
 
