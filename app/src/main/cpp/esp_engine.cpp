@@ -1218,6 +1218,10 @@ bool esp_read_entity_world(pid_t pid, uintptr_t ent, float &x, float &y, float &
     return true;
 }
 
+bool esp_il2_managed_list(pid_t pid, uintptr_t listObj, std::vector<uintptr_t> &out) {
+    return list_entities(pid, listObj, out);
+}
+
 bool esp_monster_dict_entries(pid_t pid, uintptr_t bmInstance,
                               std::vector<std::pair<int, uintptr_t>> &out) {
     if (!esp_runtime_off_ready() || !bmInstance) return false;

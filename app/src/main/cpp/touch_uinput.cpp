@@ -185,3 +185,30 @@ const char *touch_inject_screen_tap(int x, int y, int screenW, int screenH) {
     std::snprintf(s_method, sizeof(s_method), "fail");
     return s_method;
 }
+
+const char *touch_inject_screen_swipe(int x1, int y1, int x2, int y2, int durationMs, int screenW,
+                                      int screenH) {
+    static char s_method[24];
+    (void)touch_uinput_open(screenW, screenH);
+    static const char *kSu[] = {
+        "su -c 'input swipe %d %d %d %d %d' 2>/dev/null",
+        "su -c \"input swipe %d %d %d %d %d\" 2>/dev/null",
+        "su 0 sh -c 'input swipe %d %d %d %d %d' 2>/dev/null",
+    };
+    char cmd[192];
+    for (const char *fmt : kSu) {
+        std::snprintf(cmd, sizeof(cmd), fmt, x1, y1, x2, y2, durationMs);
+        if (std::system(cmd) == 0) {
+            std::snprintf(s_method, sizeof(s_method), "su-swipe");
+            return s_method;
+        }
+    }
+    std::snprintf(cmd, sizeof(cmd), "input swipe %d %d %d %d %d 2>/dev/null", x1, y1, x2, y2,
+                  durationMs);
+    if (std::system(cmd) == 0) {
+        std::snprintf(s_method, sizeof(s_method), "input-swipe");
+        return s_method;
+    }
+    std::snprintf(s_method, sizeof(s_method), "fail");
+    return s_method;
+}

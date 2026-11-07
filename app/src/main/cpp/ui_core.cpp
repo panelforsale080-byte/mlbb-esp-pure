@@ -264,6 +264,7 @@ static void draw_ui() {
     if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
 
     esp_retri_sync_anchor_pixels(sw, sh);
+    esp_hero_auto_sync_skill_pixels(sw, sh);
     if (g_espActive.load() && fr.status == EspStatus::Ready) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
         if (esp_retri_settings().enabled) esp_retri_process(fr);
@@ -414,12 +415,36 @@ static void draw_ui() {
 
         if (ImGui::CollapsingHeader("HERO AUTO (Ling / Gusion)")) {
             EspHeroAutoSettings &ha = esp_hero_auto_settings();
-            ImGui::Checkbox("Ling auto sword (IL2 8420)", &ha.lingSword);
-            ImGui::Checkbox("Gusion auto combo (IL2)", &ha.gusionCombo);
+            ImGui::Checkbox("Ling auto sword", &ha.lingSword);
+            ImGui::Checkbox("Gusion auto combo", &ha.gusionCombo);
             ImGui::Checkbox("IL2 cast (no root)", &ha.useIl2Cast);
             ImGui::SliderInt("Gusion step delay ms", &ha.comboDelayMs, 40, 200);
             ImGui::SliderFloat("Ling sword range m", &ha.lingMaxRange, 3.f, 12.f);
-            ImGui::TextDisabled("Needs Resolve: Battle.Bullet + BM.m_RunBullets; hero m_iOriginHeroId.");
+            if (ha.lastHeroId > 0)
+                ImGui::Text("Live heroId (m_ID): %d", ha.lastHeroId);
+            else
+                ImGui::TextDisabled("heroId: — (Resolve + in match)");
+
+            ImGui::SeparatorText("Skill buttons (touch fallback)");
+            ImGui::Checkbox("Anchor %", &ha.useSkillAnchorNorm);
+            if (ImGui::Button("Reset skill anchors")) esp_hero_auto_reset_skill_anchors();
+            ImGui::SameLine();
+            if (ImGui::Button("Sync screen")) esp_hero_auto_sync_skill_pixels(sw, sh);
+            if (ha.useSkillAnchorNorm) {
+                ImGui::SliderFloat("Ling S2 X%", &ha.lingS2NormX, 0.f, 1.f);
+                ImGui::SliderFloat("Ling S2 Y%", &ha.lingS2NormY, 0.f, 1.f);
+                ImGui::SliderFloat("Gusion S1 X%", &ha.gS1NormX, 0.f, 1.f);
+                ImGui::SliderFloat("Gusion S1 Y%", &ha.gS1NormY, 0.f, 1.f);
+                ImGui::SliderFloat("Gusion S2 X%", &ha.gS2NormX, 0.f, 1.f);
+                ImGui::SliderFloat("Gusion S2 Y%", &ha.gS2NormY, 0.f, 1.f);
+                ImGui::SliderFloat("Gusion S3 X%", &ha.gS3NormX, 0.f, 1.f);
+                ImGui::SliderFloat("Gusion S3 Y%", &ha.gS3NormY, 0.f, 1.f);
+                esp_hero_auto_sync_skill_pixels(sw, sh);
+            } else {
+                ImGui::SliderFloat("Ling S2 X", &ha.lingS2X, 0.f, sw > 1.f ? sw : 3000.f);
+                ImGui::SliderFloat("Ling S2 Y", &ha.lingS2Y, 0.f, sh > 1.f ? sh : 1500.f);
+            }
+            ImGui::TextDisabled("Resolve: Battle.Bullet + BM m_RunBullets/_RunBullets.");
         }
 
         ImGui::SeparatorText("Monster");

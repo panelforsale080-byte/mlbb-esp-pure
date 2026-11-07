@@ -238,6 +238,8 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
                 instance_field_offset(s, pid, il2, bmKlass, "m_ShowMonsterList");
         out.runtime_fields.bm_static_m_RunBullets =
             instance_field_offset(s, pid, il2, bmKlass, "m_RunBullets");
+        out.runtime_fields.bm_static_RunBulletsList =
+            instance_field_offset(s, pid, il2, bmKlass, "_RunBullets");
     }
     uintptr_t seKlass = find_class_fast(s, pid, il2, images, "ShowEntity", false);
     out.runtime_fields.show_entity_klass = seKlass;
