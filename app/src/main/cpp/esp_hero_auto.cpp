@@ -63,6 +63,10 @@ static uint64_t steady_ms() {
         .count();
 }
 
+static int foreach_run_bullet(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
+                              const EspRuntimeOff &R,
+                              const std::function<void(uintptr_t)> &fn);
+
 /** EXTERNAL/VIP: ShowEntity.m_ID is hero id for players (<1000). */
 static int read_local_hero_id(pid_t pid, uintptr_t localPlayer, const EspRuntimeOff &R) {
     if (!mem_ptr_ok(localPlayer)) return 0;
