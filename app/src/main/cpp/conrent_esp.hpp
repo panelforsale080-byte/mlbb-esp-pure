@@ -26,6 +26,7 @@ struct ConrentRuntimeOffsets {
     uintptr_t se_m_ShowCoolDownComp = 0;
     uintptr_t sp_m_HeroName = 0;
     uintptr_t sp_m_iSummonSkillId = 0;
+    uintptr_t sp_m_KillWildTimes = 0;
     uintptr_t scc__dicCD = 0;
     uintptr_t cdd_iSpellID = 0;
     uintptr_t cdd_uiCoolTime = 0;

@@ -20,15 +20,16 @@ static EspRetriSettings g_retri{};
 static std::atomic<int> g_dispW{0};
 static std::atomic<int> g_dispH{0};
 
-/** EXTERNAL level curve + VIP/RIZEYT jungle-stack bonus from LogicPlayer.m_KillWildTimes. */
+/**
+ * Base punish 520+80*Lv; Lv>=4 uses x1.5 when jungle not stacked (2580 @ 15).
+ * Upgraded jungle (killWildTimes > 4): 520+80*Lv + 380 + (Lv-3)*75 → 3000 @ 15.
+ */
 static int calculate_retri_damage(int level, int killWildTimes, bool haveKillWild) {
-    int core;
-    if (level < 4)
-        core = 520 + 80 * level;
-    else
-        core = (int)(1.5 * (double)(520 + 80 * level));
-    if (haveKillWild && killWildTimes > 4) core += 380 + (level - 3) * 40;
-    return core;
+    const int baseLinear = 520 + 80 * level;
+    const bool jungleUpgraded = haveKillWild && killWildTimes > 4;
+    if (jungleUpgraded) return baseLinear + 380 + (level - 3) * 75;
+    if (level >= 4) return (int)(1.5 * (double)baseLinear);
+    return baseLinear;
 }
 
 static int read_local_level(pid_t pid, uintptr_t localEnt, uintptr_t levelOff, int fallback) {
@@ -38,15 +39,25 @@ static int read_local_level(pid_t pid, uintptr_t localEnt, uintptr_t levelOff, i
     return fallback;
 }
 
+static bool read_int_field(pid_t pid, uintptr_t base, uintptr_t off, int &out) {
+    if (!base || !off) return false;
+    int v = 0;
+    if (!mem_read(pid, base + off, v) || v < 0 || v > 5000) return false;
+    out = v;
+    return true;
+}
+
 static bool read_kill_wild_times(pid_t pid, uintptr_t localEnt, const EspRuntimeOff &R, int &outKw) {
     outKw = 0;
-    if (!localEnt || !R.logicFighter || !R.logicKillWildTimes) return false;
+    if (!localEnt) return false;
+
+    if (R.showKillWildTimes && read_int_field(pid, localEnt, R.showKillWildTimes, outKw))
+        return true;
+
+    if (!R.logicFighter || !R.logicKillWildTimes) return false;
     uintptr_t logic = 0;
     if (!mem_read(pid, localEnt + R.logicFighter, logic) || !mem_ptr_ok(logic)) return false;
-    int kw = 0;
-    if (!mem_read(pid, logic + R.logicKillWildTimes, kw) || kw < 0 || kw > 5000) return false;
-    outKw = kw;
-    return true;
+    return read_int_field(pid, logic, R.logicKillWildTimes, outKw);
 }
 
 static int resolve_retri_damage(const EspFrame &frame, const EspRuntimeOff &R, int &outLevel,

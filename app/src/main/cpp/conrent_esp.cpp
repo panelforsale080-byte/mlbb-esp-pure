@@ -272,6 +272,9 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
     if (lpKlass) {
         out.runtime_fields.lp_m_KillWildTimes =
             instance_field_offset(s, pid, il2, lpKlass, "m_KillWildTimes");
+        if (!out.runtime_fields.lp_m_KillWildTimes)
+            out.runtime_fields.lp_m_KillWildTimes =
+                instance_field_offset(s, pid, il2, lpKlass, "_KillWildTimes");
     }
 
     uintptr_t spKlass = find_class_fast(s, pid, il2, images, "ShowPlayer", false);
@@ -281,6 +284,8 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
             instance_field_offset(s, pid, il2, spKlass, "m_HeroName");
         out.runtime_fields.sp_m_iSummonSkillId =
             instance_field_offset(s, pid, il2, spKlass, "m_iSummonSkillId");
+        out.runtime_fields.sp_m_KillWildTimes =
+            instance_field_offset(s, pid, il2, spKlass, "m_KillWildTimes");
     }
 
     /* dump.cs: Namespace Battle — unqualified name misses class_from_name and falls back to
@@ -524,7 +529,7 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
     static const char *kModMenuClasses[] = {
         "UnityEngine.Camera", "BattleData",     "BattleBridge",   "BattleManager",
         "ShowEntity",         "ShowPlayer",     "ShowSelfPlayer",
-        "LogicBattleManager",
+        "LogicBattleManager", "Battle.LogicPlayer", "LogicPlayer",
         "Battle.LogicFighter", "Battle.LogicSkillComp", "Battle.CoolDownComp",
         "Battle.CoolDownData", "Battle.ShowOwnSkillComp", "ShowSkillData",
     };
