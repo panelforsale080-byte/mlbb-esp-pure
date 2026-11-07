@@ -92,6 +92,24 @@ static int read_entity_hp(pid_t pid, uintptr_t ent, uintptr_t hpOff) {
     return 0;
 }
 
+/** Drop stale dict rows: dead flag, bad HP vs max, or invalid world pos. */
+static bool retri_mob_alive(pid_t pid, uintptr_t ent, const EspRuntimeOff &R, int *outHp) {
+    if (!ent || !outHp) return false;
+    *outHp = 0;
+    uint8_t dead = 0;
+    if (mem_read(pid, ent + R.entityDeath, dead) && dead) return false;
+    const int hp = read_entity_hp(pid, ent, R.hp);
+    if (hp <= 0) return false;
+    if (R.hpMax) {
+        int hpMax = 0;
+        if (mem_read(pid, ent + R.hpMax, hpMax) && hpMax > 0 && hp > hpMax) return false;
+    }
+    float wx = 0, wy = 0, wz = 0;
+    if (!esp_read_entity_world(pid, ent, wx, wy, wz)) return false;
+    *outHp = hp;
+    return true;
+}
+
 static void update_norm_from_pixels(float sw, float sh) {
     if (sw > 1.f) g_retri.tapNormX = g_retri.tapX / sw;
     if (sh > 1.f) g_retri.tapNormY = g_retri.tapY / sh;
@@ -113,19 +131,17 @@ static bool find_closest_retri_target(const EspFrame &frame, const EspRuntimeOff
     for (const auto &kv : monsters) {
         const uintptr_t ent = kv.second;
         if (!ent) continue;
-        uint8_t dead = 0;
-        if (mem_read(frame.pid, ent + R.entityDeath, dead) && dead) continue;
-        int hid = 0;
-        if (!mem_read(frame.pid, ent + R.entityId, hid) || !id_matches_external(hid, g_retri))
-            continue;
+        int hid = kv.first;
+        if (!hid) mem_read(frame.pid, ent + R.entityId, hid);
+        if (!id_matches_external(hid, g_retri)) continue;
+        int hp = 0;
+        if (!retri_mob_alive(frame.pid, ent, R, &hp)) continue;
         float mx = 0, my = 0, mz = 0;
         if (!esp_read_entity_world(frame.pid, ent, mx, my, mz)) continue;
         const float dx = mx - selfX;
         const float dy = my - selfY;
         const float dz = mz - selfZ;
         const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-        const int hp = read_entity_hp(frame.pid, ent, R.hp);
-        if (hp <= 0) continue;
         if (dist < outDist) {
             outDist = dist;
             outEnt = ent;

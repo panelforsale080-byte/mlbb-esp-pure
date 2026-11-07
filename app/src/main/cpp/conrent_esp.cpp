@@ -224,12 +224,18 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
         out.runtime_fields.bm_m_dicMonsterShow =
             instance_field_offset(s, pid, il2, bmKlass, "m_dicMonsterShow");
         out.runtime_fields.bm_m_ShowPlayerList =
-            instance_field_offset(s, pid, il2, bmKlass, "m_ShowPlayerList");
+            instance_field_offset(s, pid, il2, bmKlass, "m_ShowPlayers");
+        if (!out.runtime_fields.bm_m_ShowPlayerList)
+            out.runtime_fields.bm_m_ShowPlayerList =
+                instance_field_offset(s, pid, il2, bmKlass, "m_ShowPlayerList");
         if (!out.runtime_fields.bm_m_ShowPlayerList)
             out.runtime_fields.bm_m_ShowPlayerList =
                 instance_field_offset(s, pid, il2, bmKlass, "m_listPlayerShow");
         out.runtime_fields.bm_m_ShowMonsterList =
-            instance_field_offset(s, pid, il2, bmKlass, "m_ShowMonsterList");
+            instance_field_offset(s, pid, il2, bmKlass, "m_ShowMonsters");
+        if (!out.runtime_fields.bm_m_ShowMonsterList)
+            out.runtime_fields.bm_m_ShowMonsterList =
+                instance_field_offset(s, pid, il2, bmKlass, "m_ShowMonsterList");
         out.runtime_fields.bm_static_m_RunBullets =
             instance_field_offset(s, pid, il2, bmKlass, "m_RunBullets");
     }

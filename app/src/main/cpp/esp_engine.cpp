@@ -968,7 +968,21 @@ EspStatus esp_tick(EspFrame &out) {
     if (wantMonsters) mem_read(g_pid, bm + R.dicMonsterShow, mDict);
     std::vector<std::pair<int, uintptr_t>> players, monsters;
     dict_entries(g_pid, pDict, players);
-    if (wantMonsters) dict_entries(g_pid, mDict, monsters);
+    if (wantMonsters && R.listMonsterShow) {
+        uintptr_t mList = 0;
+        if (mem_read(g_pid, bm + R.listMonsterShow, mList) && mList) {
+            std::vector<uintptr_t> listM;
+            if (list_entities(g_pid, mList, listM)) {
+                for (const uintptr_t ent : listM) {
+                    if (!ent) continue;
+                    int id = 0;
+                    mem_read(g_pid, ent + R.entityId, id);
+                    monsters.emplace_back(id, ent);
+                }
+            }
+        }
+    }
+    if (wantMonsters && monsters.empty()) dict_entries(g_pid, mDict, monsters);
     if (players.empty() && R.listPlayerShow) {
         uintptr_t pList = 0;
         mem_read(g_pid, bm + R.listPlayerShow, pList);
@@ -976,14 +990,6 @@ EspStatus esp_tick(EspFrame &out) {
         if (list_entities(g_pid, pList, listP))
             for (size_t i = 0; i < listP.size(); ++i) players.emplace_back((int)i, listP[i]);
     }
-    if (wantMonsters && monsters.empty() && R.listMonsterShow) {
-        uintptr_t mList = 0;
-        mem_read(g_pid, bm + R.listMonsterShow, mList);
-        std::vector<uintptr_t> listM;
-        if (list_entities(g_pid, mList, listM))
-            for (size_t i = 0; i < listM.size(); ++i) monsters.emplace_back((int)i, listM[i]);
-    }
-
     const uint64_t tick = g_readerTickIndex.fetch_add(1, std::memory_order_relaxed);
 
     auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
@@ -1216,16 +1222,28 @@ bool esp_monster_dict_entries(pid_t pid, uintptr_t bmInstance,
                               std::vector<std::pair<int, uintptr_t>> &out) {
     if (!esp_runtime_off_ready() || !bmInstance) return false;
     const EspRuntimeOff &R = esp_runtime_off();
-    uintptr_t mDict = 0;
-    if (!mem_read(pid, bmInstance + R.dicMonsterShow, mDict) || !mDict) {
+    out.clear();
+
+    auto fill_from_list = [&]() -> bool {
         if (!R.listMonsterShow) return false;
         uintptr_t mList = 0;
         if (!mem_read(pid, bmInstance + R.listMonsterShow, mList) || !mList) return false;
         std::vector<uintptr_t> listM;
         if (!list_entities(pid, mList, listM)) return false;
-        out.clear();
-        for (size_t i = 0; i < listM.size(); ++i) out.emplace_back((int)i, listM[i]);
+        for (const uintptr_t ent : listM) {
+            if (!ent) continue;
+            int id = 0;
+            mem_read(pid, ent + R.entityId, id);
+            out.emplace_back(id, ent);
+        }
         return !out.empty();
-    }
-    return dict_entries(pid, mDict, out);
+    };
+
+    /* EXTERNAL ProcessAutoRetribution: m_ShowMonsters live list (skips dead / pre-respawn dict ghosts). */
+    if (fill_from_list()) return true;
+
+    uintptr_t mDict = 0;
+    if (mem_read(pid, bmInstance + R.dicMonsterShow, mDict) && mDict)
+        dict_entries(pid, mDict, out);
+    return !out.empty();
 }
