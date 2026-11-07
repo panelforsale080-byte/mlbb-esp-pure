@@ -2,7 +2,6 @@
 #include "esp_engine.hpp"
 #include "esp_runtime_off.hpp"
 #include "mem.hpp"
-#include "touch_helper.hpp"
 #include "ui_log.hpp"
 
 #include <android/log.h>
@@ -16,7 +15,6 @@
 namespace {
 
 static EspRetriSettings g_retri{};
-static std::atomic<bool> g_touchInited{false};
 static std::atomic<int> g_dispW{0};
 static std::atomic<int> g_dispH{0};
 
@@ -42,25 +40,10 @@ static uint64_t steady_ms() {
             .count();
 }
 
-static void ensure_touch_device() {
-    if (g_touchInited.load()) return;
-    const int w = g_dispW.load();
-    const int h = g_dispH.load();
-    if (w < 1 || h < 1) return;
-    if (Touch_Init(w, h, 0, false)) {
-        g_touchInited.store(true);
-        __android_log_print(ANDROID_LOG_INFO, "MlbbEsp", "[retri] Touch_Init OK %dx%d", w, h);
-    }
-}
-
+/** Overlay APK: never Touch_Init (EVIOCGRAB + input threads). Crashes menu / steals touch. */
 static void fire_retri_tap() {
     const int x = (int)g_retri.tapX;
     const int y = (int)g_retri.tapY;
-    ensure_touch_device();
-    if (g_touchInited.load()) {
-        Touch_Tap(x, y);
-        return;
-    }
     char cmd[128];
     std::snprintf(cmd, sizeof(cmd), "input tap %d %d 2>/dev/null", x, y);
     (void)std::system(cmd);
@@ -149,7 +132,6 @@ void esp_retri_notify_display(int w, int h) {
         g_dispW.store(w);
         g_dispH.store(h);
         esp_retri_sync_anchor_pixels((float)w, (float)h);
-        if (g_touchInited.load()) UpdateScreenData(w, h, 0);
     }
 }
 
@@ -161,8 +143,11 @@ void esp_retri_process(const EspFrame &frame) {
     const EspRuntimeOff &R = esp_runtime_off();
     if (!R.entityId || !R.hp) return;
 
+    static uint64_t s_lastScanMs = 0;
     static uint64_t s_lastTapMs = 0;
     const uint64_t now = steady_ms();
+    if (now - s_lastScanMs < 120) return;
+    s_lastScanMs = now;
     if (now - s_lastTapMs < 500) return;
 
     const int playerLevel = read_player_level(frame, R);

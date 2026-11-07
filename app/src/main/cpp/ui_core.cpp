@@ -373,7 +373,7 @@ static void draw_ui() {
                 ImGui::Checkbox("Lito", &rt.targetLito);
                 ImGui::TreePop();
             }
-            ImGui::TextDisabled("Tap: TouchHelper uinput (root) or shell input tap fallback.");
+            ImGui::TextDisabled("Tap: shell input tap (root). No input grab — stable overlay.");
         }
 
         ImGui::SeparatorText("Monster");
