@@ -380,7 +380,7 @@ static void draw_ui() {
     }
 
     if (!g_showMenu) {
-        ui_menu_video_sync(false, 0, 0, 0, 0);
+        ui_force_menu_pass_through();
         return;
     }
 
@@ -412,9 +412,10 @@ static void draw_ui() {
             if (g_menuLayoutReset) g_menuLayoutReset = false;
         }
     }
-    menu_sync_video_strip(panelPos, panelSz);
     ImGui::SetNextWindowBgAlpha(0.98f);
-    if (ImGui::Begin("Xorel", &g_showMenu, ImGuiWindowFlags_None)) {
+    const bool menuBegin = ImGui::Begin("Xorel", &g_showMenu, ImGuiWindowFlags_NoCollapse);
+    if (menuBegin) {
+        menu_sync_video_strip(panelPos, panelSz);
         ImGui::PushItemWidth(-FLT_MIN);
 
         ImGui::TextDisabled("#147 ESP | IL2CPP offsets (conRentV1)");
@@ -478,11 +479,21 @@ static void draw_ui() {
             ImGui::TableNextColumn();
             ImGui::EndTable();
         }
-        ImGui::Checkbox("12m red alert (enemy name)", &g_feat.proximityAlert12m);
-        ImGui::Checkbox("Enemy CD", &g_feat.enemyCooldown);
-        ImGui::Indent();
-        ImGui::Checkbox("CD side panel (transparent)", &g_feat.enemyCdSidePanel);
-        ImGui::Unindent();
+        if (ImGui::BeginTable(
+                "enemyEspFlags", 3,
+                ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::Checkbox("12m alert", &g_feat.proximityAlert12m);
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::Checkbox("Enemy CD", &g_feat.enemyCooldown);
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::Checkbox("CD panel", &g_feat.enemyCdSidePanel);
+            ImGui::EndTable();
+        }
 
         if (ImGui::CollapsingHeader("AUTO RETRI", ImGuiTreeNodeFlags_DefaultOpen)) {
             EspRetriSettings &rt = esp_retri_settings();
@@ -646,9 +657,10 @@ static void draw_ui() {
         }
 
         ImGui::PopItemWidth();
+        ImGui::End();
     }
-    ImGui::End();
-    ui_sync_menu_touch_state();
+    if (!g_showMenu) ui_force_menu_pass_through();
+    else ui_sync_menu_touch_state();
 }
 
 static void apply_display_metrics() {
@@ -848,8 +860,7 @@ void ui_toggle_menu() { g_showMenu = !g_showMenu; }
 void ui_minimize_menu() {
     g_showMenu = false;
     g_menuLayoutReset = false;
-    ui_menu_video_sync(false, 0, 0, 0, 0);
-    ui_sync_menu_touch_state();
+    ui_force_menu_pass_through();
 }
 
 bool ui_menu_interactive() { return g_showMenu; }

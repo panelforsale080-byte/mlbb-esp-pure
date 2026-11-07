@@ -445,8 +445,16 @@ public class OverlayService extends Service {
     private void applyMenuTouchFlags(boolean interactive) {
         if (surfaceLp == null || wm == null || root == null) return;
         menuInteractive = interactive;
-        if (!interactive && NativeBridge.nativeIsMenuInteractive()) {
-            NativeBridge.nativeMinimizeMenu();
+        if (!interactive) {
+            try {
+                if (NativeBridge.nativeIsMenuInteractive()) {
+                    NativeBridge.nativeMinimizeMenu();
+                } else if (menuVideo != null) {
+                    menuVideo.onMenuVisibleChanged(false);
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "nativeMinimizeMenu", t);
+            }
         }
         surfaceLp.flags = interactive ? SURFACE_FLAGS_MENU : SURFACE_FLAGS_PASS;
         root.setClickable(interactive);

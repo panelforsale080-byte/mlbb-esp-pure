@@ -122,6 +122,15 @@ void ui_sync_menu_touch_state() {
     notify_menu_touch(now);
 }
 
+void ui_force_menu_pass_through() {
+    ui_menu_video_sync(false, 0, 0, 0, 0);
+    g_lastMenuVideoVisible = false;
+    g_lastMenuVideoX = g_lastMenuVideoY = g_lastMenuVideoW = g_lastMenuVideoH = -1;
+    g_menuTouchNotified = true;
+    notify_menu_touch(false);
+    g_menuTouchNotified = false;
+}
+
 static void sync_menu_touch_to_java() { ui_sync_menu_touch_state(); }
 
 extern "C" JNIEXPORT void JNICALL
@@ -152,8 +161,6 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeToggleMenu(JNIEnv *, jclass) {
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeMinimizeMenu(JNIEnv *, jclass) {
     ui_minimize_menu();
-    g_menuTouchNotified = false;
-    notify_menu_touch(false);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

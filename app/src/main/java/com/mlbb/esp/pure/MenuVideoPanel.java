@@ -10,7 +10,10 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.Surface;
 import android.view.TextureView;
+import android.graphics.Outline;
+import android.os.Build;
 import android.view.View;
+import android.view.ViewOutlineProvider;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -53,10 +56,56 @@ final class MenuVideoPanel extends FrameLayout implements TextureView.SurfaceTex
         col.setLayoutParams(
                 new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
+        TextView title = new TextView(context);
+        title.setText("XOREL");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        title.setTextColor(0xFFE8ECF4);
+        title.setLetterSpacing(0.12f);
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(0, dp(2), 0, dp(4));
+        col.addView(
+                title,
+                new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        TextView subtitle = new TextView(context);
+        subtitle.setText("Promo");
+        subtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
+        subtitle.setTextColor(0xFF9AA8BC);
+        subtitle.setGravity(Gravity.CENTER);
+        subtitle.setPadding(0, 0, 0, dp(6));
+        col.addView(
+                subtitle,
+                new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        FrameLayout videoWrap = new FrameLayout(context);
+        videoWrap.setBackgroundResource(R.drawable.bg_menu_video_inner);
+        final int vidPad = dp(4);
+        videoWrap.setPadding(vidPad, vidPad, vidPad, vidPad);
+
         textureView = new TextureView(context);
         textureView.setSurfaceTextureListener(this);
-        col.addView(
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            final float r = dp(10);
+            textureView.setOutlineProvider(
+                    new ViewOutlineProvider() {
+                        @Override
+                        public void getOutline(View view, Outline outline) {
+                            outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), r);
+                        }
+                    });
+            textureView.setClipToOutline(true);
+        }
+        videoWrap.addView(
                 textureView,
+                new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT));
+        col.addView(
+                videoWrap,
                 new LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
