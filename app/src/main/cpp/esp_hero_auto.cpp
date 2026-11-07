@@ -56,6 +56,9 @@ static constexpr int kGusionMarkBulletId = 5610;
 static constexpr int kGusionS1 = 5610;
 static constexpr int kGusionS2 = 5620;
 static constexpr int kGusionS3 = 5630;
+static constexpr int kLingCastGapMs = 55;
+static constexpr int kLingSwipeMs = 32;
+static constexpr int kLingLockCooldownMs = 80;
 
 static uint64_t steady_ms() {
     return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -383,9 +386,8 @@ static void ling_touch_swipe(int scrW, int scrH, float tx, float tz, float selfX
     const float angle = std::atan2(-dz, dx) - 0.7854f;
     const float moveX = g_hero.lingS2X + std::cos(angle) * 300.f;
     const float moveY = g_hero.lingS2Y + std::sin(angle) * 300.f;
-    const int swipeMs = g_hero.lingCastMs < 50 ? 32 : 38;
     touch_inject_screen_swipe((int)g_hero.lingS2X, (int)g_hero.lingS2Y, (int)moveX, (int)moveY,
-                              swipeMs, scrW, scrH);
+                              kLingSwipeMs, scrW, scrH);
 }
 
 static bool ling_read_locked_sword(pid_t pid, const EspRuntimeOff &R, uintptr_t bullet, float &x,
@@ -409,9 +411,9 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
     const uint64_t now = steady_ms();
 
     const int minS = g_hero.lingMinSwords < 1 ? 1 : (g_hero.lingMinSwords > 4 ? 4 : g_hero.lingMinSwords);
-    const int chaseLock = g_hero.lingChaseLockMs < 350 ? 350 : g_hero.lingChaseLockMs;
+    const int chaseLock = g_hero.lingChaseLockMs < 280 ? 280 : g_hero.lingChaseLockMs;
 
-    if (s_lockCooldownMs > 0 && now - s_lockCooldownMs < 180) return;
+    if (s_lockCooldownMs > 0 && now - s_lockCooldownMs < (uint64_t)kLingLockCooldownMs) return;
 
     if (s_chasing && s_lockBullet) {
         float lx = 0, ly = 0, lz = 0;
@@ -427,8 +429,7 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
         return;
     }
 
-    const int castGap = g_hero.lingCastMs < 70 ? 70 : g_hero.lingCastMs;
-    if (now - s_lastCastMs < (uint64_t)castGap) return;
+    if (now - s_lastCastMs < (uint64_t)kLingCastGapMs) return;
 
     float tx = 0, ty = 0, tz = 0;
     uintptr_t swordBullet = 0;

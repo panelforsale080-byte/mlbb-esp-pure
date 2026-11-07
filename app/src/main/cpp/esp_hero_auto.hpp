@@ -17,9 +17,7 @@ struct EspHeroAutoSettings {
     float lingMaxRange = 8.5f;
     /** Auto dash when at least this many 8452 swords in range (1 = any sword). */
     int lingMinSwords = 1;
-    /** Ms between sword dashes (lower = faster chain on your 4 swords). */
-    int lingCastMs = 85;
-    int lingChaseLockMs = 520;
+    int lingChaseLockMs = 400;
     int lastHeroId = 0;
     int lastBulletScan = 0;
     int lastBulletTotal = 0;

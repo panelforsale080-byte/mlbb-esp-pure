@@ -246,7 +246,7 @@ static void reader_loop() {
             const EspHeroAutoSettings &ha = esp_hero_auto_settings();
             const bool heroFast = ha.lingSword || ha.gusionCombo;
             const int tickMs =
-                (esp_retri_settings().enabled || heroFast) ? (ha.lingSword ? 12 : 6) : 12;
+                (esp_retri_settings().enabled || heroFast) ? (ha.lingSword ? 10 : 6) : 12;
             std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
         } else if (g_showMenu)
             std::this_thread::sleep_for(std::chrono::milliseconds(12));
@@ -438,7 +438,6 @@ static void draw_ui() {
             ImGui::Checkbox("Gusion auto combo", &ha.gusionCombo);
             ImGui::TextWrapped(
                 "Ling: auto when sword 8452 on ground (no button). Gusion: left C button = 1 combo.");
-            ImGui::SliderInt("Ling dash speed ms", &ha.lingCastMs, 55, 200);
             ImGui::Checkbox("Gusion enemy combo (no mark scan)", &ha.gusionEnemyCombo);
             ImGui::Checkbox("IL2 cast (no root)", &ha.useIl2Cast);
             ImGui::Checkbox("Show skill buttons", &ha.showSkillCircles);
