@@ -230,6 +230,8 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
                 instance_field_offset(s, pid, il2, bmKlass, "m_listPlayerShow");
         out.runtime_fields.bm_m_ShowMonsterList =
             instance_field_offset(s, pid, il2, bmKlass, "m_ShowMonsterList");
+        out.runtime_fields.bm_static_m_RunBullets =
+            instance_field_offset(s, pid, il2, bmKlass, "m_RunBullets");
     }
     uintptr_t seKlass = find_class_fast(s, pid, il2, images, "ShowEntity", false);
     out.runtime_fields.show_entity_klass = seKlass;
@@ -269,6 +271,19 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
             instance_field_offset(s, pid, il2, spKlass, "m_iSummonSkillId");
         out.runtime_fields.sp_m_KillWildTimes =
             instance_field_offset(s, pid, il2, spKlass, "m_KillWildTimes");
+        out.runtime_fields.sp_m_iOriginHeroId =
+            instance_field_offset(s, pid, il2, spKlass, "m_iOriginHeroId");
+    }
+
+    uintptr_t bulKlass = find_class_fast(s, pid, il2, images, "Battle.Bullet", false);
+    if (!bulKlass) bulKlass = find_class_fast(s, pid, il2, images, "Bullet", false);
+    if (bulKlass) {
+        out.runtime_fields.bul_m_Id = instance_field_offset(s, pid, il2, bulKlass, "m_Id");
+        out.runtime_fields.bul_bulletPos =
+            instance_field_offset(s, pid, il2, bulKlass, "_bulletPos");
+        if (!out.runtime_fields.bul_bulletPos)
+            out.runtime_fields.bul_bulletPos =
+                instance_field_offset(s, pid, il2, bulKlass, "bulletPos");
     }
 
     /* dump.cs: Namespace Battle — unqualified name misses class_from_name and falls back to

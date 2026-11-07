@@ -27,6 +27,10 @@ struct EspRuntimeOff {
     uintptr_t cddSpellId = 0;
     uintptr_t cddCoolTime = 0;
     uintptr_t cddStartTime = 0;
+    uintptr_t heroOriginId = 0;
+    uintptr_t bmStaticRunBullets = 0;
+    uintptr_t bulletId = 0;
+    uintptr_t bulletPos = 0;
 };
 
 void esp_runtime_off_apply(const ConrentResolve &cr);

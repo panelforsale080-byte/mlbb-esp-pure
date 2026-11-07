@@ -12,6 +12,7 @@ add_library(MlbbEsp SHARED
     esp_draw.cpp
     esp_retri.cpp
     esp_retri_il2.cpp
+    esp_hero_auto.cpp
     touch_uinput.cpp
     esp_camera.cpp
     conrent_esp.cpp

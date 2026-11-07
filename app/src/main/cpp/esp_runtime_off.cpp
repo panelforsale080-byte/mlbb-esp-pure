@@ -30,6 +30,10 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     g_off.cddSpellId = rt.cdd_iSpellID;
     g_off.cddCoolTime = rt.cdd_uiCoolTime;
     g_off.cddStartTime = rt.cdd_uiStartTime;
+    g_off.heroOriginId = rt.sp_m_iOriginHeroId;
+    g_off.bmStaticRunBullets = rt.bm_static_m_RunBullets;
+    g_off.bulletId = rt.bul_m_Id;
+    g_off.bulletPos = rt.bul_bulletPos;
     g_off.ready = cr.runtime_ready && g_off.localPlayerShow && g_off.dicPlayerShow &&
                   g_off.dicMonsterShow && g_off.lastPosition && g_off.entityDeath &&
                   g_off.sameCamp && g_off.entityId;
@@ -46,6 +50,9 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
            (unsigned long long)g_off.showCdDic);
     ui_log("  [retri] ShowEntity.m_Level=0x%llx (EXTERNAL CalculateRetriDamage)",
            (unsigned long long)g_off.level);
+    ui_log("  [hero] SP.m_iOriginHeroId=0x%llx BM.m_RunBullets(static)=0x%llx Bullet m_Id=0x%llx pos=0x%llx",
+           (unsigned long long)g_off.heroOriginId, (unsigned long long)g_off.bmStaticRunBullets,
+           (unsigned long long)g_off.bulletId, (unsigned long long)g_off.bulletPos);
     if (!g_off.ready) ui_log("[resolve] WARN: incomplete runtime field offsets");
 }
 

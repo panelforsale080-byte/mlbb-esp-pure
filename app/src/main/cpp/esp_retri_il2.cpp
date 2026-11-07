@@ -25,8 +25,8 @@ void esp_retri_il2_bind(uintptr_t runtime_invoke, uintptr_t try_use_skill_mi) {
 
 bool esp_retri_il2_ready() { return g_rtInvoke && g_tryUseSkillMi; }
 
-bool esp_retri_il2_cast_summon(pid_t pid, uintptr_t showSelfPlayer, float dirX, float dirY,
-                               float dirZ) {
+bool esp_il2_try_use_skill(pid_t pid, uintptr_t showSelfPlayer, int32_t skillId, float dirX,
+                           float dirY, float dirZ, float posX, float posY, float posZ) {
     if (!esp_retri_il2_ready() || pid <= 0 || !mem_ptr_ok(showSelfPlayer)) return false;
 
     RemoteSession s{};
@@ -48,9 +48,8 @@ bool esp_retri_il2_cast_summon(pid_t pid, uintptr_t showSelfPlayer, float dirX, 
         return false;
     }
 
-    const int32_t skillId = kRetriSkillId;
     const float dir[3] = {dirX, dirY, dirZ};
-    const float pos[3] = {0.f, 0.f, 0.f};
+    const float pos[3] = {posX, posY, posZ};
     write_u32(pid, slotSkill, (uint32_t)skillId);
     mem_write(pid, slotDir, dir, sizeof(dir));
     write_u32(pid, slotDirDef, 1);
@@ -81,4 +80,10 @@ bool esp_retri_il2_cast_summon(pid_t pid, uintptr_t showSelfPlayer, float dirX, 
         remote_session_call(s, g_rtInvoke, {g_tryUseSkillMi, showSelfPlayer, paramArr, excSlot}, ret);
     remote_session_end(s);
     return ok;
+}
+
+bool esp_retri_il2_cast_summon(pid_t pid, uintptr_t showSelfPlayer, float dirX, float dirY,
+                               float dirZ) {
+    return esp_il2_try_use_skill(pid, showSelfPlayer, kRetriSkillId, dirX, dirY, dirZ, 0.f, 0.f,
+                                 0.f);
 }

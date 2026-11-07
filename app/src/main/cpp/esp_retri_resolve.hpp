@@ -18,6 +18,8 @@ inline constexpr const char *kEspResolveFindClasses[] = {
         "ShowSkillData",
         /* Auto Retri */
         "Battle.LogicPlayer",
+        /* Ling sword / Gusion mark (BattleManager.m_RunBullets HashSet) */
+        "Battle.Bullet",
 };
 
 inline constexpr unsigned kEspResolveFindClassCount =

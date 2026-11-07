@@ -25,6 +25,10 @@ struct ConrentRuntimeOffsets {
     uintptr_t sp_m_HeroName = 0;
     uintptr_t sp_m_iSummonSkillId = 0;
     uintptr_t sp_m_KillWildTimes = 0;
+    uintptr_t sp_m_iOriginHeroId = 0;
+    uintptr_t bm_static_m_RunBullets = 0;
+    uintptr_t bul_m_Id = 0;
+    uintptr_t bul_bulletPos = 0;
     uintptr_t scc__dicCD = 0;
     uintptr_t cdd_iSpellID = 0;
     uintptr_t cdd_uiCoolTime = 0;

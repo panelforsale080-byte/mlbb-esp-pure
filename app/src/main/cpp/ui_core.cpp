@@ -2,6 +2,7 @@
 #include "esp_engine.hpp"
 #include "esp_draw.hpp"
 #include "esp_retri.hpp"
+#include "esp_hero_auto.hpp"
 #include "proc.hpp"
 #include "ui_log.hpp"
 #include "clip_android.hpp"
@@ -238,11 +239,13 @@ static void reader_loop() {
             g_frameSlots[w] = std::move(f);
             g_frameLatest.store(w, std::memory_order_release);
             if (g_espActive.load() && esp_retri_settings().enabled) esp_retri_process(f);
+            if (g_espActive.load()) esp_hero_auto_process(f);
         }
 
         if (g_espActive.load()) {
-            const int tickMs =
-                    esp_retri_settings().enabled ? 2 : 12;
+            const EspHeroAutoSettings &ha = esp_hero_auto_settings();
+            const bool heroFast = ha.lingSword || ha.gusionCombo;
+            const int tickMs = (esp_retri_settings().enabled || heroFast) ? 2 : 12;
             std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
         } else if (g_showMenu)
             std::this_thread::sleep_for(std::chrono::milliseconds(12));
@@ -264,6 +267,7 @@ static void draw_ui() {
     if (g_espActive.load() && fr.status == EspStatus::Ready) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
         if (esp_retri_settings().enabled) esp_retri_process(fr);
+        esp_hero_auto_process(fr);
         esp_draw_overlay(bg, sw, sh, fr, g_feat, g_showMenu);
         if (esp_retri_settings().enabled && esp_retri_settings().showCircle) {
             esp_retri_draw_indicator(bg);
@@ -406,6 +410,16 @@ static void draw_ui() {
                     ImGui::SliderFloat("Retri Y", &rt.tapY, 0.f, sh > 1.f ? sh : 1500.f);
                 }
             }
+        }
+
+        if (ImGui::CollapsingHeader("HERO AUTO (Ling / Gusion)")) {
+            EspHeroAutoSettings &ha = esp_hero_auto_settings();
+            ImGui::Checkbox("Ling auto sword (IL2 8420)", &ha.lingSword);
+            ImGui::Checkbox("Gusion auto combo (IL2)", &ha.gusionCombo);
+            ImGui::Checkbox("IL2 cast (no root)", &ha.useIl2Cast);
+            ImGui::SliderInt("Gusion step delay ms", &ha.comboDelayMs, 40, 200);
+            ImGui::SliderFloat("Ling sword range m", &ha.lingMaxRange, 3.f, 12.f);
+            ImGui::TextDisabled("Needs Resolve: Battle.Bullet + BM.m_RunBullets; hero m_iOriginHeroId.");
         }
 
         ImGui::SeparatorText("Monster");
