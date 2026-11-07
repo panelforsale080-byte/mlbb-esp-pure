@@ -7,7 +7,14 @@ static JavaVM *g_vm = nullptr;
 static jclass g_bridgeCls = nullptr;
 static jmethodID g_setMenuTouch = nullptr;
 static jmethodID g_setComboFab = nullptr;
+static jmethodID g_updateMenuVideo = nullptr;
+static jmethodID g_applyMenuVideoMuted = nullptr;
 static bool g_menuTouchNotified = false;
+static bool g_lastMenuVideoVisible = false;
+static int g_lastMenuVideoX = -1;
+static int g_lastMenuVideoY = -1;
+static int g_lastMenuVideoW = -1;
+static int g_lastMenuVideoH = -1;
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
     g_vm = vm;
@@ -29,7 +36,48 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeInit(JNIEnv *env, jclass clazz) {
         g_setMenuTouch = env->GetStaticMethodID(clazz, "applyMenuTouch", "(Z)V");
     if (!g_setComboFab)
         g_setComboFab = env->GetStaticMethodID(clazz, "setComboFabVisible", "(Z)V");
+    if (!g_updateMenuVideo)
+        g_updateMenuVideo =
+            env->GetStaticMethodID(clazz, "updateMenuVideoLayout", "(ZIIII)V");
+    if (!g_applyMenuVideoMuted)
+        g_applyMenuVideoMuted = env->GetStaticMethodID(clazz, "applyMenuVideoMuted", "(Z)V");
     ui_esp_pipeline_idle();
+}
+
+void ui_menu_video_sync(bool visible, int x, int y, int w, int h) {
+    if (!g_vm || !g_bridgeCls || !g_updateMenuVideo) return;
+    if (!visible) {
+        if (!g_lastMenuVideoVisible) return;
+        g_lastMenuVideoVisible = false;
+        g_lastMenuVideoX = g_lastMenuVideoY = g_lastMenuVideoW = g_lastMenuVideoH = -1;
+    } else if (visible && g_lastMenuVideoVisible && g_lastMenuVideoX == x && g_lastMenuVideoY == y
+               && g_lastMenuVideoW == w && g_lastMenuVideoH == h) {
+        return;
+    } else {
+        g_lastMenuVideoVisible = true;
+        g_lastMenuVideoX = x;
+        g_lastMenuVideoY = y;
+        g_lastMenuVideoW = w;
+        g_lastMenuVideoH = h;
+    }
+    JNIEnv *env = nullptr;
+    if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    env->CallStaticVoidMethod(g_bridgeCls, g_updateMenuVideo, visible ? JNI_TRUE : JNI_FALSE, x, y,
+                              w, h);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+void ui_menu_video_set_muted(bool muted) {
+    if (!g_vm || !g_bridgeCls || !g_applyMenuVideoMuted) return;
+    JNIEnv *env = nullptr;
+    if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    env->CallStaticVoidMethod(g_bridgeCls, g_applyMenuVideoMuted, muted ? JNI_TRUE : JNI_FALSE);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_mlbb_esp_pure_NativeBridge_nativeSetMenuVideoMuted(JNIEnv *, jclass, jboolean muted) {
+    ui_menu_video_apply_muted_from_java(muted == JNI_TRUE);
 }
 
 void ui_sync_combo_fab_visible(bool show) {

@@ -49,6 +49,8 @@ static bool g_showMenu = false;
 static bool g_menuLayoutReset = false;
 static ImVec2 g_menuLayoutScreen{0.f, 0.f};
 static bool g_logScrollBottom = true;
+static bool g_menuVideoMuted = false;
+static constexpr float kMenuVideoColFrac = 0.36f;
 static EspFeatures g_feat{};
 static std::atomic<bool> g_espActive{false};
 static std::atomic<int> g_lastTargetCount{0};
@@ -123,7 +125,7 @@ static void menu_panel_fit_screen(const ImVec2 &display, ImVec2 &size, ImVec2 &p
     }
     const float ui = menu_touch_ui_scale(sw, sh);
     const float margin = std::max(16.f, std::min(sw, sh) * 0.024f);
-    float w = sw * 0.91f;
+    float w = sw * 0.94f;
     float h = sh * 0.84f;
     const float minW = 420.f * ui;
     const float minH = 480.f * ui;
@@ -133,6 +135,27 @@ static void menu_panel_fit_screen(const ImVec2 &display, ImVec2 &size, ImVec2 &p
     h = std::clamp(h, std::min(minH, maxH), maxH);
     size = ImVec2(w, h);
     pos = ImVec2((sw - w) * 0.5f, std::max(margin, (sh - h) * 0.44f));
+}
+
+void ui_menu_video_apply_muted_from_java(bool muted) { g_menuVideoMuted = muted; }
+
+bool ui_menu_video_is_muted() { return g_menuVideoMuted; }
+
+static float menu_half_button_width() {
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+  return std::max(64.f, (ImGui::GetContentRegionAvail().x - gap) * 0.5f);
+}
+
+static void menu_sync_video_strip(const ImVec2 &winPos, const ImVec2 &winSize) {
+    const float frameH = ImGui::GetFrameHeight();
+    const float padY = ImGui::GetStyle().WindowPadding.y;
+    const float padX = ImGui::GetStyle().WindowPadding.x;
+    const float railW = winSize.x * kMenuVideoColFrac - padX - 6.f;
+    const float railX = winPos.x + winSize.x * (1.f - kMenuVideoColFrac) + 4.f;
+    const float railY = winPos.y + frameH + padY * 0.35f;
+    const float railH = winSize.y - frameH - padY * 1.35f;
+    ui_menu_video_sync(true, (int)railX, (int)railY, (int)std::max(8.f, railW),
+                       (int)std::max(8.f, railH));
 }
 
 static const char *status_name(EspStatus s) {
@@ -356,7 +379,10 @@ static void draw_ui() {
         }
     }
 
-    if (!g_showMenu) return;
+    if (!g_showMenu) {
+        ui_menu_video_sync(false, 0, 0, 0, 0);
+        return;
+    }
 
     ImVec2 panelSz(460.f, 540.f);
     {
@@ -383,18 +409,28 @@ static void draw_ui() {
     }
     ImGui::SetNextWindowBgAlpha(0.98f);
     if (ImGui::Begin("Xorel", &g_showMenu, ImGuiWindowFlags_None)) {
-        ImGui::TextDisabled("#147 ESP | IL2CPP runtime offsets only (conRentV1 accuracy)");
-        ImGui::TextDisabled("All features OFF on start — enable only what you need.");
+        const ImVec2 winPos = ImGui::GetWindowPos();
+        const ImVec2 winSize = ImGui::GetWindowSize();
+
+        ImGui::Columns(2, "##xorelSplit", false);
+        const float splitGap = ImGui::GetStyle().ItemSpacing.x;
+        ImGui::SetColumnWidth(0, panelSz.x * (1.f - kMenuVideoColFrac) - splitGap);
+        ImGui::SetColumnWidth(1, panelSz.x * kMenuVideoColFrac);
+        ImGui::PushItemWidth(-FLT_MIN);
+
+        ImGui::TextDisabled("#147 ESP | IL2CPP offsets (conRentV1)");
+        ImGui::TextDisabled("All features OFF on start.");
         ImGui::TextColored(ImVec4(1.f, 0.85f, 0.4f, 1.f), "Tap X (top-right) to close & play");
+        ImGui::Separator();
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
-        if (ImGui::Button("Resolve")) {
+        if (ImGui::Button("Resolve", ImVec2(menu_half_button_width(), 0.f))) {
             esp_request_force_resolve();
             g_needResolve.store(true);
         }
         ImGui::SameLine();
-        if (ImGui::Button("Find pid")) {
+        if (ImGui::Button("Find pid", ImVec2(menu_half_button_width(), 0.f))) {
             pid_t p = proc_find_unity_kills();
             if (p <= 0 && g_fallbackPid) p = proc_find_mlbb_fallback();
             attach_pid(p, "find");
@@ -402,7 +438,7 @@ static void draw_ui() {
 
         ImGui::SeparatorText("ESP control");
         ImGui::Text("World draw: %s", g_espActive.load() ? "ON" : "OFF");
-        if (ImGui::Button("Start ESP", ImVec2(118.f, 0.f))) {
+        if (ImGui::Button("Start ESP", ImVec2(menu_half_button_width(), 0.f))) {
             if (fr.status == EspStatus::Ready) {
                 ui_esp_start();
                 ui_log("[esp] START — menu remains open, tap X to play");
@@ -414,20 +450,28 @@ static void draw_ui() {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Stop ESP", ImVec2(118.f, 0.f))) {
+        if (ImGui::Button("Stop ESP", ImVec2(menu_half_button_width(), 0.f))) {
             ui_esp_stop();
             ui_log("[esp] stopped");
         }
 
         ImGui::SeparatorText("Enemy");
-        ImGui::Checkbox("Box", &g_feat.box);
-        ImGui::SameLine();
-        ImGui::Checkbox("Line", &g_feat.line);
-        ImGui::SameLine();
-        ImGui::Checkbox("Health", &g_feat.health);
-        ImGui::Checkbox("Name", &g_feat.name);
-        ImGui::SameLine();
-        ImGui::Checkbox("Distance", &g_feat.distance);
+        if (ImGui::BeginTable("enemyTri1", 3, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableNextColumn();
+            ImGui::Checkbox("Box", &g_feat.box);
+            ImGui::TableNextColumn();
+            ImGui::Checkbox("Line", &g_feat.line);
+            ImGui::TableNextColumn();
+            ImGui::Checkbox("Health", &g_feat.health);
+            ImGui::EndTable();
+        }
+        if (ImGui::BeginTable("enemyTri2", 2, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableNextColumn();
+            ImGui::Checkbox("Name", &g_feat.name);
+            ImGui::TableNextColumn();
+            ImGui::Checkbox("Distance", &g_feat.distance);
+            ImGui::EndTable();
+        }
         ImGui::Checkbox("12m red alert (enemy name)", &g_feat.proximityAlert12m);
         ImGui::Checkbox("Enemy CD", &g_feat.enemyCooldown);
         ImGui::Indent();
@@ -474,15 +518,21 @@ static void draw_ui() {
                 rt.targetLord = rt.targetTurtle = rt.targetRed = rt.targetBlue = rt.targetCrab =
                         rt.targetLito = false;
             }
-            ImGui::Checkbox("Lord (2002)", &rt.targetLord);
-            ImGui::SameLine();
-            ImGui::Checkbox("Turtle (2003)", &rt.targetTurtle);
-            ImGui::Checkbox("Buff Red (2004)", &rt.targetRed);
-            ImGui::SameLine();
-            ImGui::Checkbox("Buff Blue (2005)", &rt.targetBlue);
-            ImGui::Checkbox("Crab (2222/2223)", &rt.targetCrab);
-            ImGui::SameLine();
-            ImGui::Checkbox("Lito (2056)", &rt.targetLito);
+            if (ImGui::BeginTable("retriTgt", 2, ImGuiTableFlags_SizingStretchSame)) {
+                ImGui::TableNextColumn();
+                ImGui::Checkbox("Lord (2002)", &rt.targetLord);
+                ImGui::TableNextColumn();
+                ImGui::Checkbox("Turtle (2003)", &rt.targetTurtle);
+                ImGui::TableNextColumn();
+                ImGui::Checkbox("Buff Red (2004)", &rt.targetRed);
+                ImGui::TableNextColumn();
+                ImGui::Checkbox("Buff Blue (2005)", &rt.targetBlue);
+                ImGui::TableNextColumn();
+                ImGui::Checkbox("Crab (2222/2223)", &rt.targetCrab);
+                ImGui::TableNextColumn();
+                ImGui::Checkbox("Lito (2056)", &rt.targetLito);
+                ImGui::EndTable();
+            }
 
             if (!rt.useIl2SummonCast) {
                 ImGui::SeparatorText("Tap fallback (root)");
@@ -544,11 +594,15 @@ static void draw_ui() {
         }
 
         ImGui::SeparatorText("Monster");
-        ImGui::Checkbox("Box##m", &g_feat.monsterBox);
-        ImGui::SameLine();
-        ImGui::Checkbox("Name##m", &g_feat.monsterName);
-        ImGui::SameLine();
-        ImGui::Checkbox("Health##m", &g_feat.monsterHealth);
+        if (ImGui::BeginTable("monTri", 3, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableNextColumn();
+            ImGui::Checkbox("Box##m", &g_feat.monsterBox);
+            ImGui::TableNextColumn();
+            ImGui::Checkbox("Name##m", &g_feat.monsterName);
+            ImGui::TableNextColumn();
+            ImGui::Checkbox("Health##m", &g_feat.monsterHealth);
+            ImGui::EndTable();
+        }
 
         if (ImGui::CollapsingHeader("Advanced")) {
             ImGui::Checkbox("Auto find UnityKillsMe", &g_autoFind);
@@ -576,6 +630,19 @@ static void draw_ui() {
             if (g_logScrollBottom) ImGui::SetScrollHereY(1.0f);
             ImGui::EndChild();
         }
+
+        ImGui::NextColumn();
+        ImGui::BeginChild("##videoRailUi", ImVec2(0, -1), true, ImGuiWindowFlags_NoScrollbar);
+        ImGui::TextDisabled("XOREL");
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Mute promo", &g_menuVideoMuted))
+            ui_menu_video_set_muted(g_menuVideoMuted);
+        ImGui::TextWrapped("Video loops while menu is open. Minimize pauses — reopen resumes.");
+        ImGui::EndChild();
+
+        ImGui::Columns(1);
+        ImGui::PopItemWidth();
+        menu_sync_video_strip(winPos, winSize);
     }
     ImGui::End();
     ui_sync_menu_touch_state();
@@ -778,6 +845,7 @@ void ui_toggle_menu() { g_showMenu = !g_showMenu; }
 void ui_minimize_menu() {
     g_showMenu = false;
     g_menuLayoutReset = false;
+    ui_menu_video_sync(false, 0, 0, 0, 0);
     ui_sync_menu_touch_state();
 }
 

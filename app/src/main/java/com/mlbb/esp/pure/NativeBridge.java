@@ -34,4 +34,16 @@ public final class NativeBridge {
         OverlayService svc = OverlayService.instance;
         if (svc != null) svc.setComboFabVisible(visible);
     }
+
+    public static void updateMenuVideoLayout(boolean visible, int x, int y, int w, int h) {
+        OverlayService svc = OverlayService.instance;
+        if (svc != null) svc.updateMenuVideoLayout(visible, x, y, w, h);
+    }
+
+    public static void applyMenuVideoMuted(boolean muted) {
+        OverlayService svc = OverlayService.instance;
+        if (svc != null) svc.applyMenuVideoMuted(muted);
+    }
+
+    public static native void nativeSetMenuVideoMuted(boolean muted);
 }
