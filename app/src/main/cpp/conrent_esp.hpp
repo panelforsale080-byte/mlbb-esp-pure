@@ -84,3 +84,6 @@ struct ConrentResolve {
 bool conrent_runtime_ready(pid_t pid, RemoteIl2CppInfo &il2);
 bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> &maps, RemoteIl2CppInfo &il2,
                                     ConrentResolve &out);
+/** il2cpp_field_static_get_value — correct BM _RunBullets / m_RunBullets (not raw statics+off). */
+bool conrent_il2_static_field_ptr(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t klass,
+                                    const char *fieldName, uintptr_t &outPtr);

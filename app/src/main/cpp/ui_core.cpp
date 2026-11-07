@@ -265,6 +265,14 @@ static void draw_ui() {
 
     esp_retri_sync_anchor_pixels(sw, sh);
     esp_hero_auto_sync_skill_pixels(sw, sh);
+    {
+        static bool s_comboFabOn = false;
+        const bool wantComboFab = g_espActive.load() && esp_hero_auto_combo_fab_enabled();
+        if (wantComboFab != s_comboFabOn) {
+            s_comboFabOn = wantComboFab;
+            ui_sync_combo_fab_visible(wantComboFab);
+        }
+    }
     if (g_espActive.load() && fr.status == EspStatus::Ready) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
         if (esp_retri_settings().enabled) esp_retri_process(fr);
@@ -429,6 +437,8 @@ static void draw_ui() {
             EspHeroAutoSettings &ha = esp_hero_auto_settings();
             ImGui::Checkbox("Ling auto sword", &ha.lingSword);
             ImGui::Checkbox("Gusion auto combo", &ha.gusionCombo);
+            ImGui::TextWrapped(
+                "In-game: left COMBO button (outside menu). One tap = one auto combo.");
             ImGui::Checkbox("Gusion enemy combo (no mark scan)", &ha.gusionEnemyCombo);
             ImGui::Checkbox("IL2 cast (no root)", &ha.useIl2Cast);
             ImGui::Checkbox("Show skill buttons", &ha.showSkillCircles);
@@ -675,6 +685,7 @@ void ui_esp_start() {
 
 void ui_esp_stop() {
     g_espActive.store(false);
+    ui_sync_combo_fab_visible(false);
     if (g_needResolve.load())
         ui_log("[esp] STOP — pending Resolve will run on reader thread");
     ui_log("[esp] STOP — no ESP on world");

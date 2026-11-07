@@ -22,9 +22,16 @@ public final class NativeBridge {
     public static native boolean nativeIsMenuInteractive();
     public static native void nativeStartEsp();
     public static native void nativeStopEsp();
+    /** One tap = one Ling sword / Gusion combo (when enabled in menu). */
+    public static native void nativeHeroComboPulse();
 
     public static void applyMenuTouch(boolean menuInteractive) {
         OverlayService svc = OverlayService.instance;
         if (svc != null) svc.setMenuTouch(menuInteractive);
+    }
+
+    public static void setComboFabVisible(boolean visible) {
+        OverlayService svc = OverlayService.instance;
+        if (svc != null) svc.setComboFabVisible(visible);
     }
 }

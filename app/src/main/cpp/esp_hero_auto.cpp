@@ -1,4 +1,5 @@
 #include "esp_hero_auto.hpp"
+#include "conrent_esp.hpp"
 #include "esp_retri_il2.hpp"
 #include "esp_runtime_off.hpp"
 #include "mem.hpp"
@@ -169,21 +170,48 @@ static int foreach_run_bullet(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
         fn(b);
     };
 
-    if (R.bmStaticRunBulletsList) {
-        uintptr_t listObj = 0;
-        if (mem_read(pid, statics + R.bmStaticRunBulletsList, listObj)) {
-            g_hero.dbgRunListPtr = listObj;
-            collect_from_container(pid, listObj, mark);
+    static uint64_t s_il2StaticMs = 0;
+    static uintptr_t s_listIl2 = 0;
+    static uintptr_t s_hashIl2 = 0;
+    const uint64_t nowMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    if (bmKlass && nowMs - s_il2StaticMs > 120) {
+        RemoteIl2CppInfo il2{};
+        if (esp_resolved_il2(il2)) {
+            uintptr_t p = 0;
+            if (conrent_il2_static_field_ptr(pid, il2, bmKlass, "_RunBullets", p)) s_listIl2 = p;
+            p = 0;
+            if (conrent_il2_static_field_ptr(pid, il2, bmKlass, "m_RunBullets", p)) s_hashIl2 = p;
         }
+        s_il2StaticMs = nowMs;
     }
 
-    if (R.bmStaticRunBullets) {
+    auto read_list = [&]() -> uintptr_t {
+        if (s_listIl2 > 0xffffULL) return s_listIl2;
+        uintptr_t listObj = 0;
+        if (R.bmStaticRunBulletsList &&
+            mem_read(pid, statics + R.bmStaticRunBulletsList, listObj) && listObj > 0xffffULL)
+            return listObj;
+        return 0;
+    };
+    auto read_hash = [&]() -> uintptr_t {
+        if (s_hashIl2 > 0xffffULL) return s_hashIl2;
         uintptr_t hashSet = 0;
-        if (mem_read(pid, statics + R.bmStaticRunBullets, hashSet)) {
-            g_hero.dbgHashSetPtr = hashSet;
-            if (mem_ptr_ok(hashSet)) scan_hashset_bullets(pid, hashSet, mark);
-        }
-    }
+        if (R.bmStaticRunBullets && mem_read(pid, statics + R.bmStaticRunBullets, hashSet) &&
+            hashSet > 0xffffULL)
+            return hashSet;
+        return 0;
+    };
+
+    const uintptr_t listObj = read_list();
+    g_hero.dbgRunListPtr = listObj;
+    if (listObj) collect_from_container(pid, listObj, mark);
+
+    const uintptr_t hashSet = read_hash();
+    g_hero.dbgHashSetPtr = hashSet;
+    if (hashSet) scan_hashset_bullets(pid, hashSet, mark);
     return total;
 }
 
@@ -265,6 +293,7 @@ static void norm_dir(float dx, float dy, float dz, float &ox, float &oy, float &
 }
 
 static std::atomic<bool> s_castBusy{false};
+static std::atomic<bool> s_gusionFsmReset{false};
 
 struct CastGuard {
     std::atomic<bool> &b;
@@ -286,7 +315,7 @@ static void ling_touch_swipe(int scrW, int scrH, float tx, float tz, float selfX
 
 static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int heroId, int scrW,
                          int scrH) {
-    if (!g_hero.lingSword || heroId != kHeroLing) return;
+    if (!g_hero.lingSword || !g_hero.lingArmed || heroId != kHeroLing) return;
     if (!R.bulletId || (!R.bmStaticRunBullets && !R.bmStaticRunBulletsList)) return;
     const uintptr_t bmKlass = frame.bmKlass;
 
@@ -302,10 +331,14 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
         static uint64_t s_noSwordLog = 0;
         if (now - s_noSwordLog > 3000) {
             s_noSwordLog = now;
-            ui_log("[ling] no sword 8452 (total bullets=%d); need S2 on ground or enemy fallback",
+            ui_log("[ling] no sword 8452 (total bullets=%d); drop S2 or enable enemy fallback",
                    g_hero.lastBulletTotal);
         }
-        if (!ling_nearest_enemy(frame, 10.f, tx, ty, tz)) return;
+        if (g_hero.lastBulletTotal <= 0) return;
+        static uint64_t s_enemyFallbackMs = 0;
+        if (now - s_enemyFallbackMs < 800) return;
+        if (!ling_nearest_enemy(frame, 6.f, tx, ty, tz)) return;
+        s_enemyFallbackMs = now;
     }
 
     float dx = tx - frame.selfX;
@@ -326,6 +359,10 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
     }
     if (!ok) ling_touch_swipe(scrW, scrH, tx, tz, frame.selfX, frame.selfZ);
     s_lastCastMs = now;
+    if (g_hero.lingOneShot) {
+        g_hero.lingOneShot = false;
+        g_hero.lingArmed = false;
+    }
     static uint64_t s_log = 0;
     if (now - s_log > 2500) {
         s_log = now;
@@ -336,13 +373,16 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
 
 static void process_gusion(const EspFrame &frame, const EspRuntimeOff &R, int heroId, int scrW,
                            int scrH) {
-    if (!g_hero.gusionCombo || heroId != kHeroGusion) return;
+    if (!g_hero.gusionCombo || !g_hero.gusionArmed || heroId != kHeroGusion) return;
     if (!R.bulletId || (!R.bmStaticRunBullets && !R.bmStaticRunBulletsList)) return;
     const uintptr_t bmKlass = frame.bmKlass;
 
     static int s_state = 0;
     static uint64_t s_lastActionMs = 0;
+    static uint64_t s_oneShotStartMs = 0;
+    if (s_gusionFsmReset.exchange(false, std::memory_order_acq_rel)) s_state = 0;
     const uint64_t now = steady_ms();
+    if (g_hero.gusionOneShot && s_oneShotStartMs == 0) s_oneShotStartMs = now;
     const int delay = g_hero.comboDelayMs < 40 ? 40 : g_hero.comboDelayMs;
     if (now - s_lastActionMs < (uint64_t)delay) return;
 
@@ -410,7 +450,19 @@ static void process_gusion(const EspFrame &frame, const EspRuntimeOff &R, int he
             cast_or_tap(kGusionS2, g_hero.gusionS2X, g_hero.gusionS2Y);
             s_state = 0;
             acted = true;
+            if (g_hero.gusionOneShot) {
+                g_hero.gusionOneShot = false;
+                g_hero.gusionArmed = false;
+                s_oneShotStartMs = 0;
+            }
         }
+    }
+
+    if (g_hero.gusionOneShot && s_oneShotStartMs > 0 && now - s_oneShotStartMs > 8000) {
+        g_hero.gusionOneShot = false;
+        g_hero.gusionArmed = false;
+        s_state = 0;
+        s_oneShotStartMs = 0;
     }
 
     if (acted) {
@@ -513,4 +565,33 @@ void esp_hero_auto_process(const EspFrame &frame) {
 
     process_ling(frame, R, heroId, scrW, scrH);
     process_gusion(frame, R, heroId, scrW, scrH);
+}
+
+void esp_hero_auto_combo_pulse() {
+    if (!g_hero.lingSword && !g_hero.gusionCombo) {
+        ui_log("[hero] COMBO: enable Ling/Gusion in menu first");
+        return;
+    }
+    g_hero.lingArmed = g_hero.lingOneShot = false;
+    g_hero.gusionArmed = g_hero.gusionOneShot = false;
+    const int hid = g_hero.lastHeroId;
+    if (g_hero.lingSword && (hid == kHeroLing || !g_hero.gusionCombo)) {
+        g_hero.lingArmed = true;
+        g_hero.lingOneShot = true;
+    }
+    if (g_hero.gusionCombo && (hid == kHeroGusion || !g_hero.lingSword)) {
+        g_hero.gusionArmed = true;
+        g_hero.gusionOneShot = true;
+        s_gusionFsmReset.store(true, std::memory_order_release);
+    }
+    if (!g_hero.lingArmed && !g_hero.gusionArmed) {
+        ui_log("[hero] COMBO: wrong hero (need Ling=%d or Gusion=%d, have id=%d)", kHeroLing,
+               kHeroGusion, hid);
+        return;
+    }
+    ui_log("[hero] COMBO x1 pulse");
+}
+
+bool esp_hero_auto_combo_fab_enabled() {
+    return g_hero.lingSword || g_hero.gusionCombo;
 }

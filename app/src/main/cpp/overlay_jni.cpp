@@ -1,10 +1,12 @@
 #include "ui_core.hpp"
 #include "clip_android.hpp"
+#include "esp_hero_auto.hpp"
 #include <jni.h>
 
 static JavaVM *g_vm = nullptr;
 static jclass g_bridgeCls = nullptr;
 static jmethodID g_setMenuTouch = nullptr;
+static jmethodID g_setComboFab = nullptr;
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
     g_vm = vm;
@@ -24,7 +26,17 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeInit(JNIEnv *env, jclass clazz) {
     if (!g_bridgeCls) g_bridgeCls = (jclass)env->NewGlobalRef(clazz);
     if (!g_setMenuTouch)
         g_setMenuTouch = env->GetStaticMethodID(clazz, "applyMenuTouch", "(Z)V");
+    if (!g_setComboFab)
+        g_setComboFab = env->GetStaticMethodID(clazz, "setComboFabVisible", "(Z)V");
     ui_esp_pipeline_idle();
+}
+
+void ui_sync_combo_fab_visible(bool show) {
+    if (!g_vm || !g_bridgeCls || !g_setComboFab) return;
+    JNIEnv *env = nullptr;
+    if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    env->CallStaticVoidMethod(g_bridgeCls, g_setComboFab, show ? JNI_TRUE : JNI_FALSE);
+    if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -106,4 +118,9 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeStartEsp(JNIEnv *, jclass) {
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeStopEsp(JNIEnv *, jclass) {
     ui_esp_stop();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_mlbb_esp_pure_NativeBridge_nativeHeroComboPulse(JNIEnv *, jclass) {
+    esp_hero_auto_combo_pulse();
 }

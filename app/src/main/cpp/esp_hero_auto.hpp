@@ -6,6 +6,11 @@ struct ImDrawList;
 struct EspHeroAutoSettings {
     bool lingSword = false;
     bool gusionCombo = false;
+    /** Armed only after COMBO FAB tap (one pulse per tap). */
+    bool lingArmed = false;
+    bool gusionArmed = false;
+    bool lingOneShot = false;
+    bool gusionOneShot = false;
     bool gusionEnemyCombo = true;
     bool useIl2Cast = true;
     int comboDelayMs = 80;
@@ -36,3 +41,6 @@ void esp_hero_auto_sync_skill_pixels(float screenW, float screenH);
 void esp_hero_auto_reset_skill_anchors();
 void esp_hero_auto_draw_indicator(ImDrawList *draw);
 void esp_hero_auto_anchor_drag(bool menuOpen, float screenW, float screenH);
+/** Floating COMBO button (outside menu): one tap = one Ling cast or full Gusion chain. */
+void esp_hero_auto_combo_pulse();
+bool esp_hero_auto_combo_fab_enabled();

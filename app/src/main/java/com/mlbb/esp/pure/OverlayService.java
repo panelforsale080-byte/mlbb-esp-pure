@@ -20,6 +20,7 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 
@@ -35,8 +36,12 @@ public class OverlayService extends Service {
     private FrameLayout root;
     private GlImGuiView glView;
     private ImageButton fabLogo;
+    private Button fabCombo;
     private WindowManager.LayoutParams surfaceLp;
     private WindowManager.LayoutParams fabLp;
+    private WindowManager.LayoutParams fabComboLp;
+    private boolean comboFabWanted;
+    private boolean menuInteractive;
     private final Handler main = new Handler(Looper.getMainLooper());
     private volatile boolean glReady = false;
     private String pendingCmd = null;
@@ -141,6 +146,13 @@ public class OverlayService extends Service {
             } catch (Throwable ignored) {
             }
         }
+        if (fabComboLp != null && fabCombo != null) {
+            clampComboFabToScreen();
+            try {
+                wm.updateViewLayout(fabCombo, fabComboLp);
+            } catch (Throwable ignored) {
+            }
+        }
         if (glView != null) {
             glView.requestLayout();
             glView.requestRender();
@@ -160,6 +172,43 @@ public class OverlayService extends Service {
         if (fabLp.y < 0) fabLp.y = 0;
         if (fabLp.x > wh[0] - fw) fabLp.x = Math.max(0, wh[0] - fw);
         if (fabLp.y > wh[1] - fh) fabLp.y = Math.max(0, wh[1] - fh);
+    }
+
+    private void clampComboFabToScreen() {
+        if (fabComboLp == null || fabCombo == null || wm == null) return;
+        int[] wh = new int[2];
+        getScreenSize(wh);
+        fabCombo.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        int fw =
+                fabCombo.getMeasuredWidth() > 0 ? fabCombo.getMeasuredWidth() : fabCombo.getWidth();
+        int fh =
+                fabCombo.getMeasuredHeight() > 0
+                        ? fabCombo.getMeasuredHeight()
+                        : fabCombo.getHeight();
+        if (fw <= 0) fw = dp(52);
+        if (fh <= 0) fh = dp(52);
+        if (fabComboLp.x < 0) fabComboLp.x = 0;
+        if (fabComboLp.y < 0) fabComboLp.y = 0;
+        if (fabComboLp.x > wh[0] - fw) fabComboLp.x = Math.max(0, wh[0] - fw);
+        if (fabComboLp.y > wh[1] - fh) fabComboLp.y = Math.max(0, wh[1] - fh);
+    }
+
+    void setComboFabVisible(boolean want) {
+        comboFabWanted = want;
+        applyComboFabVisibility();
+    }
+
+    private void applyComboFabVisibility() {
+        if (fabCombo == null) return;
+        final boolean show = comboFabWanted && !menuInteractive;
+        fabCombo.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (show && fabComboLp != null) {
+            clampComboFabToScreen();
+            try {
+                wm.updateViewLayout(fabCombo, fabComboLp);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     private void attachWindows() {
@@ -276,8 +325,42 @@ public class OverlayService extends Service {
         glView.setFocusable(false);
         glView.setFocusableInTouchMode(false);
 
+        fabCombo = new Button(this);
+        fabCombo.setText("C");
+        fabCombo.setAllCaps(false);
+        fabCombo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f);
+        fabCombo.setBackgroundResource(R.drawable.bg_fab_esp_start);
+        fabCombo.setPadding(dp(4), dp(2), dp(4), dp(2));
+        fabCombo.setContentDescription(getString(R.string.fab_hero_combo));
+        final int comboSize = dp(52);
+        fabCombo.setMinimumWidth(comboSize);
+        fabCombo.setMinimumHeight(comboSize);
+        fabCombo.setOnClickListener(
+                v -> {
+                    try {
+                        NativeBridge.nativeHeroComboPulse();
+                    } catch (Throwable t) {
+                        Log.w(TAG, "combo pulse", t);
+                    }
+                    if (glView != null) glView.requestRender();
+                });
+
+        fabComboLp =
+                new WindowManager.LayoutParams(
+                        comboSize,
+                        comboSize,
+                        overlayType,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                        PixelFormat.TRANSLUCENT);
+        fabComboLp.gravity = Gravity.TOP | Gravity.START;
+        fabComboLp.x = dp(12);
+        fabComboLp.y = wh[1] / 2 - comboSize / 2;
+        fabCombo.setVisibility(View.GONE);
+
         wm.addView(root, surfaceLp);
         wm.addView(fabLogo, fabLp);
+        wm.addView(fabCombo, fabComboLp);
     }
 
     private void scheduleFabHoldExit() {
@@ -331,6 +414,7 @@ public class OverlayService extends Service {
 
     private void applyMenuTouchFlags(boolean interactive) {
         if (surfaceLp == null || wm == null || root == null) return;
+        menuInteractive = interactive;
         if (!interactive && NativeBridge.nativeIsMenuInteractive()) {
             NativeBridge.nativeMinimizeMenu();
         }
@@ -358,6 +442,7 @@ public class OverlayService extends Service {
                 }
             }
         }
+        applyComboFabVisibility();
         if (glView != null) glView.requestRender();
     }
 
@@ -408,6 +493,10 @@ public class OverlayService extends Service {
         }
         try {
             if (fabLogo != null) wm.removeView(fabLogo);
+        } catch (Throwable ignored) {
+        }
+        try {
+            if (fabCombo != null) wm.removeView(fabCombo);
         } catch (Throwable ignored) {
         }
         try {

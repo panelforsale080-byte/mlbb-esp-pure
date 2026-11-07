@@ -557,3 +557,48 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
     ui_log("[conrent] OK %s", out.detail);
     return true;
 }
+
+static uintptr_t il2_name_scratch(RemoteSession &s, pid_t pid, int slot, const char *lit) {
+    if (!lit) lit = "";
+    const size_t n = std::strlen(lit) + 1;
+    const uintptr_t p = remote_session_scratch(s, slot, n);
+    if (!p) return 0;
+    mem_write(s.pid, p, lit, n);
+    return p;
+}
+
+bool conrent_il2_static_field_ptr(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t klass,
+                                    const char *fieldName, uintptr_t &outPtr) {
+    outPtr = 0;
+    if (!klass || !fieldName || !il2.sym_class_get_field_from_name ||
+        !il2.sym_field_static_get_value)
+        return false;
+    RemoteSession s{};
+    if (!remote_session_begin_try(pid, s)) return false;
+    const uintptr_t namePtr = il2_name_scratch(s, pid, 11, fieldName);
+    if (!namePtr) {
+        remote_session_end(s);
+        return false;
+    }
+    uintptr_t field = 0;
+    if (!remote_session_call(s, il2.sym_class_get_field_from_name, {klass, namePtr}, field) ||
+        !field) {
+        remote_session_end(s);
+        return false;
+    }
+    const uintptr_t valSlot = remote_session_scratch(s, 2, sizeof(uintptr_t));
+    if (!valSlot) {
+        remote_session_end(s);
+        return false;
+    }
+    uintptr_t z = 0;
+    mem_write(s.pid, valSlot, &z, sizeof(z));
+    uintptr_t dummy = 0;
+    if (!remote_session_call(s, il2.sym_field_static_get_value, {field, valSlot}, dummy)) {
+        remote_session_end(s);
+        return false;
+    }
+    mem_read(s.pid, valSlot, outPtr);
+    remote_session_end(s);
+    return outPtr != 0 && outPtr > 0xffffULL && mem_ptr_ok(outPtr);
+}

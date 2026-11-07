@@ -58,6 +58,8 @@ static bool g_resolved = false;
 static std::atomic<bool> g_forceResolve{false};
 static EspResolveReport g_lastReport{};
 static const RemoteIl2CppInfo *g_il2_for_resolve = nullptr;
+static RemoteIl2CppInfo g_il2Snap{};
+static std::atomic<bool> g_il2SnapOk{false};
 
 struct BmFindMeta {
     int nameStrings = 0;
@@ -765,6 +767,7 @@ void esp_reset() {
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
     g_resolved = false;
+    g_il2SnapOk = false;
     g_tickHeroName.store(true);
     g_tickEnemyCd.store(true);
     g_tickMonsters.store(true);
@@ -783,6 +786,7 @@ EspStatus esp_attach(pid_t pid) {
             remote_il2cpp_invalidate_cache(g_pid);
         g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
         g_resolved = false;
+        g_il2SnapOk = false;
         g_readerTickIndex.store(0);
         g_cooldownTimers.clear();
         g_heroNameByEnt.clear();
@@ -895,6 +899,8 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         g_bmStatics = cr.battle_manager_statics;
         g_bmInstance = cr.battle_manager;
         if (cr.battle_manager) g_bmInstancePin = cr.battle_manager;
+        g_il2Snap = il2;
+        g_il2SnapOk = crRan && il2.sym_field_static_get_value != 0;
         esp_runtime_off_apply(cr);
         g_resolved = esp_runtime_off_ready();
         BmFindMeta meta{};
@@ -911,6 +917,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     }
 
     g_resolved = false;
+    g_il2SnapOk = false;
     BmFindMeta meta{};
     fill_report(rep, EspStatus::NoBattleManager, (int)maps.size(), probe, meta, 0, 0, 0);
     if (cr.detail[0]) ui_log("[resolve] conRent: %s", cr.detail);
@@ -1294,4 +1301,10 @@ bool esp_monster_dict_entries(pid_t pid, uintptr_t bmInstance,
     if (mem_read(pid, bmInstance + R.dicMonsterShow, mDict) && mDict)
         dict_entries(pid, mDict, out);
     return !out.empty();
+}
+
+bool esp_resolved_il2(RemoteIl2CppInfo &out) {
+    if (!g_il2SnapOk.load(std::memory_order_acquire)) return false;
+    out = g_il2Snap;
+    return out.sym_field_static_get_value != 0;
 }

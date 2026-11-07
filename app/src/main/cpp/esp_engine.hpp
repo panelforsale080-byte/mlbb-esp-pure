@@ -1,5 +1,6 @@
 #pragma once
 #include "mem.hpp"
+#include "remote_il2cpp.hpp"
 #include <sys/types.h>
 #include <vector>
 
@@ -85,3 +86,5 @@ uintptr_t esp_bm_static_fields_ptr(pid_t pid, uintptr_t bmKlass);
 bool esp_il2_array_obj_ptrs(pid_t pid, uintptr_t arrObj, std::vector<uintptr_t> &out,
                             int maxItems = 256);
 bool esp_il2_better_list_ptrs(pid_t pid, uintptr_t listObj, std::vector<uintptr_t> &out);
+/** Cached IL2CPP exports after successful Resolve (for static field reads on reader thread). */
+bool esp_resolved_il2(RemoteIl2CppInfo &out);
