@@ -245,7 +245,8 @@ static void reader_loop() {
         if (g_espActive.load()) {
             const EspHeroAutoSettings &ha = esp_hero_auto_settings();
             const bool heroFast = ha.lingSword || ha.gusionCombo;
-            const int tickMs = (esp_retri_settings().enabled || heroFast) ? 6 : 12;
+            const int tickMs =
+                (esp_retri_settings().enabled || heroFast) ? (ha.lingSword ? 12 : 6) : 12;
             std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
         } else if (g_showMenu)
             std::this_thread::sleep_for(std::chrono::milliseconds(12));
