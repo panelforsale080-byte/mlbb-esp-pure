@@ -438,7 +438,8 @@ static void draw_ui() {
             ImGui::Checkbox("Ling auto sword", &ha.lingSword);
             ImGui::Checkbox("Gusion auto combo", &ha.gusionCombo);
             ImGui::TextWrapped(
-                "In-game: left COMBO button (outside menu). One tap = one auto combo.");
+                "Ling: auto when sword 8452 on ground (no button). Gusion: left C button = 1 combo.");
+            ImGui::SliderInt("Ling min swords", &ha.lingMinSwords, 1, 4);
             ImGui::Checkbox("Gusion enemy combo (no mark scan)", &ha.gusionEnemyCombo);
             ImGui::Checkbox("IL2 cast (no root)", &ha.useIl2Cast);
             ImGui::Checkbox("Show skill buttons", &ha.showSkillCircles);

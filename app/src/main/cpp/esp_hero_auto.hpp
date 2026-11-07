@@ -15,6 +15,8 @@ struct EspHeroAutoSettings {
     bool useIl2Cast = true;
     int comboDelayMs = 80;
     float lingMaxRange = 8.5f;
+    /** Auto dash when at least this many 8452 swords in range (1 = any sword). */
+    int lingMinSwords = 1;
     int lastHeroId = 0;
     int lastBulletScan = 0;
     int lastBulletTotal = 0;

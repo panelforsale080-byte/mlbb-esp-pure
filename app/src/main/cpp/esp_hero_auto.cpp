@@ -215,6 +215,16 @@ static int foreach_run_bullet(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
     return total;
 }
 
+static int count_bullets_by_id(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
+                               const EspRuntimeOff &R, int wantId) {
+    int n = 0;
+    foreach_run_bullet(pid, bmStatics, bmKlass, R, [&](uintptr_t bullet) {
+        int bid = 0;
+        if (mem_read(pid, bullet + R.bulletId, bid) && bid == wantId) ++n;
+    });
+    return n;
+}
+
 static bool find_bullet_by_id(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
                               const EspRuntimeOff &R, int wantId,
                               float selfX, float selfY, float selfZ, float maxRange, float *outX,
@@ -315,39 +325,54 @@ static void ling_touch_swipe(int scrW, int scrH, float tx, float tz, float selfX
 
 static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int heroId, int scrW,
                          int scrH) {
-    if (!g_hero.lingSword || !g_hero.lingArmed || heroId != kHeroLing) return;
+    if (!g_hero.lingSword || heroId != kHeroLing) return;
     if (!R.bulletId || (!R.bmStaticRunBullets && !R.bmStaticRunBulletsList)) return;
     const uintptr_t bmKlass = frame.bmKlass;
 
     static uint64_t s_lastCastMs = 0;
+    static float s_chaseTx = 0, s_chaseTy = 0, s_chaseTz = 0;
+    static uint64_t s_chaseStartMs = 0;
     const uint64_t now = steady_ms();
-    if (now - s_lastCastMs < 160) return;
+
+    const int swordCount = count_bullets_by_id(frame.pid, frame.bmStatics, bmKlass, R,
+                                               kLingSwordBulletId);
+    g_hero.lastBulletScan = swordCount;
+    const int minS = g_hero.lingMinSwords < 1 ? 1 : g_hero.lingMinSwords;
+    if (swordCount < minS) {
+        static uint64_t s_noSwordLog = 0;
+        if (now - s_noSwordLog > 4000) {
+            s_noSwordLog = now;
+            ui_log("[ling] wait sword 8452 (have %d/%d, bullets=%d)", swordCount, minS,
+                   g_hero.lastBulletTotal);
+        }
+        s_chaseStartMs = 0;
+        return;
+    }
+
+    if (s_chaseStartMs > 0) {
+        const float cdx = s_chaseTx - frame.selfX;
+        const float cdz = s_chaseTz - frame.selfZ;
+        const float chaseDist = std::sqrt(cdx * cdx + cdz * cdz);
+        if (chaseDist < 0.65f || now - s_chaseStartMs > 520) s_chaseStartMs = 0;
+        else return;
+    }
+
+    if (now - s_lastCastMs < 200) return;
 
     float tx = 0, ty = 0, tz = 0;
     const bool hasSword =
         find_bullet_by_id(frame.pid, frame.bmStatics, bmKlass, R, kLingSwordBulletId, frame.selfX,
                           frame.selfY, frame.selfZ, g_hero.lingMaxRange, &tx, &ty, &tz);
-    if (!hasSword) {
-        static uint64_t s_noSwordLog = 0;
-        if (now - s_noSwordLog > 3000) {
-            s_noSwordLog = now;
-            ui_log("[ling] no sword 8452 (total bullets=%d); drop S2 or enable enemy fallback",
-                   g_hero.lastBulletTotal);
-        }
-        if (g_hero.lastBulletTotal <= 0) return;
-        static uint64_t s_enemyFallbackMs = 0;
-        if (now - s_enemyFallbackMs < 800) return;
-        if (!ling_nearest_enemy(frame, 6.f, tx, ty, tz)) return;
-        s_enemyFallbackMs = now;
-    }
+    if (!hasSword) return;
 
     float dx = tx - frame.selfX;
     float dy = ty - frame.selfY;
     float dz = tz - frame.selfZ;
+    const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (dist < 0.45f) return;
+
     float ndx, ndy, ndz;
     norm_dir(dx, dy, dz, ndx, ndy, ndz);
-    const float dist =
-        std::sqrt(dx * dx + dy * dy + dz * dz);
 
     bool ok = false;
     if (g_hero.useIl2Cast && esp_retri_il2_ready() && frame.localPlayerEnt) {
@@ -359,15 +384,14 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
     }
     if (!ok) ling_touch_swipe(scrW, scrH, tx, tz, frame.selfX, frame.selfZ);
     s_lastCastMs = now;
-    if (g_hero.lingOneShot) {
-        g_hero.lingOneShot = false;
-        g_hero.lingArmed = false;
-    }
+    s_chaseTx = tx;
+    s_chaseTy = ty;
+    s_chaseTz = tz;
+    s_chaseStartMs = now;
     static uint64_t s_log = 0;
-    if (now - s_log > 2500) {
+    if (now - s_log > 2000) {
         s_log = now;
-        ui_log("[ling] sword cast %s dist=%.1f bullets=%d", ok ? "IL2" : "swipe", dist,
-               g_hero.lastBulletScan);
+        ui_log("[ling] auto sword %s dist=%.1f swords=%d", ok ? "IL2" : "swipe", dist, swordCount);
     }
 }
 
@@ -575,23 +599,19 @@ void esp_hero_auto_combo_pulse() {
     g_hero.lingArmed = g_hero.lingOneShot = false;
     g_hero.gusionArmed = g_hero.gusionOneShot = false;
     const int hid = g_hero.lastHeroId;
-    if (g_hero.lingSword && (hid == kHeroLing || !g_hero.gusionCombo)) {
-        g_hero.lingArmed = true;
-        g_hero.lingOneShot = true;
-    }
     if (g_hero.gusionCombo && (hid == kHeroGusion || !g_hero.lingSword)) {
         g_hero.gusionArmed = true;
         g_hero.gusionOneShot = true;
         s_gusionFsmReset.store(true, std::memory_order_release);
     }
-    if (!g_hero.lingArmed && !g_hero.gusionArmed) {
-        ui_log("[hero] COMBO: wrong hero (need Ling=%d or Gusion=%d, have id=%d)", kHeroLing,
-               kHeroGusion, hid);
+    if (!g_hero.gusionArmed) {
+        ui_log("[hero] COMBO: need Gusion=%d (have id=%d); Ling is fully automatic", kHeroGusion,
+               hid);
         return;
     }
-    ui_log("[hero] COMBO x1 pulse");
+    ui_log("[hero] COMBO x1 pulse (Gusion)");
 }
 
 bool esp_hero_auto_combo_fab_enabled() {
-    return g_hero.lingSword || g_hero.gusionCombo;
+    return g_hero.gusionCombo;
 }
