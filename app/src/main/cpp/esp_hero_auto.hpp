@@ -20,6 +20,8 @@ struct EspHeroAutoSettings {
     /** Ms between sword dashes (lower = faster chain on your 4 swords). */
     int lingCastMs = 85;
     int lingChaseLockMs = 260;
+    /** Bullet/sword scan interval (higher = less lag, lower = snappier). */
+    int lingScanMs = 75;
     int lastHeroId = 0;
     int lastBulletScan = 0;
     int lastBulletTotal = 0;

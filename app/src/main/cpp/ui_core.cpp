@@ -245,7 +245,7 @@ static void reader_loop() {
         if (g_espActive.load()) {
             const EspHeroAutoSettings &ha = esp_hero_auto_settings();
             const bool heroFast = ha.lingSword || ha.gusionCombo;
-            const int tickMs = (esp_retri_settings().enabled || heroFast) ? 2 : 12;
+            const int tickMs = (esp_retri_settings().enabled || heroFast) ? 6 : 12;
             std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
         } else if (g_showMenu)
             std::this_thread::sleep_for(std::chrono::milliseconds(12));
@@ -275,8 +275,6 @@ static void draw_ui() {
     }
     if (g_espActive.load() && fr.status == EspStatus::Ready) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
-        if (esp_retri_settings().enabled) esp_retri_process(fr);
-        esp_hero_auto_process(fr);
         esp_draw_overlay(bg, sw, sh, fr, g_feat, g_showMenu);
         if (esp_retri_settings().enabled && esp_retri_settings().showCircle) {
             esp_retri_draw_indicator(bg);
@@ -440,8 +438,9 @@ static void draw_ui() {
             ImGui::TextWrapped(
                 "Ling: auto when sword 8452 on ground (no button). Gusion: left C button = 1 combo.");
             ImGui::SliderInt("Ling min swords", &ha.lingMinSwords, 1, 4);
-            ImGui::SliderInt("Ling dash speed ms", &ha.lingCastMs, 55, 180);
+            ImGui::SliderInt("Ling dash speed ms", &ha.lingCastMs, 55, 200);
             ImGui::SliderInt("Ling chase lock ms", &ha.lingChaseLockMs, 120, 450);
+            ImGui::SliderInt("Ling scan ms (FPS)", &ha.lingScanMs, 45, 200);
             ImGui::Checkbox("Gusion enemy combo (no mark scan)", &ha.gusionEnemyCombo);
             ImGui::Checkbox("IL2 cast (no root)", &ha.useIl2Cast);
             ImGui::Checkbox("Show skill buttons", &ha.showSkillCircles);
