@@ -11,6 +11,7 @@ add_library(MlbbEsp SHARED
     esp_engine.cpp
     esp_draw.cpp
     esp_retri.cpp
+    touch_uinput.cpp
     esp_camera.cpp
     conrent_esp.cpp
     il2_lib_globals.cpp

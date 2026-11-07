@@ -373,7 +373,7 @@ static void draw_ui() {
                 ImGui::Checkbox("Lito", &rt.targetLito);
                 ImGui::TreePop();
             }
-            ImGui::TextDisabled("Tap: shell input tap (root). No input grab — stable overlay.");
+            ImGui::TextDisabled("Tap: uinput virtual + su/input (root). Log shows inject method.");
         }
 
         ImGui::SeparatorText("Monster");

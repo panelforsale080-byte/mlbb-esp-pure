@@ -2,6 +2,7 @@
 #include "esp_engine.hpp"
 #include "esp_runtime_off.hpp"
 #include "mem.hpp"
+#include "touch_uinput.hpp"
 #include "ui_log.hpp"
 
 #include <android/log.h>
@@ -40,13 +41,13 @@ static uint64_t steady_ms() {
             .count();
 }
 
-/** Overlay APK: never Touch_Init (EVIOCGRAB + input threads). Crashes menu / steals touch. */
 static void fire_retri_tap() {
     const int x = (int)g_retri.tapX;
     const int y = (int)g_retri.tapY;
-    char cmd[128];
-    std::snprintf(cmd, sizeof(cmd), "input tap %d %d 2>/dev/null", x, y);
-    (void)std::system(cmd);
+    const int sw = g_dispW.load() > 0 ? g_dispW.load() : (int)g_retri.tapX + 1;
+    const int sh = g_dispH.load() > 0 ? g_dispH.load() : (int)g_retri.tapY + 1;
+    const char *how = touch_inject_screen_tap(x, y, sw, sh);
+    ui_log("[retri] inject %s @ %d,%d", how, x, y);
 }
 
 static int read_entity_hp(pid_t pid, uintptr_t ent, uintptr_t hpOff) {
@@ -132,6 +133,7 @@ void esp_retri_notify_display(int w, int h) {
         g_dispW.store(w);
         g_dispH.store(h);
         esp_retri_sync_anchor_pixels((float)w, (float)h);
+        (void)touch_uinput_open(w, h);
     }
 }
 
@@ -145,6 +147,8 @@ void esp_retri_process(const EspFrame &frame) {
 
     static uint64_t s_lastScanMs = 0;
     static uint64_t s_lastTapMs = 0;
+    static uintptr_t s_holdEnt = 0;
+    static uint64_t s_holdUntilMs = 0;
     const uint64_t now = steady_ms();
     if (now - s_lastScanMs < 120) return;
     s_lastScanMs = now;
@@ -175,6 +179,7 @@ void esp_retri_process(const EspFrame &frame) {
 
     if (!closestEnt || closestDist > kMaxDist) return;
     if (closestHp <= 0 || closestHp > retriDmg) return;
+    if (closestEnt == s_holdEnt && now < s_holdUntilMs) return;
 
     const int realHp = read_entity_hp(frame.pid, closestEnt, R.hp);
     if (realHp <= 0 || realHp > retriDmg) return;
@@ -182,6 +187,8 @@ void esp_retri_process(const EspFrame &frame) {
     fire_retri_tap();
     ui_log("[retri] TAP id=%d hp=%d dist=%.1f", closestId, realHp, closestDist);
     s_lastTapMs = now;
+    s_holdEnt = closestEnt;
+    s_holdUntilMs = now + 1800;
 }
 
 void esp_retri_draw_indicator(ImDrawList *draw) {
