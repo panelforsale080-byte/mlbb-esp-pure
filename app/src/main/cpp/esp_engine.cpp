@@ -29,7 +29,7 @@ static std::atomic<bool> g_tickMonsters{true};
 static std::atomic<uint64_t> g_readerTickIndex{0};
 
 /** Stagger IL2 hero-name / cooldown dict walks — higher = less CPU, slightly staler CD/name. */
-static constexpr unsigned kHeavyReadInterval = 6;
+static constexpr unsigned kHeavyReadInterval = 15;
 
 void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown, bool monsters) {
     g_tickHeroName.store(heroName);
@@ -1094,10 +1094,10 @@ EspStatus esp_tick(EspFrame &out) {
 
 namespace {
 
-constexpr int kScreenHoldFrames = 2;
+constexpr int kScreenHoldFrames = 0;
 /** Beyond this distance (m), W2S runs on a staggered schedule to cut vm_read / matrix work. */
 constexpr int kW2sNearMeters = 22;
-constexpr unsigned kW2sFarStagger = 3u;
+constexpr unsigned kW2sFarStagger = 1u;
 
 static pid_t g_screenPid = 0;
 static uint32_t g_w2sFrame = 0;

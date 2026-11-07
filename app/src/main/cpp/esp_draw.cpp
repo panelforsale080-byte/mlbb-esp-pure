@@ -4,9 +4,17 @@
 #include <cstdio>
 #include <cstring>
 #include <cfloat>
+#include <unordered_map>
 #include <vector>
 
 namespace {
+
+struct SmoothTarget {
+    float lastX = 0.f;
+    float lastY = 0.f;
+    bool init = false;
+};
+static std::unordered_map<uintptr_t, SmoothTarget> g_smoothCache;
 
 /** Readable HUD: slightly larger text/boxes vs baseline #147. */
 constexpr float kTextScale = 1.22f;
@@ -67,7 +75,19 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
     }
     if (!t.screenValid) return;
 
-    const ImVec2 root{t.screenX, t.screenY};
+    float targetX = t.screenX;
+    float targetY = t.screenY;
+    auto &smooth = g_smoothCache[t.ent];
+    if (!smooth.init) {
+        smooth.lastX = targetX;
+        smooth.lastY = targetY;
+        smooth.init = true;
+    } else {
+        constexpr float kSmoothAlpha = 0.45f;
+        smooth.lastX += (targetX - smooth.lastX) * kSmoothAlpha;
+        smooth.lastY += (targetY - smooth.lastY) * kSmoothAlpha;
+    }
+    const ImVec2 root{smooth.lastX, smooth.lastY};
     const bool onScreen =
         root.x >= -64.f && root.y >= -64.f && root.x <= screenW + 64.f && root.y <= screenH + 64.f;
 
@@ -77,8 +97,8 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
             anchor = {frame.selfScreenX, frame.selfScreenY};
         else
             anchor = {screenW * 0.5f, screenH * 0.92f};
-        draw->AddLine(anchor, root, IM_COL32(255, 220, 80, 200), 4.f);
-        draw->AddLine(anchor, root, IM_COL32(255, 255, 255, 255), 2.2f);
+        draw->AddLine(anchor, root, IM_COL32(255, 220, 80, 180), 3.f);
+        draw->AddLine(anchor, root, IM_COL32(255, 255, 255, 255), 1.8f);
     }
     if (!onScreen) return;
 
@@ -314,4 +334,6 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
 
     if (feat.proximityAlert12m) draw_proximity_alert_12m(draw, screenW, screenH, frame, fontSize);
     if (anyPlayer) draw_enemy_cd_side_panels(draw, screenW, screenH, frame, feat, fontSize, menuOpen);
+
+    if (frame.targets.empty()) g_smoothCache.clear();
 }

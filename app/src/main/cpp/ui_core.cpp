@@ -239,11 +239,7 @@ static void reader_loop() {
         }
 
         if (g_espActive.load()) {
-            int ms = 1;
-            const int n = g_lastTargetCount.load(std::memory_order_relaxed);
-            if (n > 22) ms = 3;
-            else if (n > 14) ms = 2;
-            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+            std::this_thread::sleep_for(std::chrono::milliseconds(12));
         } else if (g_showMenu)
             std::this_thread::sleep_for(std::chrono::milliseconds(12));
         else
