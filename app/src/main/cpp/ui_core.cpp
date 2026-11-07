@@ -345,7 +345,18 @@ static void draw_ui() {
             ImGui::Checkbox("Enable Auto Retri", &rt.enabled);
             ImGui::Checkbox("IL2 cast (virtual / no root)", &rt.useIl2SummonCast);
             ImGui::SliderInt("Level fallback", &rt.assumedLevel, 1, 15);
-            ImGui::TextDisabled("Damage uses live ShowEntity.m_Level when Resolve OK.");
+            if (rt.liveRetriDamage > 0) {
+                if (rt.liveKillWildTimes >= 0)
+                    ImGui::Text("Live retri dmg: %d  (Lv %d, jungle kills %d)",
+                                rt.liveRetriDamage, rt.livePlayerLevel, rt.liveKillWildTimes);
+                else
+                    ImGui::Text("Live retri dmg: %d  (Lv %d)", rt.liveRetriDamage,
+                                rt.livePlayerLevel);
+            } else {
+                ImGui::TextDisabled(
+                        "Auto dmg: level + jungle stacks (Resolve + in-match). Fallback level if "
+                        "unreadable.");
+            }
 
             ImGui::SeparatorText("Targets (pick jungle)");
             if (ImGui::Button("All ON")) {

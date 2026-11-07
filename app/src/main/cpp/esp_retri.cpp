@@ -20,10 +20,40 @@ static EspRetriSettings g_retri{};
 static std::atomic<int> g_dispW{0};
 static std::atomic<int> g_dispH{0};
 
-/** EXTERNAL-MLBB main.cpp CalculateRetriDamage */
-static int calculate_retri_damage(int level) {
-    if (level < 4) return 520 + 80 * level;
-    return (int)(1.5 * (double)(520 + 80 * level));
+/** EXTERNAL level curve + VIP/RIZEYT jungle-stack bonus from LogicPlayer.m_KillWildTimes. */
+static int calculate_retri_damage(int level, int killWildTimes, bool haveKillWild) {
+    int core;
+    if (level < 4)
+        core = 520 + 80 * level;
+    else
+        core = (int)(1.5 * (double)(520 + 80 * level));
+    if (haveKillWild && killWildTimes > 4) core += 380 + (level - 3) * 40;
+    return core;
+}
+
+static int read_local_level(pid_t pid, uintptr_t localEnt, uintptr_t levelOff, int fallback) {
+    if (!localEnt || !levelOff) return fallback;
+    int lv = 0;
+    if (mem_read(pid, localEnt + levelOff, lv) && lv >= 1 && lv <= 20) return lv;
+    return fallback;
+}
+
+static bool read_kill_wild_times(pid_t pid, uintptr_t localEnt, const EspRuntimeOff &R, int &outKw) {
+    outKw = 0;
+    if (!localEnt || !R.logicFighter || !R.logicKillWildTimes) return false;
+    uintptr_t logic = 0;
+    if (!mem_read(pid, localEnt + R.logicFighter, logic) || !mem_ptr_ok(logic)) return false;
+    int kw = 0;
+    if (!mem_read(pid, logic + R.logicKillWildTimes, kw) || kw < 0 || kw > 5000) return false;
+    outKw = kw;
+    return true;
+}
+
+static int resolve_retri_damage(const EspFrame &frame, const EspRuntimeOff &R, int &outLevel,
+                                int &outKillWild, bool &outHaveKw) {
+    outHaveKw = read_kill_wild_times(frame.pid, frame.localPlayerEnt, R, outKillWild);
+    outLevel = read_local_level(frame.pid, frame.localPlayerEnt, R.level, g_retri.assumedLevel);
+    return calculate_retri_damage(outLevel, outKillWild, outHaveKw);
 }
 
 static inline bool id_matches_external(int id, const EspRetriSettings &s) {
@@ -57,13 +87,6 @@ static int read_entity_hp(pid_t pid, uintptr_t ent, uintptr_t hpOff) {
     int hp32 = 0;
     if (mem_read(pid, ent + hpOff, hp32) && hp32 > 0) return hp32;
     return 0;
-}
-
-static int read_player_level(const EspFrame &frame, const EspRuntimeOff &R) {
-    if (!frame.localPlayerEnt || !R.level) return g_retri.assumedLevel;
-    int lv = 0;
-    if (mem_read(frame.pid, frame.localPlayerEnt + R.level, lv) && lv >= 1 && lv <= 20) return lv;
-    return g_retri.assumedLevel;
 }
 
 static void update_norm_from_pixels(float sw, float sh) {
@@ -155,8 +178,13 @@ void esp_retri_process(const EspFrame &frame) {
     static std::atomic<bool> s_castBusy{false};
     const uint64_t now = steady_ms();
 
-    const int playerLevel = read_player_level(frame, R);
-    const int retriDmg = calculate_retri_damage(playerLevel);
+    int playerLevel = 0;
+    int killWild = 0;
+    bool haveKw = false;
+    const int retriDmg = resolve_retri_damage(frame, R, playerLevel, killWild, haveKw);
+    g_retri.liveRetriDamage = retriDmg;
+    g_retri.livePlayerLevel = playerLevel;
+    g_retri.liveKillWildTimes = haveKw ? killWild : -1;
     constexpr float kMaxDist = 8.0f;
 
     uintptr_t closestEnt = 0;
@@ -170,11 +198,12 @@ void esp_retri_process(const EspFrame &frame) {
     if (now - s_lastDbgMs > 3000) {
         s_lastDbgMs = now;
         if (closestEnt) {
-            ui_log("[retri] lvl=%d dmg=%d cand id=%d hp=%d dist=%.2f (need hp<=%d dist<=%.0f)",
-                   playerLevel, retriDmg, closestId, closestHp, closestDist, retriDmg, kMaxDist);
+            ui_log("[retri] lvl=%d kw=%d dmg=%d cand id=%d hp=%d dist=%.2f (hp<=%d)",
+                   playerLevel, haveKw ? killWild : -1, retriDmg, closestId, closestHp,
+                   closestDist, retriDmg);
         } else {
-            ui_log("[retri] lvl=%d dmg=%d — no retri mob in dict (check Targets toggles)",
-                   playerLevel, retriDmg);
+            ui_log("[retri] lvl=%d kw=%d dmg=%d — no retri mob (Targets?)",
+                   playerLevel, haveKw ? killWild : -1, retriDmg);
         }
     }
 

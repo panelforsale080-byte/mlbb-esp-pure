@@ -255,8 +255,23 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
         out.runtime_fields.se_m_Hp = instance_field_offset(s, pid, il2, seKlass, "m_Hp");
         out.runtime_fields.se_m_HpMax = instance_field_offset(s, pid, il2, seKlass, "m_HpMax");
         out.runtime_fields.se_m_Level = instance_field_offset(s, pid, il2, seKlass, "m_Level");
+        out.runtime_fields.se_logicFighter =
+            instance_field_offset(s, pid, il2, seKlass, "<logicFighter>k__BackingField");
+        if (!out.runtime_fields.se_logicFighter)
+            out.runtime_fields.se_logicFighter =
+                instance_field_offset(s, pid, il2, seKlass, "logicFighter");
+        if (!out.runtime_fields.se_logicFighter)
+            out.runtime_fields.se_logicFighter =
+                instance_field_offset(s, pid, il2, seKlass, "_logicFighter");
         out.runtime_fields.se_m_ShowCoolDownComp =
             instance_field_offset(s, pid, il2, seKlass, "m_ShowCoolDownComp");
+    }
+
+    uintptr_t lpKlass = find_class_fast(s, pid, il2, images, "Battle.LogicPlayer", false);
+    if (!lpKlass) lpKlass = find_class_fast(s, pid, il2, images, "LogicPlayer", false);
+    if (lpKlass) {
+        out.runtime_fields.lp_m_KillWildTimes =
+            instance_field_offset(s, pid, il2, lpKlass, "m_KillWildTimes");
     }
 
     uintptr_t spKlass = find_class_fast(s, pid, il2, images, "ShowPlayer", false);

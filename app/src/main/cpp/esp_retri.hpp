@@ -20,6 +20,11 @@ struct EspRetriSettings {
     float tapY = 661.f;
     /** Fallback when ShowEntity.m_Level cannot be read. */
     int assumedLevel = 8;
+    /** Updated each retri tick from live memory (menu display). */
+    int liveRetriDamage = 0;
+    int livePlayerLevel = 0;
+    /** -1 when LogicPlayer.m_KillWildTimes not resolved/read. */
+    int liveKillWildTimes = -1;
     /** Virtual/non-root: cast via IL2 TryUseSkill(20020), not screen tap. */
     bool useIl2SummonCast = true;
 };
