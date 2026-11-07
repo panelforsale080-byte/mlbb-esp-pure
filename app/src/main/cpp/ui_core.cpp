@@ -241,7 +241,9 @@ static void reader_loop() {
         }
 
         if (g_espActive.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(12));
+            const int tickMs =
+                    esp_retri_settings().enabled ? 8 : 12;
+            std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
         } else if (g_showMenu)
             std::this_thread::sleep_for(std::chrono::milliseconds(12));
         else
@@ -524,7 +526,7 @@ void ui_gl_surface_created() {
     if (!init_imgui_backends()) return;
     g_glReady = true;
     reader_start_once();
-    ui_log("Xorel overlay — tap icon for menu; tap X on panel to close & play");
+    ui_log("Xorel — tap logo: menu | hold logo ~0.7s: exit overlay");
 }
 
 static void reader_start_once() {

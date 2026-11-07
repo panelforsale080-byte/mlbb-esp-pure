@@ -151,9 +151,11 @@ void esp_retri_process(const EspFrame &frame) {
     static uintptr_t s_holdEnt = 0;
     static uint64_t s_holdUntilMs = 0;
     const uint64_t now = steady_ms();
-    if (now - s_lastScanMs < 120) return;
+    constexpr uint64_t kScanIntervalMs = 0;
+    constexpr uint64_t kCastCooldownMs = 65;
+    if (kScanIntervalMs > 0 && now - s_lastScanMs < kScanIntervalMs) return;
     s_lastScanMs = now;
-    if (now - s_lastTapMs < 500) return;
+    if (now - s_lastTapMs < kCastCooldownMs) return;
 
     const int playerLevel = read_player_level(frame, R);
     const int retriDmg = calculate_retri_damage(playerLevel);
@@ -212,7 +214,7 @@ void esp_retri_process(const EspFrame &frame) {
     }
     s_lastTapMs = now;
     s_holdEnt = closestEnt;
-    s_holdUntilMs = now + 1800;
+    s_holdUntilMs = now + 220;
 }
 
 void esp_retri_draw_indicator(ImDrawList *draw) {

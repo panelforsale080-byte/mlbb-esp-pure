@@ -45,6 +45,9 @@ public class OverlayService extends Service {
     private float fabTouchDownRawX;
     private float fabTouchDownRawY;
     private boolean fabDragging;
+    private boolean fabHoldExitTriggered;
+    private Runnable fabHoldExitTask;
+    private static final long FAB_HOLD_EXIT_MS = 700L;
     private DisplayManager displayManager;
     private DisplayManager.DisplayListener displayListener;
 
@@ -224,6 +227,8 @@ public class OverlayService extends Service {
                             fabTouchLastRawX = fabTouchDownRawX;
                             fabTouchLastRawY = fabTouchDownRawY;
                             fabDragging = false;
+                            fabHoldExitTriggered = false;
+                            scheduleFabHoldExit();
                             return true;
                         case MotionEvent.ACTION_MOVE:
                             float dx = event.getRawX() - fabTouchLastRawX;
@@ -234,7 +239,10 @@ public class OverlayService extends Service {
                                     (float) Math.hypot(
                                             event.getRawX() - fabTouchDownRawX,
                                             event.getRawY() - fabTouchDownRawY);
-                            if (dist > dragSlopPx) fabDragging = true;
+                            if (dist > dragSlopPx) {
+                                fabDragging = true;
+                                cancelFabHoldExit();
+                            }
                             fabLp.x += (int) dx;
                             fabLp.y += (int) dy;
                             clampFabToScreen();
@@ -242,15 +250,19 @@ public class OverlayService extends Service {
                                 wm.updateViewLayout(fabLogo, fabLp);
                             } catch (Throwable ignored) {
                             }
-                            return true;
+                            return fabDragging;
                         case MotionEvent.ACTION_UP:
+                            cancelFabHoldExit();
+                            if (fabHoldExitTriggered) return true;
                             if (!fabDragging) {
                                 applyDisplayGeometry();
                                 NativeBridge.nativeOpenMenu();
+                                setMenuTouch(true);
                                 if (glView != null) glView.requestRender();
                             }
                             return true;
                         case MotionEvent.ACTION_CANCEL:
+                            cancelFabHoldExit();
                             return true;
                         default:
                             return false;
@@ -266,6 +278,36 @@ public class OverlayService extends Service {
 
         wm.addView(root, surfaceLp);
         wm.addView(fabLogo, fabLp);
+    }
+
+    private void scheduleFabHoldExit() {
+        cancelFabHoldExit();
+        fabHoldExitTask =
+                () -> {
+                    fabHoldExitTriggered = true;
+                    fabDragging = true;
+                    exitOverlayFromLogoHold();
+                };
+        main.postDelayed(fabHoldExitTask, FAB_HOLD_EXIT_MS);
+    }
+
+    private void cancelFabHoldExit() {
+        if (fabHoldExitTask != null) {
+            main.removeCallbacks(fabHoldExitTask);
+            fabHoldExitTask = null;
+        }
+    }
+
+    private void exitOverlayFromLogoHold() {
+        cancelFabHoldExit();
+        Log.i(TAG, "FAB hold — stopping overlay");
+        try {
+            NativeBridge.nativeStopEsp();
+            NativeBridge.nativeMinimizeMenu();
+        } catch (Throwable t) {
+            Log.w(TAG, "exitOverlayFromLogoHold", t);
+        }
+        stopSelf();
     }
 
     private void flushPendingCmd() {
