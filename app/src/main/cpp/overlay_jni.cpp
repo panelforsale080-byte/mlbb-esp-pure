@@ -148,8 +148,9 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeTouch(JNIEnv *, jclass, jint action, j
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeOpenMenu(JNIEnv *, jclass) {
     ui_open_menu();
-    g_menuTouchNotified = true;
+    g_menuTouchNotified = false;
     notify_menu_touch(true);
+    g_menuTouchNotified = true;
 }
 
 extern "C" JNIEXPORT void JNICALL

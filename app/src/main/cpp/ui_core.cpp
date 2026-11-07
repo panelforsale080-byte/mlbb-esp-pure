@@ -417,10 +417,7 @@ static void draw_ui() {
         }
     }
 
-    if (!g_showMenu) {
-        ui_force_menu_pass_through();
-        return;
-    }
+    if (!g_showMenu) return;
 
     ImVec2 panelSz(460.f, 540.f);
     ImVec2 panelPos(0.f, 0.f);
@@ -859,6 +856,7 @@ void ui_touch(int action, float x, float y) {
 void ui_open_menu() {
     g_showMenu = true;
     g_menuLayoutReset = true;
+    g_menuDismissClearFrames.store(0, std::memory_order_relaxed);
 }
 
 void ui_toggle_menu() { g_showMenu = !g_showMenu; }

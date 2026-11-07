@@ -308,9 +308,13 @@ public class OverlayService extends Service {
                             if (fabHoldExitTriggered) return true;
                             if (!fabDragging) {
                                 applyDisplayGeometry();
-                                NativeBridge.nativeOpenMenu();
                                 setMenuTouch(true);
-                                if (glView != null) glView.requestRender();
+                                NativeBridge.nativeOpenMenu();
+                                if (glView != null) {
+                                    glView.requestRender();
+                                    main.post(glView::requestRender);
+                                    main.postDelayed(glView::requestRender, 32);
+                                }
                             }
                             return true;
                         case MotionEvent.ACTION_CANCEL:
@@ -373,10 +377,11 @@ public class OverlayService extends Service {
         menuVideoLp.gravity = Gravity.TOP | Gravity.START;
 
         wm.addView(root, surfaceLp);
-        wm.addView(fabLogo, fabLp);
-        wm.addView(fabCombo, fabComboLp);
         wm.addView(menuVideo, menuVideoLp);
+        wm.addView(fabCombo, fabComboLp);
+        wm.addView(fabLogo, fabLp);
         menuVideo.setVisibility(View.GONE);
+        hideMenuVideoWindow();
         menuInteractive = false;
         applyMenuTouchFlags(false);
         main.post(
@@ -481,7 +486,7 @@ public class OverlayService extends Service {
             }
         }
         applyComboFabVisibility();
-        if (!interactive && menuVideo != null) menuVideo.onMenuVisibleChanged(false);
+        if (!interactive) hideMenuVideoWindow();
         if (glView != null) {
             glView.requestRender();
             if (!interactive) {
@@ -492,14 +497,34 @@ public class OverlayService extends Service {
         }
     }
 
+    private void hideMenuVideoWindow() {
+        if (menuVideo == null || menuVideoLp == null || wm == null) return;
+        menuVideoLp.x = 0;
+        menuVideoLp.y = 0;
+        menuVideoLp.width = 1;
+        menuVideoLp.height = 1;
+        menuVideoLp.flags =
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
+        try {
+            wm.updateViewLayout(menuVideo, menuVideoLp);
+        } catch (Throwable ignored) {
+        }
+        menuVideo.onMenuVisibleChanged(false);
+    }
+
     void updateMenuVideoLayout(boolean visible, int x, int y, int w, int h) {
         if (menuVideo == null || menuVideoLp == null || wm == null) return;
         Runnable apply =
                 () -> {
                     if (!menuInteractive || !visible || w < 12 || h < 12) {
-                        menuVideo.onMenuVisibleChanged(false);
+                        hideMenuVideoWindow();
                         return;
                     }
+                    menuVideoLp.flags =
+                            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                    | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
                     menuVideoLp.x = x;
                     menuVideoLp.y = y;
                     menuVideoLp.width = w;
