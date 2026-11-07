@@ -27,8 +27,6 @@ struct EspRetriSettings {
     int liveKillWildTimes = -1;
     /** Virtual/non-root: cast via IL2 TryUseSkill(20020), not screen tap. */
     bool useIl2SummonCast = true;
-    /** Lv4+: full hunter damage (3000 @ 15). Off = legacy 1.5x base only (2580 @ 15). */
-    bool advancedHunterDamage = true;
 };
 
 EspRetriSettings &esp_retri_settings();

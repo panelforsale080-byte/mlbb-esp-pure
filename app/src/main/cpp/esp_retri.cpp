@@ -20,12 +20,12 @@ static EspRetriSettings g_retri{};
 static std::atomic<int> g_dispW{0};
 static std::atomic<int> g_dispH{0};
 
-/** 520+80*Lv; Lv4+ advanced hunter: +380+(Lv-3)*75 (3000 @ 15). Legacy: x1.5 only (2580 @ 15). */
-static int calculate_retri_damage(int level, bool advancedHunter) {
-    const int baseLinear = 520 + 80 * level;
-    if (level < 4) return baseLinear;
-    if (advancedHunter) return baseLinear + 380 + (level - 3) * 75;
-    return (int)(1.5 * (double)baseLinear);
+/** In-game punish table: 750 + 150*Lv (Lv1=900 … Lv15=3000). */
+static int calculate_retri_damage(int level) {
+    int lv = level;
+    if (lv < 1) lv = 1;
+    if (lv > 15) lv = 15;
+    return 750 + (150 * lv);
 }
 
 static int read_local_level(pid_t pid, uintptr_t localEnt, uintptr_t levelOff, int fallback) {
@@ -60,7 +60,7 @@ static int resolve_retri_damage(const EspFrame &frame, const EspRuntimeOff &R, i
                                 int &outKillWild, bool &outHaveKw) {
     outHaveKw = read_kill_wild_times(frame.pid, frame.localPlayerEnt, R, outKillWild);
     outLevel = read_local_level(frame.pid, frame.localPlayerEnt, R.level, g_retri.assumedLevel);
-    return calculate_retri_damage(outLevel, g_retri.advancedHunterDamage);
+    return calculate_retri_damage(outLevel);
 }
 
 static inline bool id_matches_external(int id, const EspRetriSettings &s) {

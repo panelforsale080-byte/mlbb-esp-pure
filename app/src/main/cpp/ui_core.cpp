@@ -344,7 +344,6 @@ static void draw_ui() {
             EspRetriSettings &rt = esp_retri_settings();
             ImGui::Checkbox("Enable Auto Retri", &rt.enabled);
             ImGui::Checkbox("IL2 cast (virtual / no root)", &rt.useIl2SummonCast);
-            ImGui::Checkbox("Advanced hunter damage (Lv4+ max)", &rt.advancedHunterDamage);
             ImGui::SliderInt("Level fallback", &rt.assumedLevel, 1, 15);
             if (rt.liveRetriDamage > 0) {
                 if (rt.liveKillWildTimes >= 0)
@@ -354,8 +353,7 @@ static void draw_ui() {
                     ImGui::Text("Live retri dmg: %d  (Lv %d)", rt.liveRetriDamage,
                                 rt.livePlayerLevel);
             } else {
-                ImGui::TextDisabled(
-                        "Live level from ShowEntity.m_Level; Lv15 advanced ~= 3000 dmg.");
+                ImGui::TextDisabled("Dmg = 750 + 150×Lv (Lv15 = 3000); live m_Level.");
             }
 
             ImGui::SeparatorText("Targets (pick jungle)");
