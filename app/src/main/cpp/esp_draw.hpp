@@ -20,4 +20,4 @@ struct EspFeatures {
 
 /* conRentV1 EspTab::DrawOverlay — external pseudo W2S (same layout as libtool overlay). */
 void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
-                      const EspFeatures &feat);
+                      const EspFeatures &feat, bool menuOpen);

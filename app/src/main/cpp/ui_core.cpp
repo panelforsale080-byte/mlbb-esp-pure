@@ -261,7 +261,7 @@ static void draw_ui() {
     if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
 
     if (g_espActive.load() && fr.status == EspStatus::Ready) {
-        esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat);
+        esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat, g_showMenu);
     }
 
     if (!g_showMenu) return;
@@ -481,8 +481,9 @@ void ui_gl_surface_destroyed() {
 }
 
 void ui_gl_draw_frame() {
-    /* Cap GPU work ~60 Hz when ESP-only (helps Android 13–16 on mid devices). */
-    if (g_espActive.load() && !g_showMenu) {
+    /* Throttle only when idle (no ESP, menu closed). Never skip while ESP draws — skipping
+     * left stale transparent frames → glitchy boxes / alert / CD when menu was minimized. */
+    if (!g_espActive.load() && !g_showMenu) {
         using clock = std::chrono::steady_clock;
         static thread_local clock::time_point s_lastDraw{};
         const auto now = clock::now();

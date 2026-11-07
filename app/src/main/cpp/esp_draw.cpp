@@ -227,7 +227,7 @@ static void draw_proximity_alert_12m(ImDrawList *draw, float screenW, float scre
 }
 
 static void draw_enemy_cd_side_panels(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
-                                      const EspFeatures &feat, float fontSize) {
+                                      const EspFeatures &feat, float fontSize, bool menuOpen) {
     if (!feat.enemyCooldown || !feat.enemyCdSidePanel) return;
 
     ImFont *font = ImGui::GetFont();
@@ -266,8 +266,10 @@ static void draw_enemy_cd_side_panels(ImDrawList *draw, float screenW, float scr
     const ImVec2 r0(margin, screenH * 0.16f);
     const ImVec2 r1(margin + panelW, r0.y + panelH);
 
-    draw->AddRectFilled(r0, r1, IM_COL32(10, 14, 22, 130), 8.f);
-    draw->AddRect(r0, r1, IM_COL32(180, 220, 255, 120), 8.f, 0, 1.5f);
+    const int fillA = menuOpen ? 130 : 215;
+    const int borderA = menuOpen ? 120 : 200;
+    draw->AddRectFilled(r0, r1, IM_COL32(10, 14, 22, fillA), 8.f);
+    draw->AddRect(r0, r1, IM_COL32(180, 220, 255, borderA), 8.f, 0, 1.5f);
 
     const char *title = "Enemy cooldown";
     ImVec2 titleSz = font ? font->CalcTextSizeA(fontSize * 1.06f, FLT_MAX, 0.f, title)
@@ -293,7 +295,7 @@ static void draw_enemy_cd_side_panels(ImDrawList *draw, float screenW, float scr
 } // namespace
 
 void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspFrame &frame,
-                      const EspFeatures &feat) {
+                      const EspFeatures &feat, bool menuOpen) {
     if (!draw || screenW < 1.f || screenH < 1.f) return;
     if (frame.status != EspStatus::Ready) return;
 
@@ -311,5 +313,5 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     }
 
     if (feat.proximityAlert12m) draw_proximity_alert_12m(draw, screenW, screenH, frame, fontSize);
-    if (anyPlayer) draw_enemy_cd_side_panels(draw, screenW, screenH, frame, feat, fontSize);
+    if (anyPlayer) draw_enemy_cd_side_panels(draw, screenW, screenH, frame, feat, fontSize, menuOpen);
 }
