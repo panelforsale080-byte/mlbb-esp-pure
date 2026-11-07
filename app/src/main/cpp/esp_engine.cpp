@@ -1222,6 +1222,50 @@ bool esp_il2_managed_list(pid_t pid, uintptr_t listObj, std::vector<uintptr_t> &
     return list_entities(pid, listObj, out);
 }
 
+uintptr_t esp_bm_static_fields_ptr(pid_t pid, uintptr_t bmKlass) {
+    if (!bmKlass) return 0;
+    for (uintptr_t off : Il2::StaticFieldOffs) {
+        uintptr_t st = 0;
+        if (mem_read(pid, bmKlass + off, st) && mem_ptr_ok(st)) return st;
+    }
+    return 0;
+}
+
+bool esp_il2_array_obj_ptrs(pid_t pid, uintptr_t arrObj, std::vector<uintptr_t> &out,
+                            int maxItems) {
+    out.clear();
+    if (!arrObj || !mem_ptr_ok(arrObj) || maxItems <= 0) return false;
+    int maxLength = 0;
+    if (!mem_read(pid, arrObj + Il2::ArrMaxLen, maxLength) || maxLength <= 0 ||
+        maxLength > 4096)
+        return false;
+    const int n = std::min(maxLength, maxItems);
+    const uintptr_t data = arrObj + Il2::ArrData;
+    std::vector<uint8_t> raw((size_t)n * sizeof(uintptr_t));
+    if (!mem_read(pid, data, raw.data(), raw.size())) return false;
+    for (int i = 0; i < n; ++i) {
+        uintptr_t p = 0;
+        std::memcpy(&p, raw.data() + (size_t)i * sizeof(uintptr_t), sizeof(p));
+        if (p && mem_ptr_ok(p)) out.push_back(p);
+    }
+    return !out.empty();
+}
+
+bool esp_il2_better_list_ptrs(pid_t pid, uintptr_t listObj, std::vector<uintptr_t> &out) {
+    out.clear();
+    if (!listObj || !mem_ptr_ok(listObj)) return false;
+    if (esp_il2_managed_list(pid, listObj, out)) return true;
+    uintptr_t buffer = 0;
+    int size = 0;
+    if (mem_read(pid, listObj + 0x10, buffer) && mem_read(pid, listObj + 0x18, size) && buffer &&
+        size > 0 && size <= 512) {
+        if (esp_il2_array_obj_ptrs(pid, buffer, out, size)) return true;
+    }
+    if (mem_ptr_ok(listObj))
+        return esp_il2_array_obj_ptrs(pid, listObj, out, 256);
+    return false;
+}
+
 bool esp_monster_dict_entries(pid_t pid, uintptr_t bmInstance,
                               std::vector<std::pair<int, uintptr_t>> &out) {
     if (!esp_runtime_off_ready() || !bmInstance) return false;

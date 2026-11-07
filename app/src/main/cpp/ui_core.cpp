@@ -429,6 +429,7 @@ static void draw_ui() {
             EspHeroAutoSettings &ha = esp_hero_auto_settings();
             ImGui::Checkbox("Ling auto sword", &ha.lingSword);
             ImGui::Checkbox("Gusion auto combo", &ha.gusionCombo);
+            ImGui::Checkbox("Gusion enemy combo (no mark scan)", &ha.gusionEnemyCombo);
             ImGui::Checkbox("IL2 cast (no root)", &ha.useIl2Cast);
             ImGui::Checkbox("Show skill buttons", &ha.showSkillCircles);
             if (ha.lastBulletTotal >= 0)

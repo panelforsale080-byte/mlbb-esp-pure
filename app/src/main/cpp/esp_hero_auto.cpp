@@ -105,6 +105,7 @@ static void scan_hashset_bullets(pid_t pid, uintptr_t hashSet,
     const uintptr_t slotOffs[] = {0x10u, 0x18u};
     const uintptr_t dataOffs[] = {0x18u, 0x20u};
     const int strides[] = {16, 24};
+    const int valueOffs[] = {8, 16};
     for (uintptr_t slotOff : slotOffs) {
         uintptr_t entries = 0;
         if (!mem_read(pid, hashSet + slotOff, entries) || !mem_ptr_ok(entries)) continue;
@@ -114,22 +115,51 @@ static void scan_hashset_bullets(pid_t pid, uintptr_t hashSet,
                 continue;
             for (int stride : strides) {
                 for (int i = 0; i < capacity; ++i) {
-                    const uintptr_t entryAddr = entries + dataOff + (uintptr_t)i * (uintptr_t)stride;
+                    const uintptr_t entryAddr =
+                        entries + dataOff + (uintptr_t)i * (uintptr_t)stride;
                     int hashCode = 0;
                     mem_read(pid, entryAddr, hashCode);
                     if (hashCode < 0) continue;
-                    uintptr_t bullet = 0;
-                    if (!mem_read(pid, entryAddr + 8, bullet) || !mem_ptr_ok(bullet)) continue;
-                    fn(bullet);
+                    for (int vo : valueOffs) {
+                        uintptr_t bullet = 0;
+                        if (!mem_read(pid, entryAddr + (uintptr_t)vo, bullet) || !mem_ptr_ok(bullet))
+                            continue;
+                        fn(bullet);
+                        break;
+                    }
                 }
             }
         }
     }
 }
 
-static int foreach_run_bullet(pid_t pid, uintptr_t bmStatics, const EspRuntimeOff &R,
+static void collect_from_container(pid_t pid, uintptr_t container,
+                                     const std::function<void(uintptr_t)> &fn) {
+    if (!mem_ptr_ok(container)) return;
+    std::vector<uintptr_t> items;
+    if (esp_il2_better_list_ptrs(pid, container, items)) {
+        for (uintptr_t p : items)
+            if (p) fn(p);
+        return;
+    }
+    esp_il2_array_obj_ptrs(pid, container, items, 256);
+    for (uintptr_t p : items)
+        if (p) fn(p);
+}
+
+static int foreach_run_bullet(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
+                              const EspRuntimeOff &R,
                               const std::function<void(uintptr_t bullet)> &fn) {
-    if (!bmStatics || !R.bulletId) return 0;
+    if (!R.bulletId) return 0;
+    uintptr_t statics = bmStatics;
+    if (bmKlass) {
+        const uintptr_t live = esp_bm_static_fields_ptr(pid, bmKlass);
+        if (live) statics = live;
+    }
+    if (!statics) return 0;
+
+    g_hero.dbgStaticsPtr = statics;
+
     int total = 0;
     std::unordered_set<uintptr_t> dedupe;
     auto mark = [&](uintptr_t b) {
@@ -139,35 +169,32 @@ static int foreach_run_bullet(pid_t pid, uintptr_t bmStatics, const EspRuntimeOf
         fn(b);
     };
 
-    /* VIP _RunBullets BetterList first (often live while HashSet lags). */
     if (R.bmStaticRunBulletsList) {
         uintptr_t listObj = 0;
-        if (mem_read(pid, bmStatics + R.bmStaticRunBulletsList, listObj) && mem_ptr_ok(listObj)) {
-            std::vector<uintptr_t> items;
-            if (esp_il2_managed_list(pid, listObj, items)) {
-                for (size_t i = 0; i < items.size(); ++i) {
-                    if (items[i]) mark(items[i]);
-                }
-            }
+        if (mem_read(pid, statics + R.bmStaticRunBulletsList, listObj)) {
+            g_hero.dbgRunListPtr = listObj;
+            collect_from_container(pid, listObj, mark);
         }
     }
 
     if (R.bmStaticRunBullets) {
         uintptr_t hashSet = 0;
-        if (mem_read(pid, bmStatics + R.bmStaticRunBullets, hashSet) && mem_ptr_ok(hashSet))
-            scan_hashset_bullets(pid, hashSet, mark);
+        if (mem_read(pid, statics + R.bmStaticRunBullets, hashSet)) {
+            g_hero.dbgHashSetPtr = hashSet;
+            if (mem_ptr_ok(hashSet)) scan_hashset_bullets(pid, hashSet, mark);
+        }
     }
     return total;
 }
 
-static bool find_bullet_by_id(pid_t pid, uintptr_t bmStatics, const EspRuntimeOff &R, int wantId,
+static bool find_bullet_by_id(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
+                              const EspRuntimeOff &R, int wantId,
                               float selfX, float selfY, float selfZ, float maxRange, float *outX,
                               float *outY, float *outZ) {
     float bestD = maxRange;
     bool found = false;
     int seen = 0;
-    g_hero.lastBulletTotal =
-        foreach_run_bullet(pid, bmStatics, R, [&](uintptr_t bullet) {
+    g_hero.lastBulletTotal = foreach_run_bullet(pid, bmStatics, bmKlass, R, [&](uintptr_t bullet) {
         int bid = 0;
         if (!mem_read(pid, bullet + R.bulletId, bid)) return;
         if (bid != wantId) return;
@@ -191,9 +218,10 @@ static bool find_bullet_by_id(pid_t pid, uintptr_t bmStatics, const EspRuntimeOf
     return found;
 }
 
-static bool has_bullet_id(pid_t pid, uintptr_t bmStatics, const EspRuntimeOff &R, int wantId) {
+static bool has_bullet_id(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
+                          const EspRuntimeOff &R, int wantId) {
     bool hit = false;
-    foreach_run_bullet(pid, bmStatics, R, [&](uintptr_t bullet) {
+    foreach_run_bullet(pid, bmStatics, bmKlass, R, [&](uintptr_t bullet) {
         if (hit) return;
         int bid = 0;
         if (mem_read(pid, bullet + R.bulletId, bid) && bid == wantId) hit = true;
@@ -260,6 +288,7 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
                          int scrH) {
     if (!g_hero.lingSword || heroId != kHeroLing) return;
     if (!R.bulletId || (!R.bmStaticRunBullets && !R.bmStaticRunBulletsList)) return;
+    const uintptr_t bmKlass = frame.bmKlass;
 
     static uint64_t s_lastCastMs = 0;
     const uint64_t now = steady_ms();
@@ -267,7 +296,7 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
 
     float tx = 0, ty = 0, tz = 0;
     const bool hasSword =
-        find_bullet_by_id(frame.pid, frame.bmStatics, R, kLingSwordBulletId, frame.selfX,
+        find_bullet_by_id(frame.pid, frame.bmStatics, bmKlass, R, kLingSwordBulletId, frame.selfX,
                           frame.selfY, frame.selfZ, g_hero.lingMaxRange, &tx, &ty, &tz);
     if (!hasSword) {
         static uint64_t s_noSwordLog = 0;
@@ -309,6 +338,7 @@ static void process_gusion(const EspFrame &frame, const EspRuntimeOff &R, int he
                            int scrH) {
     if (!g_hero.gusionCombo || heroId != kHeroGusion) return;
     if (!R.bulletId || (!R.bmStaticRunBullets && !R.bmStaticRunBulletsList)) return;
+    const uintptr_t bmKlass = frame.bmKlass;
 
     static int s_state = 0;
     static uint64_t s_lastActionMs = 0;
@@ -316,10 +346,11 @@ static void process_gusion(const EspFrame &frame, const EspRuntimeOff &R, int he
     const int delay = g_hero.comboDelayMs < 40 ? 40 : g_hero.comboDelayMs;
     if (now - s_lastActionMs < (uint64_t)delay) return;
 
-    const bool markAlive = has_bullet_id(frame.pid, frame.bmStatics, R, kGusionMarkBulletId);
+    const bool markAlive =
+        has_bullet_id(frame.pid, frame.bmStatics, bmKlass, R, kGusionMarkBulletId);
     float markX = frame.selfX, markY = frame.selfY, markZ = frame.selfZ;
     if (markAlive)
-        find_bullet_by_id(frame.pid, frame.bmStatics, R, kGusionMarkBulletId, frame.selfX,
+        find_bullet_by_id(frame.pid, frame.bmStatics, bmKlass, R, kGusionMarkBulletId, frame.selfX,
                           frame.selfY, frame.selfZ, 25.f, &markX, &markY, &markZ);
 
     const float dx = markX - frame.selfX;
@@ -350,9 +381,16 @@ static void process_gusion(const EspFrame &frame, const EspRuntimeOff &R, int he
             cast_or_tap(kGusionS1, g_hero.gusionS1X, g_hero.gusionS1Y);
             s_state = 1;
             acted = true;
+        } else if (g_hero.gusionEnemyCombo &&
+                   ling_nearest_enemy(frame, 8.f, markX, markY, markZ)) {
+            cast_or_tap(kGusionS2, g_hero.gusionS2X, g_hero.gusionS2Y);
+            cast_or_tap(kGusionS1, g_hero.gusionS1X, g_hero.gusionS1Y);
+            s_state = 1;
+            acted = true;
         }
     } else if (s_state == 1) {
-        if (!markAlive || distXZ < 1.0f) {
+        const bool closeEnough = distXZ < 1.2f || (!markAlive && g_hero.gusionEnemyCombo);
+        if (closeEnough) {
             cast_or_tap(kGusionS2, g_hero.gusionS2X, g_hero.gusionS2Y);
             cast_or_tap(kGusionS3, g_hero.gusionS3X, g_hero.gusionS3Y);
             s_state = 2;
@@ -447,8 +485,6 @@ void esp_hero_auto_process(const EspFrame &frame) {
     if (!g_hero.lingSword && !g_hero.gusionCombo) return;
     if (frame.status != EspStatus::Ready || frame.pid <= 0) return;
     if (!esp_runtime_off_ready()) return;
-    if (!frame.bmStatics) return;
-
     const EspRuntimeOff &R = esp_runtime_off();
     if (!R.bulletId) return;
 
@@ -459,8 +495,12 @@ void esp_hero_auto_process(const EspFrame &frame) {
     const uint64_t now = steady_ms();
     if (now - s_dbg > 5000) {
         s_dbg = now;
-        ui_log("[hero] id=%d bullets=%d sword/mark=%d (Resolve+pick 8452/5610)",
-               heroId, g_hero.lastBulletTotal, g_hero.lastBulletScan);
+        (void)foreach_run_bullet(frame.pid, frame.bmStatics, frame.bmKlass, R,
+                                 [](uintptr_t) {});
+        ui_log("[hero] id=%d bullets=%d mark/sword=%d statics=0x%llx list=0x%llx hash=0x%llx",
+               heroId, g_hero.lastBulletTotal, g_hero.lastBulletScan,
+               (unsigned long long)g_hero.dbgStaticsPtr, (unsigned long long)g_hero.dbgRunListPtr,
+               (unsigned long long)g_hero.dbgHashSetPtr);
     }
 
     if (heroId != kHeroLing && heroId != kHeroGusion) return;

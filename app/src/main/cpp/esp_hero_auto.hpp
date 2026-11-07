@@ -6,12 +6,16 @@ struct ImDrawList;
 struct EspHeroAutoSettings {
     bool lingSword = false;
     bool gusionCombo = false;
+    bool gusionEnemyCombo = true;
     bool useIl2Cast = true;
     int comboDelayMs = 80;
     float lingMaxRange = 8.5f;
     int lastHeroId = 0;
     int lastBulletScan = 0;
     int lastBulletTotal = 0;
+    uintptr_t dbgRunListPtr = 0;
+    uintptr_t dbgHashSetPtr = 0;
+    uintptr_t dbgStaticsPtr = 0;
     bool showSkillCircles = true;
 
     float lingS2X = 0.f;
