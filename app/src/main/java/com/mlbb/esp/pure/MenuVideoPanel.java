@@ -53,21 +53,24 @@ final class MenuVideoPanel extends FrameLayout implements TextureView.SurfaceTex
         col.setLayoutParams(
                 new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
-        muteChip = new TextView(context);
-        muteChip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
-        muteChip.setTextColor(0xFFE8ECF4);
-        muteChip.setPadding(dp(8), dp(4), dp(8), dp(6));
-        muteChip.setGravity(Gravity.END);
-        muteChip.setOnClickListener(v -> setMuted(!muted, true));
-        col.addView(muteChip, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
         textureView = new TextureView(context);
         textureView.setSurfaceTextureListener(this);
         col.addView(
                 textureView,
                 new LinearLayout.LayoutParams(
                         LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        muteChip = new TextView(context);
+        muteChip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
+        muteChip.setTextColor(0xFFE8ECF4);
+        muteChip.setPadding(dp(8), dp(6), dp(8), dp(2));
+        muteChip.setGravity(Gravity.CENTER);
+        muteChip.setOnClickListener(v -> setMuted(!muted, true));
+        col.addView(
+                muteChip,
+                new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT));
 
         addView(col);
 

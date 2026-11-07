@@ -41,6 +41,7 @@ public class OverlayService extends Service {
     private WindowManager.LayoutParams surfaceLp;
     private WindowManager.LayoutParams fabLp;
     private WindowManager.LayoutParams fabComboLp;
+    private WindowManager.LayoutParams menuVideoLp;
     private boolean comboFabWanted;
     private boolean menuInteractive;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -229,15 +230,6 @@ public class OverlayService extends Service {
                 new FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        menuVideo = new MenuVideoPanel(this);
-        FrameLayout.LayoutParams videoLp =
-                new FrameLayout.LayoutParams(1, 1, Gravity.TOP | Gravity.START);
-        videoLp.leftMargin = 0;
-        videoLp.topMargin = 0;
-        root.addView(menuVideo, videoLp);
-        menuVideo.setVisibility(View.GONE);
-        menuVideo.setElevation(dp(6));
-
         final int overlayType =
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                         ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -369,9 +361,22 @@ public class OverlayService extends Service {
         fabComboLp.y = wh[1] / 2 - comboSize / 2;
         fabCombo.setVisibility(View.GONE);
 
+        menuVideo = new MenuVideoPanel(this);
+        menuVideoLp =
+                new WindowManager.LayoutParams(
+                        1,
+                        1,
+                        overlayType,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                        PixelFormat.TRANSLUCENT);
+        menuVideoLp.gravity = Gravity.TOP | Gravity.START;
+
         wm.addView(root, surfaceLp);
         wm.addView(fabLogo, fabLp);
         wm.addView(fabCombo, fabComboLp);
+        wm.addView(menuVideo, menuVideoLp);
+        menuVideo.setVisibility(View.GONE);
         menuInteractive = false;
         applyMenuTouchFlags(false);
         main.post(
@@ -473,22 +478,22 @@ public class OverlayService extends Service {
     }
 
     void updateMenuVideoLayout(boolean visible, int x, int y, int w, int h) {
-        if (menuVideo == null) return;
+        if (menuVideo == null || menuVideoLp == null || wm == null) return;
         Runnable apply =
                 () -> {
                     if (!menuInteractive || !visible || w < 12 || h < 12) {
                         menuVideo.onMenuVisibleChanged(false);
                         return;
                     }
-                    FrameLayout.LayoutParams lp =
-                            (FrameLayout.LayoutParams) menuVideo.getLayoutParams();
-                    lp.width = w;
-                    lp.height = h;
-                    lp.leftMargin = x;
-                    lp.topMargin = y;
-                    lp.gravity = Gravity.TOP | Gravity.START;
-                    menuVideo.setLayoutParams(lp);
-                    menuVideo.bringToFront();
+                    menuVideoLp.x = x;
+                    menuVideoLp.y = y;
+                    menuVideoLp.width = w;
+                    menuVideoLp.height = h;
+                    try {
+                        wm.updateViewLayout(menuVideo, menuVideoLp);
+                    } catch (Throwable t) {
+                        Log.w(TAG, "updateMenuVideoLayout", t);
+                    }
                     menuVideo.onMenuVisibleChanged(true);
                 };
         if (Looper.myLooper() == Looper.getMainLooper()) apply.run();
@@ -556,7 +561,10 @@ public class OverlayService extends Service {
         } catch (Throwable ignored) {
         }
         try {
-            if (menuVideo != null) menuVideo.releaseAll();
+            if (menuVideo != null) {
+                menuVideo.releaseAll();
+                wm.removeView(menuVideo);
+            }
         } catch (Throwable ignored) {
         }
         try {

@@ -146,14 +146,14 @@ static float menu_half_button_width() {
   return std::max(64.f, (ImGui::GetContentRegionAvail().x - gap) * 0.5f);
 }
 
-static void menu_sync_video_strip(const ImVec2 &winPos, const ImVec2 &winSize) {
-    const float frameH = ImGui::GetFrameHeight();
-    const float padY = ImGui::GetStyle().WindowPadding.y;
+static void menu_sync_video_strip(const ImVec2 &panelPos, const ImVec2 &panelSz) {
+    const float titleBar = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 0.5f;
     const float padX = ImGui::GetStyle().WindowPadding.x;
-    const float railW = winSize.x * kMenuVideoColFrac - padX - 6.f;
-    const float railX = winPos.x + winSize.x * (1.f - kMenuVideoColFrac) + 4.f;
-    const float railY = winPos.y + frameH + padY * 0.35f;
-    const float railH = winSize.y - frameH - padY * 1.35f;
+    const float videoW = panelSz.x * kMenuVideoColFrac;
+    const float railX = panelPos.x + padX * 0.35f;
+    const float railY = panelPos.y + titleBar;
+    const float railW = videoW - padX * 0.7f;
+    const float railH = panelSz.y - titleBar - ImGui::GetStyle().WindowPadding.y;
     ui_menu_video_sync(true, (int)railX, (int)railY, (int)std::max(8.f, railW),
                        (int)std::max(8.f, railH));
 }
@@ -385,6 +385,8 @@ static void draw_ui() {
     }
 
     ImVec2 panelSz(460.f, 540.f);
+    ImVec2 panelPos(0.f, 0.f);
+    float ctrlPanelW = 400.f;
     {
         ImGuiIO &io = ImGui::GetIO();
         if (io.DisplaySize.x > 1.f && io.DisplaySize.y > 1.f) {
@@ -396,26 +398,23 @@ static void draw_ui() {
                 g_menuLayoutScreen = io.DisplaySize;
                 apply_menu_display_scale(io.DisplaySize.x, io.DisplaySize.y);
             }
-            ImVec2 pos;
-            menu_panel_fit_screen(io.DisplaySize, panelSz, pos);
+            menu_panel_fit_screen(io.DisplaySize, panelSz, panelPos);
+            const float videoW = panelSz.x * kMenuVideoColFrac;
+            const float splitGap = 8.f;
+            ctrlPanelW = panelSz.x - videoW - splitGap;
             const ImGuiCond cond = relayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
-            ImGui::SetNextWindowPos(pos, cond);
-            ImGui::SetNextWindowSize(panelSz, cond);
+            ImGui::SetNextWindowPos(
+                ImVec2(panelPos.x + videoW + splitGap, panelPos.y), cond);
+            ImGui::SetNextWindowSize(ImVec2(ctrlPanelW, panelSz.y), cond);
             ImGui::SetNextWindowSizeConstraints(
-                ImVec2(panelSz.x * 0.85f, panelSz.y * 0.75f),
+                ImVec2(ctrlPanelW * 0.85f, panelSz.y * 0.75f),
                 ImVec2(io.DisplaySize.x - 24.f, io.DisplaySize.y - 24.f));
             if (g_menuLayoutReset) g_menuLayoutReset = false;
         }
     }
+    menu_sync_video_strip(panelPos, panelSz);
     ImGui::SetNextWindowBgAlpha(0.98f);
     if (ImGui::Begin("Xorel", &g_showMenu, ImGuiWindowFlags_None)) {
-        const ImVec2 winPos = ImGui::GetWindowPos();
-        const ImVec2 winSize = ImGui::GetWindowSize();
-
-        ImGui::Columns(2, "##xorelSplit", false);
-        const float splitGap = ImGui::GetStyle().ItemSpacing.x;
-        ImGui::SetColumnWidth(0, panelSz.x * (1.f - kMenuVideoColFrac) - splitGap);
-        ImGui::SetColumnWidth(1, panelSz.x * kMenuVideoColFrac);
         ImGui::PushItemWidth(-FLT_MIN);
 
         ImGui::TextDisabled("#147 ESP | IL2CPP offsets (conRentV1)");
@@ -456,20 +455,27 @@ static void draw_ui() {
         }
 
         ImGui::SeparatorText("Enemy");
-        if (ImGui::BeginTable("enemyTri1", 3, ImGuiTableFlags_SizingStretchSame)) {
+        if (ImGui::BeginTable(
+                "enemyGrid", 3,
+                ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) {
+            ImGui::TableNextRow();
             ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
             ImGui::Checkbox("Box", &g_feat.box);
             ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
             ImGui::Checkbox("Line", &g_feat.line);
             ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
             ImGui::Checkbox("Health", &g_feat.health);
-            ImGui::EndTable();
-        }
-        if (ImGui::BeginTable("enemyTri2", 2, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableNextRow();
             ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
             ImGui::Checkbox("Name", &g_feat.name);
             ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
             ImGui::Checkbox("Distance", &g_feat.distance);
+            ImGui::TableNextColumn();
             ImGui::EndTable();
         }
         ImGui::Checkbox("12m red alert (enemy name)", &g_feat.proximityAlert12m);
@@ -518,15 +524,20 @@ static void draw_ui() {
                 rt.targetLord = rt.targetTurtle = rt.targetRed = rt.targetBlue = rt.targetCrab =
                         rt.targetLito = false;
             }
-            if (ImGui::BeginTable("retriTgt", 2, ImGuiTableFlags_SizingStretchSame)) {
+            if (ImGui::BeginTable(
+                    "retriTgt", 2,
+                    ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) {
+                ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Checkbox("Lord (2002)", &rt.targetLord);
                 ImGui::TableNextColumn();
                 ImGui::Checkbox("Turtle (2003)", &rt.targetTurtle);
+                ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Checkbox("Buff Red (2004)", &rt.targetRed);
                 ImGui::TableNextColumn();
                 ImGui::Checkbox("Buff Blue (2005)", &rt.targetBlue);
+                ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Checkbox("Crab (2222/2223)", &rt.targetCrab);
                 ImGui::TableNextColumn();
@@ -594,7 +605,10 @@ static void draw_ui() {
         }
 
         ImGui::SeparatorText("Monster");
-        if (ImGui::BeginTable("monTri", 3, ImGuiTableFlags_SizingStretchSame)) {
+        if (ImGui::BeginTable(
+                "monTri", 3,
+                ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) {
+            ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::Checkbox("Box##m", &g_feat.monsterBox);
             ImGui::TableNextColumn();
@@ -631,18 +645,7 @@ static void draw_ui() {
             ImGui::EndChild();
         }
 
-        ImGui::NextColumn();
-        ImGui::BeginChild("##videoRailUi", ImVec2(0, -1), true, ImGuiWindowFlags_NoScrollbar);
-        ImGui::TextDisabled("XOREL");
-        ImGui::Spacing();
-        if (ImGui::Checkbox("Mute promo", &g_menuVideoMuted))
-            ui_menu_video_set_muted(g_menuVideoMuted);
-        ImGui::TextWrapped("Video loops while menu is open. Minimize pauses — reopen resumes.");
-        ImGui::EndChild();
-
-        ImGui::Columns(1);
         ImGui::PopItemWidth();
-        menu_sync_video_strip(winPos, winSize);
     }
     ImGui::End();
     ui_sync_menu_touch_state();
