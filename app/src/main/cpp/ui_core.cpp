@@ -238,7 +238,7 @@ static void reader_loop() {
             const int w = 1 - pub;
             g_frameSlots[w] = std::move(f);
             g_frameLatest.store(w, std::memory_order_release);
-            if (g_espActive.load() && esp_retri_settings().enabled) esp_retri_process(f);
+            if (esp_retri_settings().enabled) esp_retri_process(f);
             if (g_espActive.load()) esp_hero_auto_process(f);
         }
 
@@ -248,6 +248,8 @@ static void reader_loop() {
             const int tickMs =
                 (esp_retri_settings().enabled || heroFast) ? (ha.lingSword ? 10 : 6) : 12;
             std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
+        } else if (pid > 0 && esp_retri_settings().enabled) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(8));
         } else if (g_showMenu)
             std::this_thread::sleep_for(std::chrono::milliseconds(12));
         else
