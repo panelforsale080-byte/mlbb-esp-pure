@@ -482,7 +482,14 @@ public class OverlayService extends Service {
         }
         applyComboFabVisibility();
         if (!interactive && menuVideo != null) menuVideo.onMenuVisibleChanged(false);
-        if (glView != null) glView.requestRender();
+        if (glView != null) {
+            glView.requestRender();
+            if (!interactive) {
+                main.postDelayed(glView::requestRender, 33);
+                main.postDelayed(glView::requestRender, 66);
+                main.postDelayed(glView::requestRender, 120);
+            }
+        }
     }
 
     void updateMenuVideoLayout(boolean visible, int x, int y, int w, int h) {

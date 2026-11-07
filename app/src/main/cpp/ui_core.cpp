@@ -51,6 +51,7 @@ static ImVec2 g_menuLayoutScreen{0.f, 0.f};
 static bool g_logScrollBottom = true;
 static bool g_menuVideoMuted = false;
 static constexpr float kMenuVideoColFrac = 0.36f;
+static std::atomic<int> g_menuDismissClearFrames{0};
 static EspFeatures g_feat{};
 static std::atomic<bool> g_espActive{false};
 static std::atomic<int> g_lastTargetCount{0};
@@ -140,6 +141,43 @@ static void menu_panel_fit_screen(const ImVec2 &display, ImVec2 &size, ImVec2 &p
 void ui_menu_video_apply_muted_from_java(bool muted) { g_menuVideoMuted = muted; }
 
 bool ui_menu_video_is_muted() { return g_menuVideoMuted; }
+
+void ui_mark_menu_dismissed() { g_menuDismissClearFrames.store(12, std::memory_order_relaxed); }
+
+bool ui_should_force_gl_clear() {
+    return g_menuDismissClearFrames.load(std::memory_order_relaxed) > 0;
+}
+
+static void menu_checkbox_row3(const char *l0, bool *v0, const char *l1, bool *v1, const char *l2,
+                               bool *v2) {
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    ImGui::Checkbox(l0, v0);
+    ImGui::TableNextColumn();
+    ImGui::Checkbox(l1, v1);
+    ImGui::TableNextColumn();
+    if (l2 && v2) ImGui::Checkbox(l2, v2);
+}
+
+static void menu_draw_enemy_esp_grid() {
+    const float full = ImGui::GetContentRegionAvail().x;
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float colW = std::max(78.f, (full - gap * 2.f) / 3.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(3.f, 5.f));
+    if (ImGui::BeginTable(
+            "enemyEspAll", 3,
+            ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX)) {
+        ImGui::TableSetupColumn("e0", ImGuiTableColumnFlags_WidthFixed, colW);
+        ImGui::TableSetupColumn("e1", ImGuiTableColumnFlags_WidthFixed, colW);
+        ImGui::TableSetupColumn("e2", ImGuiTableColumnFlags_WidthFixed, colW);
+        menu_checkbox_row3("Box", &g_feat.box, "Line", &g_feat.line, "Health", &g_feat.health);
+        menu_checkbox_row3("Name", &g_feat.name, "Dist", &g_feat.distance, nullptr, nullptr);
+        menu_checkbox_row3("12m", &g_feat.proximityAlert12m, "Enemy CD", &g_feat.enemyCooldown,
+                           "CD panel", &g_feat.enemyCdSidePanel);
+        ImGui::EndTable();
+    }
+    ImGui::PopStyleVar();
+}
 
 static float menu_half_button_width() {
     const float gap = ImGui::GetStyle().ItemSpacing.x;
@@ -413,7 +451,9 @@ static void draw_ui() {
         }
     }
     ImGui::SetNextWindowBgAlpha(0.98f);
-    const bool menuBegin = ImGui::Begin("Xorel", &g_showMenu, ImGuiWindowFlags_NoCollapse);
+    const bool menuBegin =
+        ImGui::Begin("Xorel", &g_showMenu,
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
     if (menuBegin) {
         menu_sync_video_strip(panelPos, panelSz);
         ImGui::PushItemWidth(-FLT_MIN);
@@ -455,45 +495,8 @@ static void draw_ui() {
             ui_log("[esp] stopped");
         }
 
-        ImGui::SeparatorText("Enemy");
-        if (ImGui::BeginTable(
-                "enemyGrid", 3,
-                ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::AlignTextToFramePadding();
-            ImGui::Checkbox("Box", &g_feat.box);
-            ImGui::TableNextColumn();
-            ImGui::AlignTextToFramePadding();
-            ImGui::Checkbox("Line", &g_feat.line);
-            ImGui::TableNextColumn();
-            ImGui::AlignTextToFramePadding();
-            ImGui::Checkbox("Health", &g_feat.health);
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::AlignTextToFramePadding();
-            ImGui::Checkbox("Name", &g_feat.name);
-            ImGui::TableNextColumn();
-            ImGui::AlignTextToFramePadding();
-            ImGui::Checkbox("Distance", &g_feat.distance);
-            ImGui::TableNextColumn();
-            ImGui::EndTable();
-        }
-        if (ImGui::BeginTable(
-                "enemyEspFlags", 3,
-                ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) {
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::AlignTextToFramePadding();
-            ImGui::Checkbox("12m alert", &g_feat.proximityAlert12m);
-            ImGui::TableNextColumn();
-            ImGui::AlignTextToFramePadding();
-            ImGui::Checkbox("Enemy CD", &g_feat.enemyCooldown);
-            ImGui::TableNextColumn();
-            ImGui::AlignTextToFramePadding();
-            ImGui::Checkbox("CD panel", &g_feat.enemyCdSidePanel);
-            ImGui::EndTable();
-        }
+        ImGui::SeparatorText("Enemy / ESP");
+        menu_draw_enemy_esp_grid();
 
         if (ImGui::CollapsingHeader("AUTO RETRI", ImGuiTreeNodeFlags_DefaultOpen)) {
             EspRetriSettings &rt = esp_retri_settings();
@@ -815,7 +818,8 @@ void ui_gl_surface_destroyed() {
 
 void ui_gl_draw_frame() {
     /* Throttle only when idle (no ESP/menu/retri/hero). Skipping draw left stale menu + stuck touch. */
-    if (!ui_wants_continuous_gl()) {
+    const bool forceClear = ui_should_force_gl_clear();
+    if (!ui_wants_continuous_gl() && !forceClear) {
         using clock = std::chrono::steady_clock;
         static thread_local clock::time_point s_lastDraw{};
         const auto now = clock::now();
@@ -827,6 +831,8 @@ void ui_gl_draw_frame() {
     }
     std::lock_guard<std::mutex> lock(g_glMu);
     render_imgui_frame();
+    if (forceClear && g_menuDismissClearFrames.load(std::memory_order_relaxed) > 0)
+        g_menuDismissClearFrames.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void ui_touch(int action, float x, float y) {

@@ -129,6 +129,7 @@ void ui_force_menu_pass_through() {
     g_menuTouchNotified = true;
     notify_menu_touch(false);
     g_menuTouchNotified = false;
+    ui_mark_menu_dismissed();
 }
 
 static void sync_menu_touch_to_java() { ui_sync_menu_touch_state(); }

@@ -1,6 +1,7 @@
 package com.mlbb.esp.pure;
 
 import android.content.Context;
+import android.graphics.Outline;
 import android.graphics.SurfaceTexture;
 import android.media.MediaPlayer;
 import android.net.Uri;
@@ -10,20 +11,17 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.Surface;
 import android.view.TextureView;
-import android.graphics.Outline;
-import android.os.Build;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.TextView;
+import android.widget.ImageButton;
 
 /** In-menu promo video: loop, pause on minimize, resume on reopen (not one-shot). */
 final class MenuVideoPanel extends FrameLayout implements TextureView.SurfaceTextureListener {
     private static final String TAG = "MenuVideoPanel";
 
     private TextureView textureView;
-    private TextView muteChip;
+    private ImageButton muteBtn;
     private MediaPlayer player;
     private Surface surface;
     private boolean playerPrepared;
@@ -47,49 +45,19 @@ final class MenuVideoPanel extends FrameLayout implements TextureView.SurfaceTex
 
     private void init(Context context) {
         setBackgroundResource(R.drawable.bg_menu_video_frame);
-        setPadding(dp(6), dp(6), dp(6), dp(6));
-        setClickable(true);
-        setFocusable(true);
+        setPadding(dp(5), dp(5), dp(5), dp(5));
+        setClickable(false);
+        setFocusable(false);
 
-        LinearLayout col = new LinearLayout(context);
-        col.setOrientation(LinearLayout.VERTICAL);
-        col.setLayoutParams(
-                new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
-
-        TextView title = new TextView(context);
-        title.setText("XOREL");
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
-        title.setTextColor(0xFFE8ECF4);
-        title.setLetterSpacing(0.12f);
-        title.setGravity(Gravity.CENTER);
-        title.setPadding(0, dp(2), 0, dp(4));
-        col.addView(
-                title,
-                new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        TextView subtitle = new TextView(context);
-        subtitle.setText("Promo");
-        subtitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f);
-        subtitle.setTextColor(0xFF9AA8BC);
-        subtitle.setGravity(Gravity.CENTER);
-        subtitle.setPadding(0, 0, 0, dp(6));
-        col.addView(
-                subtitle,
-                new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        FrameLayout videoWrap = new FrameLayout(context);
-        videoWrap.setBackgroundResource(R.drawable.bg_menu_video_inner);
-        final int vidPad = dp(4);
-        videoWrap.setPadding(vidPad, vidPad, vidPad, vidPad);
+        FrameLayout videoBox = new FrameLayout(context);
+        videoBox.setBackgroundResource(R.drawable.bg_menu_video_inner);
+        final int inset = dp(3);
+        videoBox.setPadding(inset, inset, inset, inset);
 
         textureView = new TextureView(context);
         textureView.setSurfaceTextureListener(this);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            final float r = dp(10);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            final float r = dp(8);
             textureView.setOutlineProvider(
                     new ViewOutlineProvider() {
                         @Override
@@ -99,32 +67,31 @@ final class MenuVideoPanel extends FrameLayout implements TextureView.SurfaceTex
                     });
             textureView.setClipToOutline(true);
         }
-        videoWrap.addView(
+        videoBox.addView(
                 textureView,
                 new FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT,
                         FrameLayout.LayoutParams.MATCH_PARENT));
-        col.addView(
-                videoWrap,
-                new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        muteChip = new TextView(context);
-        muteChip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
-        muteChip.setTextColor(0xFFE8ECF4);
-        muteChip.setPadding(dp(8), dp(6), dp(8), dp(2));
-        muteChip.setGravity(Gravity.CENTER);
-        muteChip.setOnClickListener(v -> setMuted(!muted, true));
-        col.addView(
-                muteChip,
-                new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT));
+        muteBtn = new ImageButton(context);
+        muteBtn.setBackgroundResource(R.drawable.bg_mute_icon_btn);
+        muteBtn.setScaleType(android.widget.ImageView.ScaleType.CENTER_INSIDE);
+        muteBtn.setPadding(dp(6), dp(6), dp(6), dp(6));
+        muteBtn.setContentDescription("Toggle sound");
+        muteBtn.setOnClickListener(v -> setMuted(!muted, true));
+        final int btn = dp(34);
+        FrameLayout.LayoutParams muteLp =
+                new FrameLayout.LayoutParams(btn, btn, Gravity.TOP | Gravity.END);
+        muteLp.topMargin = dp(5);
+        muteLp.rightMargin = dp(5);
+        videoBox.addView(muteBtn, muteLp);
 
-        addView(col);
+        addView(
+                videoBox,
+                new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
         setVisibility(GONE);
-        updateMuteLabel();
+        updateMuteIcon();
         ensurePlayer(context);
     }
 
@@ -199,7 +166,7 @@ final class MenuVideoPanel extends FrameLayout implements TextureView.SurfaceTex
         if (muted == value) return;
         muted = value;
         applyVolume();
-        updateMuteLabel();
+        updateMuteIcon();
         if (fromUser) {
             try {
                 NativeBridge.nativeSetMenuVideoMuted(muted);
@@ -222,8 +189,8 @@ final class MenuVideoPanel extends FrameLayout implements TextureView.SurfaceTex
         }
     }
 
-    private void updateMuteLabel() {
-        muteChip.setText(muted ? "Sound OFF — tap to unmute" : "Sound ON — tap to mute");
+    private void updateMuteIcon() {
+        muteBtn.setImageResource(muted ? R.drawable.ic_menu_volume_off : R.drawable.ic_menu_volume_on);
     }
 
     @Override
