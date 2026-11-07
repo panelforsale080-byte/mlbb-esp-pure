@@ -73,6 +73,62 @@ static int read_local_hero_id(pid_t pid, uintptr_t localPlayer, const EspRuntime
     return 0;
 }
 
+/** Ling 8452 only — real _bulletPos; no forward guess (stops dash to wrong aim). */
+static bool ling_sword_world_pos(pid_t pid, uintptr_t bullet, const EspRuntimeOff &R, float &x,
+                                 float &y, float &z) {
+    if (!R.bulletPos) return false;
+    float pos[3]{};
+    if (!mem_read(pid, bullet + R.bulletPos, pos, sizeof(pos))) return false;
+    if (std::fabs(pos[0]) < 0.08f && std::fabs(pos[2]) < 0.08f) return false;
+    x = pos[0];
+    y = pos[1];
+    z = pos[2];
+    return true;
+}
+
+static bool find_nearest_ling_sword(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
+                                    const EspRuntimeOff &R, float selfX, float selfY, float selfZ,
+                                    float maxRange, uintptr_t preferBullet, float &outX, float &outY,
+                                    float &outZ, uintptr_t &outBullet) {
+    outBullet = 0;
+    float bestD = maxRange;
+    bool found = false;
+    int seen8452 = 0;
+    auto consider = [&](uintptr_t bullet) {
+        if (!bullet) return;
+        int bid = 0;
+        if (!mem_read(pid, bullet + R.bulletId, bid) || bid != kLingSwordBulletId) return;
+        ++seen8452;
+        if (seen8452 > 4) return;
+        float bx = 0, by = 0, bz = 0;
+        if (!ling_sword_world_pos(pid, bullet, R, bx, by, bz)) return;
+        const float dx = bx - selfX;
+        const float dy = by - selfY;
+        const float dz = bz - selfZ;
+        const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (d < 0.42f || d > maxRange) return;
+        if (preferBullet && bullet == preferBullet) {
+            outX = bx;
+            outY = by;
+            outZ = bz;
+            outBullet = bullet;
+            found = true;
+            bestD = -1.f;
+            return;
+        }
+        if (bestD >= 0.f && d >= bestD) return;
+        bestD = d;
+        outX = bx;
+        outY = by;
+        outZ = bz;
+        outBullet = bullet;
+        found = true;
+    };
+    foreach_run_bullet(pid, bmStatics, bmKlass, R, consider);
+    g_hero.lastBulletScan = seen8452 > 4 ? 4 : seen8452;
+    return found;
+}
+
 static bool bullet_world_pos(pid_t pid, uintptr_t bullet, const EspRuntimeOff &R, float selfX,
                              float selfY, float selfZ, float &x, float &y, float &z) {
     if (R.bulletPos) {
@@ -319,8 +375,9 @@ static void ling_touch_swipe(int scrW, int scrH, float tx, float tz, float selfX
     const float angle = std::atan2(-dz, dx) - 0.7854f;
     const float moveX = g_hero.lingS2X + std::cos(angle) * 300.f;
     const float moveY = g_hero.lingS2Y + std::sin(angle) * 300.f;
+    const int swipeMs = g_hero.lingCastMs < 50 ? 32 : 38;
     touch_inject_screen_swipe((int)g_hero.lingS2X, (int)g_hero.lingS2Y, (int)moveX, (int)moveY,
-                              45, scrW, scrH);
+                              swipeMs, scrW, scrH);
 }
 
 static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int heroId, int scrW,
@@ -332,12 +389,13 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
     static uint64_t s_lastCastMs = 0;
     static float s_chaseTx = 0, s_chaseTy = 0, s_chaseTz = 0;
     static uint64_t s_chaseStartMs = 0;
+    static uintptr_t s_chaseBullet = 0;
     const uint64_t now = steady_ms();
 
-    const int swordCount = count_bullets_by_id(frame.pid, frame.bmStatics, bmKlass, R,
-                                               kLingSwordBulletId);
+    int swordCount = count_bullets_by_id(frame.pid, frame.bmStatics, bmKlass, R, kLingSwordBulletId);
+    if (swordCount > 4) swordCount = 4;
     g_hero.lastBulletScan = swordCount;
-    const int minS = g_hero.lingMinSwords < 1 ? 1 : g_hero.lingMinSwords;
+    const int minS = g_hero.lingMinSwords < 1 ? 1 : (g_hero.lingMinSwords > 4 ? 4 : g_hero.lingMinSwords);
     if (swordCount < minS) {
         static uint64_t s_noSwordLog = 0;
         if (now - s_noSwordLog > 4000) {
@@ -346,30 +404,42 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
                    g_hero.lastBulletTotal);
         }
         s_chaseStartMs = 0;
+        s_chaseBullet = 0;
         return;
     }
 
-    if (s_chaseStartMs > 0) {
-        const float cdx = s_chaseTx - frame.selfX;
-        const float cdz = s_chaseTz - frame.selfZ;
+    const int chaseLock = g_hero.lingChaseLockMs < 120 ? 120 : g_hero.lingChaseLockMs;
+    if (s_chaseStartMs > 0 && s_chaseBullet) {
+        float lx = 0, ly = 0, lz = 0;
+        int bid = 0;
+        const bool live =
+            mem_ptr_ok(s_chaseBullet) && mem_read(frame.pid, s_chaseBullet + R.bulletId, bid) &&
+            bid == kLingSwordBulletId && ling_sword_world_pos(frame.pid, s_chaseBullet, R, lx, ly, lz);
+        const float cdx = (live ? lx : s_chaseTx) - frame.selfX;
+        const float cdz = (live ? lz : s_chaseTz) - frame.selfZ;
         const float chaseDist = std::sqrt(cdx * cdx + cdz * cdz);
-        if (chaseDist < 0.65f || now - s_chaseStartMs > 520) s_chaseStartMs = 0;
-        else return;
+        if (!live || chaseDist < 0.55f || now - s_chaseStartMs > (uint64_t)chaseLock) {
+            s_chaseStartMs = 0;
+            s_chaseBullet = 0;
+        } else
+            return;
     }
 
-    if (now - s_lastCastMs < 200) return;
+    const int castGap = g_hero.lingCastMs < 55 ? 55 : g_hero.lingCastMs;
+    if (now - s_lastCastMs < (uint64_t)castGap) return;
 
     float tx = 0, ty = 0, tz = 0;
-    const bool hasSword =
-        find_bullet_by_id(frame.pid, frame.bmStatics, bmKlass, R, kLingSwordBulletId, frame.selfX,
-                          frame.selfY, frame.selfZ, g_hero.lingMaxRange, &tx, &ty, &tz);
-    if (!hasSword) return;
+    uintptr_t swordBullet = 0;
+    const bool hasSword = find_nearest_ling_sword(
+        frame.pid, frame.bmStatics, bmKlass, R, frame.selfX, frame.selfY, frame.selfZ,
+        g_hero.lingMaxRange, s_chaseBullet, tx, ty, tz, swordBullet);
+    if (!hasSword || !swordBullet) return;
 
     float dx = tx - frame.selfX;
     float dy = ty - frame.selfY;
     float dz = tz - frame.selfZ;
     const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-    if (dist < 0.45f) return;
+    if (dist < 0.42f) return;
 
     float ndx, ndy, ndz;
     norm_dir(dx, dy, dz, ndx, ndy, ndz);
@@ -387,6 +457,7 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
     s_chaseTx = tx;
     s_chaseTy = ty;
     s_chaseTz = tz;
+    s_chaseBullet = swordBullet;
     s_chaseStartMs = now;
     static uint64_t s_log = 0;
     if (now - s_log > 2000) {
