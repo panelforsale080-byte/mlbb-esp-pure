@@ -47,6 +47,7 @@ static bool g_autoFind = true;
 static bool g_fallbackPid = true;
 static bool g_showMenu = false;
 static bool g_menuLayoutReset = false;
+static ImVec2 g_menuLayoutScreen{0.f, 0.f};
 static bool g_logScrollBottom = true;
 static EspFeatures g_feat{};
 static std::atomic<bool> g_espActive{false};
@@ -58,11 +59,11 @@ static void apply_menu_style() {
     s.WindowRounding = 10.f;
     s.FrameRounding = 6.f;
     s.ChildRounding = 6.f;
-    s.WindowPadding = ImVec2(14.f, 12.f);
+    s.WindowPadding = ImVec2(16.f, 14.f);
     s.WindowBorderSize = 1.f;
-    s.FramePadding = ImVec2(10.f, 7.f);
-    s.ItemSpacing = ImVec2(8.f, 7.f);
-    s.ScrollbarSize = 12.f;
+    s.FramePadding = ImVec2(12.f, 9.f);
+    s.ItemSpacing = ImVec2(10.f, 9.f);
+    s.ScrollbarSize = 14.f;
     /* Slate-grey overlay — readable on game, not “neon AI” */
     const ImVec4 g0 = ImVec4(0.11f, 0.13f, 0.16f, 0.97f); /* window */
     const ImVec4 g1 = ImVec4(0.16f, 0.18f, 0.22f, 1.f);  /* child / frames */
@@ -90,6 +91,48 @@ static void apply_menu_style() {
     c[ImGuiCol_ScrollbarGrab] = g2;
     c[ImGuiCol_ScrollbarGrabHovered] = g3;
     c[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.50f, 0.52f, 0.58f, 1.f);
+}
+
+/** Touch-friendly scale from short edge (1080p ref); slightly above 1.0 on most phones. */
+static float menu_touch_ui_scale(float sw, float sh) {
+    if (sw < 1.f || sh < 1.f) return 1.15f;
+    const float shortEdge = std::min(sw, sh);
+    float scale = shortEdge / 1080.f;
+    scale = std::clamp(scale, 0.95f, 1.48f);
+    return scale * 1.16f;
+}
+
+static void apply_menu_display_scale(float sw, float sh) {
+    if (!ImGui::GetCurrentContext() || sw < 1.f || sh < 1.f) return;
+    const float scale = menu_touch_ui_scale(sw, sh);
+    ImGuiIO &io = ImGui::GetIO();
+    io.FontGlobalScale = scale;
+    ImGuiStyle &s = ImGui::GetStyle();
+    s.TouchExtraPadding = ImVec2(9.f * scale, 11.f * scale);
+    s.ScrollbarSize = 14.f * scale;
+}
+
+/** Panel size/position clamped to screen; recomputed on rotate / open menu. */
+static void menu_panel_fit_screen(const ImVec2 &display, ImVec2 &size, ImVec2 &pos) {
+    const float sw = display.x;
+    const float sh = display.y;
+    if (sw < 1.f || sh < 1.f) {
+        size = ImVec2(460.f, 540.f);
+        pos = ImVec2(0.f, 0.f);
+        return;
+    }
+    const float ui = menu_touch_ui_scale(sw, sh);
+    const float margin = std::max(16.f, std::min(sw, sh) * 0.024f);
+    float w = sw * 0.91f;
+    float h = sh * 0.84f;
+    const float minW = 420.f * ui;
+    const float minH = 480.f * ui;
+    const float maxW = std::max(200.f, sw - margin * 2.f);
+    const float maxH = std::max(200.f, sh - margin * 2.f);
+    w = std::clamp(w, std::min(minW, maxW), maxW);
+    h = std::clamp(h, std::min(minH, maxH), maxH);
+    size = ImVec2(w, h);
+    pos = ImVec2((sw - w) * 0.5f, std::max(margin, (sh - h) * 0.44f));
 }
 
 static const char *status_name(EspStatus s) {
@@ -315,14 +358,26 @@ static void draw_ui() {
 
     if (!g_showMenu) return;
 
+    ImVec2 panelSz(460.f, 540.f);
     {
         ImGuiIO &io = ImGui::GetIO();
-        const ImVec2 panelSz(400.f, 480.f);
         if (io.DisplaySize.x > 1.f && io.DisplaySize.y > 1.f) {
-            ImVec2 pos((io.DisplaySize.x - panelSz.x) * 0.5f, (io.DisplaySize.y - panelSz.y) * 0.5f);
-            const ImGuiCond cond = g_menuLayoutReset ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+            const bool screenChanged =
+                std::fabs(io.DisplaySize.x - g_menuLayoutScreen.x) > 8.f
+                || std::fabs(io.DisplaySize.y - g_menuLayoutScreen.y) > 8.f;
+            const bool relayout = g_menuLayoutReset || screenChanged;
+            if (relayout) {
+                g_menuLayoutScreen = io.DisplaySize;
+                apply_menu_display_scale(io.DisplaySize.x, io.DisplaySize.y);
+            }
+            ImVec2 pos;
+            menu_panel_fit_screen(io.DisplaySize, panelSz, pos);
+            const ImGuiCond cond = relayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
             ImGui::SetNextWindowPos(pos, cond);
             ImGui::SetNextWindowSize(panelSz, cond);
+            ImGui::SetNextWindowSizeConstraints(
+                ImVec2(panelSz.x * 0.85f, panelSz.y * 0.75f),
+                ImVec2(io.DisplaySize.x - 24.f, io.DisplaySize.y - 24.f));
             if (g_menuLayoutReset) g_menuLayoutReset = false;
         }
     }
@@ -515,7 +570,8 @@ static void draw_ui() {
             ImGui::Checkbox("Log auto-scroll", &g_logScrollBottom);
             static char logText[65536];
             ui_log_copy_all(logText, sizeof(logText));
-            ImGui::BeginChild("logs", {0, 140}, true);
+            const float logH = std::max(170.f, panelSz.y * 0.26f);
+            ImGui::BeginChild("logs", {0, logH}, true);
             ImGui::TextUnformatted(logText);
             if (g_logScrollBottom) ImGui::SetScrollHereY(1.0f);
             ImGui::EndChild();
@@ -547,8 +603,12 @@ static bool init_imgui_backends() {
         io.ConfigFlags &= ~ImGuiConfigFlags_DockingEnable;
         ImGui::StyleColorsDark();
         apply_menu_style();
+        const float sw = g_displayW > 0 ? (float)g_displayW : 1080.f;
+        const float sh = g_displayH > 0 ? (float)g_displayH : 2400.f;
+        ImGui::GetStyle().ScaleAllSizes(menu_touch_ui_scale(sw, sh));
         io.Fonts->AddFontDefault();
-        ImGui::GetStyle().TouchExtraPadding = ImVec2(4.f, 4.f);
+        apply_menu_display_scale(sw, sh);
+        g_menuLayoutScreen = ImVec2(0.f, 0.f);
     }
     if (g_imguiBackend) {
         ImGui_ImplOpenGL3_Shutdown();
@@ -603,6 +663,7 @@ void ui_set_display_size(int width, int height) {
             const float w = g_width > 0 ? (float)g_width : (float)width;
             const float h = g_height > 0 ? (float)g_height : (float)height;
             io.DisplaySize = ImVec2(w, h);
+            g_menuLayoutReset = true;
         }
     }
 }
@@ -655,6 +716,11 @@ void ui_gl_surface_changed(int width, int height) {
     g_width = width > 0 ? width : 1;
     g_height = height > 0 ? height : 1;
     apply_display_metrics();
+    g_menuLayoutReset = true;
+    if (ImGui::GetCurrentContext()) {
+        apply_menu_display_scale((float)g_width, (float)g_height);
+        ImGui::GetIO().DisplaySize = ImVec2((float)g_width, (float)g_height);
+    }
 }
 
 void ui_gl_surface_destroyed() {
