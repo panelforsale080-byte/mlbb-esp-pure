@@ -329,6 +329,7 @@ static void draw_ui() {
     ImGui::SetNextWindowBgAlpha(0.98f);
     if (ImGui::Begin("Xorel", &g_showMenu, ImGuiWindowFlags_None)) {
         ImGui::TextDisabled("#147 ESP | IL2CPP runtime offsets only (conRentV1 accuracy)");
+        ImGui::TextDisabled("All features OFF on start — enable only what you need.");
         ImGui::TextColored(ImVec4(1.f, 0.85f, 0.4f, 1.f), "Tap X (top-right) to close & play");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
@@ -610,13 +611,37 @@ void ui_esp_pipeline_idle() {
     /* no-op: keep Build #12 auto-find / resolve behavior on overlay start */
 }
 
+/** Fresh overlay session: nothing runs until user enables each checkbox/toggle. */
+static void ui_apply_safe_startup_defaults() {
+    g_feat = {};
+    g_espActive.store(false);
+    g_showMenu = false;
+    g_needResolve.store(true);
+
+    EspRetriSettings &rt = esp_retri_settings();
+    rt.enabled = false;
+
+    EspHeroAutoSettings &ha = esp_hero_auto_settings();
+    ha.lingSword = false;
+    ha.gusionCombo = false;
+    ha.lingArmed = false;
+    ha.gusionArmed = false;
+    ha.lingOneShot = false;
+    ha.gusionOneShot = false;
+    ha.gusionEnemyCombo = false;
+
+    ui_sync_combo_fab_visible(false);
+    ui_sync_menu_touch_state();
+}
+
 void ui_gl_surface_created() {
     std::lock_guard<std::mutex> lock(g_glMu);
     shutdown_imgui_only();
+    ui_apply_safe_startup_defaults();
     if (!init_imgui_backends()) return;
     g_glReady = true;
     reader_start_once();
-    ui_log("Xorel — tap logo: menu | hold logo ~0.7s: exit overlay");
+    ui_log("Xorel — features OFF until you enable them | logo=menu");
 }
 
 static void reader_start_once() {

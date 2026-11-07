@@ -3,19 +3,17 @@
 #include "imgui.h"
 
 struct EspFeatures {
-    bool box = true;
-    bool line = true;
-    bool health = true;
-    bool name = true;
-    bool enemyCooldown = true;
-    /** When on with Enemy CD: show cooldowns in transparent side panels instead of under each box. */
-    bool enemyCdSidePanel = true;
-    bool distance = true;
-    /** Red top banner listing enemy hero names within 12 m (same label source as Name ESP). Default on. */
-    bool proximityAlert12m = true;
-    bool monsterBox = true;
-    bool monsterName = true;
-    bool monsterHealth = true;
+    bool box = false;
+    bool line = false;
+    bool health = false;
+    bool name = false;
+    bool enemyCooldown = false;
+    bool enemyCdSidePanel = false;
+    bool distance = false;
+    bool proximityAlert12m = false;
+    bool monsterBox = false;
+    bool monsterName = false;
+    bool monsterHealth = false;
 };
 
 /* conRentV1 EspTab::DrawOverlay — external pseudo W2S (same layout as libtool overlay). */

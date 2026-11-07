@@ -11,7 +11,7 @@ struct EspHeroAutoSettings {
     bool gusionArmed = false;
     bool lingOneShot = false;
     bool gusionOneShot = false;
-    bool gusionEnemyCombo = true;
+    bool gusionEnemyCombo = false;
     bool useIl2Cast = true;
     int comboDelayMs = 80;
     float lingMaxRange = 8.5f;
