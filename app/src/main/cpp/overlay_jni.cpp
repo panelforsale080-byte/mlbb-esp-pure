@@ -51,6 +51,8 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeSetDisplaySize(JNIEnv *, jclass, jint 
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeGlSurfaceCreated(JNIEnv *, jclass) {
+    /* Stale g_menuTouchNotified can skip JNI; force applyMenuTouch after EGL recreate. */
+    g_menuTouchNotified = true;
     ui_gl_surface_created();
 }
 

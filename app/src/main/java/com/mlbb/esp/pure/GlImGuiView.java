@@ -96,6 +96,14 @@ public class GlImGuiView extends GLSurfaceView implements GLSurfaceView.Renderer
     }
 
     @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        if (!surfaceReady) return false;
+        OverlayService svc = OverlayService.instance;
+        if (svc == null || !svc.isMenuInteractive()) return false;
+        return super.dispatchTouchEvent(event);
+    }
+
+    @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (!surfaceReady || !NativeBridge.nativeIsMenuInteractive()) return false;
         try {

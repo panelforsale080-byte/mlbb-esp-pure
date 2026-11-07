@@ -60,7 +60,8 @@ public class OverlayService extends Service {
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                     | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                     | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    | WindowManager.LayoutParams.FLAG_SPLIT_TOUCH;
     private static final int SURFACE_FLAGS_MENU =
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                     | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
@@ -212,7 +213,7 @@ public class OverlayService extends Service {
     }
 
     private void attachWindows() {
-        root = new FrameLayout(this);
+        root = new OverlayRootLayout(this);
         glView = new GlImGuiView(this);
         glView.configureOverlaySurface();
         glView.setOnGlReadyListener(
@@ -361,6 +362,16 @@ public class OverlayService extends Service {
         wm.addView(root, surfaceLp);
         wm.addView(fabLogo, fabLp);
         wm.addView(fabCombo, fabComboLp);
+        menuInteractive = false;
+        applyMenuTouchFlags(false);
+        main.post(
+                () -> {
+                    try {
+                        NativeBridge.nativeMinimizeMenu();
+                    } catch (Throwable t) {
+                        Log.w(TAG, "post-attach minimize", t);
+                    }
+                });
     }
 
     private void scheduleFabHoldExit() {
@@ -402,6 +413,10 @@ public class OverlayService extends Service {
         } else if (CMD_STOP_ESP.equals(c)) {
             NativeBridge.nativeStopEsp();
         }
+    }
+
+    boolean isMenuInteractive() {
+        return menuInteractive;
     }
 
     void setMenuTouch(boolean interactive) {
