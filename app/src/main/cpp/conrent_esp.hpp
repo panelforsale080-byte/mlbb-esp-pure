@@ -30,6 +30,7 @@ struct ConrentRuntimeOffsets {
     uintptr_t bm_static_RunBulletsList = 0; /* BattleManager._RunBullets BetterList (VIP) */
     uintptr_t bul_m_Id = 0;
     uintptr_t bul_bulletPos = 0;
+    uintptr_t bul_bulletForward = 0;
     uintptr_t scc__dicCD = 0;
     uintptr_t cdd_iSpellID = 0;
     uintptr_t cdd_uiCoolTime = 0;

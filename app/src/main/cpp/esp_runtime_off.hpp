@@ -32,6 +32,7 @@ struct EspRuntimeOff {
     uintptr_t bmStaticRunBulletsList = 0;
     uintptr_t bulletId = 0;
     uintptr_t bulletPos = 0;
+    uintptr_t bulletForward = 0;
 };
 
 void esp_runtime_off_apply(const ConrentResolve &cr);

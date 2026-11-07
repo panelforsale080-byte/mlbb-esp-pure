@@ -1,6 +1,8 @@
 #pragma once
 #include "esp_engine.hpp"
 
+struct ImDrawList;
+
 struct EspHeroAutoSettings {
     bool lingSword = false;
     bool gusionCombo = false;
@@ -9,6 +11,8 @@ struct EspHeroAutoSettings {
     float lingMaxRange = 8.5f;
     int lastHeroId = 0;
     int lastBulletScan = 0;
+    int lastBulletTotal = 0;
+    bool showSkillCircles = true;
 
     float lingS2X = 0.f;
     float lingS2Y = 0.f;
@@ -26,3 +30,5 @@ EspHeroAutoSettings &esp_hero_auto_settings();
 void esp_hero_auto_process(const EspFrame &frame);
 void esp_hero_auto_sync_skill_pixels(float screenW, float screenH);
 void esp_hero_auto_reset_skill_anchors();
+void esp_hero_auto_draw_indicator(ImDrawList *draw);
+void esp_hero_auto_anchor_drag(bool menuOpen, float screenW, float screenH);

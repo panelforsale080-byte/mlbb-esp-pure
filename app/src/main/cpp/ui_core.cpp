@@ -274,10 +274,22 @@ static void draw_ui() {
             esp_retri_draw_indicator(bg);
             esp_retri_anchor_drag(g_showMenu, sw, sh);
         }
+        const EspHeroAutoSettings &hDraw = esp_hero_auto_settings();
+        if ((hDraw.lingSword || hDraw.gusionCombo) && hDraw.showSkillCircles) {
+            esp_hero_auto_draw_indicator(bg);
+            esp_hero_auto_anchor_drag(g_showMenu, sw, sh);
+        }
     } else if (g_showMenu && esp_retri_settings().enabled && esp_retri_settings().showCircle) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
         esp_retri_draw_indicator(bg);
         esp_retri_anchor_drag(true, sw, sh);
+    } else if (g_showMenu) {
+        const EspHeroAutoSettings &hM = esp_hero_auto_settings();
+        if ((hM.lingSword || hM.gusionCombo) && hM.showSkillCircles) {
+            ImDrawList *bg = ImGui::GetBackgroundDrawList();
+            esp_hero_auto_draw_indicator(bg);
+            esp_hero_auto_anchor_drag(true, sw, sh);
+        }
     }
 
     if (!g_showMenu) return;
@@ -418,6 +430,10 @@ static void draw_ui() {
             ImGui::Checkbox("Ling auto sword", &ha.lingSword);
             ImGui::Checkbox("Gusion auto combo", &ha.gusionCombo);
             ImGui::Checkbox("IL2 cast (no root)", &ha.useIl2Cast);
+            ImGui::Checkbox("Show skill buttons", &ha.showSkillCircles);
+            if (ha.lastBulletTotal >= 0)
+                ImGui::Text("Run bullets: %d  (target id count: %d)", ha.lastBulletTotal,
+                            ha.lastBulletScan);
             ImGui::SliderInt("Gusion step delay ms", &ha.comboDelayMs, 40, 200);
             ImGui::SliderFloat("Ling sword range m", &ha.lingMaxRange, 3.f, 12.f);
             if (ha.lastHeroId > 0)

@@ -292,6 +292,8 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
         if (!out.runtime_fields.bul_bulletPos)
             out.runtime_fields.bul_bulletPos =
                 instance_field_offset(s, pid, il2, bulKlass, "bulletPos");
+        out.runtime_fields.bul_bulletForward =
+            instance_field_offset(s, pid, il2, bulKlass, "bulletForward");
     }
 
     /* dump.cs: Namespace Battle — unqualified name misses class_from_name and falls back to

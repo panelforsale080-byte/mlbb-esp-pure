@@ -35,6 +35,7 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     g_off.bmStaticRunBulletsList = rt.bm_static_RunBulletsList;
     g_off.bulletId = rt.bul_m_Id;
     g_off.bulletPos = rt.bul_bulletPos;
+    g_off.bulletForward = rt.bul_bulletForward;
     g_off.ready = cr.runtime_ready && g_off.localPlayerShow && g_off.dicPlayerShow &&
                   g_off.dicMonsterShow && g_off.lastPosition && g_off.entityDeath &&
                   g_off.sameCamp && g_off.entityId;
