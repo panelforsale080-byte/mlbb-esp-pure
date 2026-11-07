@@ -234,7 +234,8 @@ static void reader_loop() {
         }
 
         if (g_espActive.load())
-            std::this_thread::yield(); /* no fixed ms delay — max read rate */
+            /* Tiny sleep: yields CPU for game + GL; staggered heavy reads keep tick latency low */
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         else
             std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }

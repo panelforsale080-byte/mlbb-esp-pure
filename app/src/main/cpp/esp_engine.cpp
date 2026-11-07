@@ -17,10 +17,18 @@
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 static std::atomic<bool> g_tickHeroName{true};
 static std::atomic<bool> g_tickEnemyCd{true};
+
+/* Reader tick index: stagger heavy per-entity reads (IL2 string + cooldown dict) so busy
+ * fights do not run full cost for every entity every frame. */
+static std::atomic<uint64_t> g_readerTickIndex{0};
+
+/** How many reader frames between full heavy reads for one entity (power-of-two for cheap mask). */
+static constexpr unsigned kHeavyReadInterval = 4;
 
 void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown) {
     g_tickHeroName.store(heroName);
@@ -215,6 +223,18 @@ struct CoolDownTimerState {
 
 static std::unordered_map<uintptr_t, CoolDownTimerState> g_cooldownTimers;
 
+struct HeroNameEntCache {
+    char name[192] = {};
+    bool valid = false;
+};
+static std::unordered_map<uintptr_t, HeroNameEntCache> g_heroNameByEnt;
+
+struct CdEntCache {
+    int s1 = 0, s2 = 0, s3 = 0, spell = 0;
+    bool valid = false;
+};
+static std::unordered_map<uintptr_t, CdEntCache> g_cdByEnt;
+
 static void apply_cooldown_skill_slot(int skillID, int playerSpellId, int timeLeftSec,
                                       int &s1, int &s2, int &s3, int &spell, int &regen) {
     const int fSkill = skillID % 100;
@@ -243,11 +263,23 @@ static void apply_cooldown_skill_slot(int skillID, int playerSpellId, int timeLe
     }
 }
 
-static bool fill_show_cooldowns(pid_t pid, uintptr_t showEnt, int playerSpellId, EspTarget &t) {
+static bool fill_show_cooldowns(pid_t pid, uintptr_t showEnt, int playerSpellId, EspTarget &t, bool doHeavyRead) {
     const EspRuntimeOff &R = esp_runtime_off();
     t.cdSkill1 = t.cdSkill2 = t.cdSkill3 = t.cdSpell = 0;
     t.cdValid = false;
     if (!g_tickEnemyCd.load()) return false;
+    if (!doHeavyRead) {
+        auto it = g_cdByEnt.find(showEnt);
+        if (it != g_cdByEnt.end() && it->second.valid) {
+            t.cdSkill1 = it->second.s1;
+            t.cdSkill2 = it->second.s2;
+            t.cdSkill3 = it->second.s3;
+            t.cdSpell = it->second.spell;
+            t.cdValid = true;
+            return true;
+        }
+        return false;
+    }
     if (!R.showCooldownComp || !R.showCdDic || !R.cddSpellId || !R.cddCoolTime || !R.cddStartTime)
         return false;
     uintptr_t cdComp = 0;
@@ -288,6 +320,7 @@ static bool fill_show_cooldowns(pid_t pid, uintptr_t showEnt, int playerSpellId,
     t.cdSpell = spell;
     (void)regen;
     t.cdValid = true;
+    g_cdByEnt[showEnt] = {s1, s2, s3, spell, true};
     return true;
 }
 
@@ -731,7 +764,10 @@ void esp_reset() {
     g_resolved = false;
     g_tickHeroName.store(true);
     g_tickEnemyCd.store(true);
+    g_readerTickIndex.store(0);
     g_cooldownTimers.clear();
+    g_heroNameByEnt.clear();
+    g_cdByEnt.clear();
     esp_runtime_off_clear();
     esp_camera_reset();
 }
@@ -743,6 +779,10 @@ EspStatus esp_attach(pid_t pid) {
             remote_il2cpp_invalidate_cache(g_pid);
         g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
         g_resolved = false;
+        g_readerTickIndex.store(0);
+        g_cooldownTimers.clear();
+        g_heroNameByEnt.clear();
+        g_cdByEnt.clear();
     }
     g_pid = pid;
     if (pid <= 0) return EspStatus::NoProcess;
@@ -932,6 +972,8 @@ EspStatus esp_tick(EspFrame &out) {
             for (size_t i = 0; i < listM.size(); ++i) monsters.emplace_back((int)i, listM[i]);
     }
 
+    const uint64_t tick = g_readerTickIndex.fetch_add(1, std::memory_order_relaxed);
+
     auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
         if (!v) return;
         uint8_t dead = 0, camp = 0;
@@ -958,21 +1000,44 @@ EspStatus esp_tick(EspFrame &out) {
         else if (kind == 1)
             std::snprintf(t.label, sizeof(t.label), "%s", esp_monster_label(id));
         else {
+            const bool isLocal = local && (v == local);
+            const unsigned phase = static_cast<unsigned>(tick % kHeavyReadInterval);
+            const unsigned mix =
+                static_cast<unsigned>(reinterpret_cast<uintptr_t>(v) ^ static_cast<uintptr_t>(tick >> 2u));
+            const bool doHeavyName = g_tickHeroName.load() && R.heroName
+                && (isLocal || ((mix % kHeavyReadInterval) == phase));
+            const bool doHeavyCd = g_tickEnemyCd.load() && !isLocal
+                && (((mix + 1u) % kHeavyReadInterval) == phase);
+
             t.label[0] = '\0';
-            if (g_tickHeroName.load() && R.heroName) {
+            if (doHeavyName && R.heroName) {
                 uintptr_t strPtr = 0;
                 if (mem_read(g_pid, v + R.heroName, strPtr) && strPtr && mem_ptr_ok(strPtr)) {
                     char hn[180] = {};
-                    if (read_il2_managed_string(g_pid, strPtr, hn, sizeof(hn)))
+                    if (read_il2_managed_string(g_pid, strPtr, hn, sizeof(hn))) {
                         std::snprintf(t.label, sizeof(t.label), "%s", hn);
+                        HeroNameEntCache hc{};
+                        std::snprintf(hc.name, sizeof(hc.name), "%s", hn);
+                        hc.valid = true;
+                        g_heroNameByEnt[v] = hc;
+                    }
                 }
+            } else if (g_tickHeroName.load() && R.heroName && !isLocal) {
+                const auto it = g_heroNameByEnt.find(v);
+                if (it != g_heroNameByEnt.end() && it->second.valid && it->second.name[0])
+                    std::snprintf(t.label, sizeof(t.label), "%s", it->second.name);
             }
             if (!t.label[0])
                 std::snprintf(t.label, sizeof(t.label), "P%d", id);
-            const bool isLocal = local && (v == local);
             int spellId = 0;
-            if (g_tickEnemyCd.load() && R.summonSkillId) mem_read(g_pid, v + R.summonSkillId, spellId);
-            if (!isLocal) fill_show_cooldowns(g_pid, v, spellId, t);
+            if (doHeavyCd && R.summonSkillId) mem_read(g_pid, v + R.summonSkillId, spellId);
+            if (!isLocal) {
+                if (doHeavyCd) {
+                    if (!fill_show_cooldowns(g_pid, v, spellId, t, true)) g_cdByEnt.erase(v);
+                } else {
+                    (void)fill_show_cooldowns(g_pid, v, spellId, t, false);
+                }
+            }
         }
         out.targets.push_back(t);
     };
@@ -983,6 +1048,28 @@ EspStatus esp_tick(EspFrame &out) {
         if (kv.second) mem_read(g_pid, kv.second + R.entityId, id);
         if (!esp_monster_id(id)) continue;
         push(kv.second, 1, esp_monster_label(id), kv.first);
+    }
+
+    {
+        std::unordered_set<uintptr_t> live;
+        live.reserve(out.targets.size() * 2 + 8);
+        for (const EspTarget &tg : out.targets) {
+            if (tg.ent) live.insert(tg.ent);
+        }
+        auto prune = [&live](std::unordered_map<uintptr_t, HeroNameEntCache> &m) {
+            for (auto it = m.begin(); it != m.end();) {
+                if (live.find(it->first) == live.end()) it = m.erase(it);
+                else ++it;
+            }
+        };
+        auto pruneCd = [&live](std::unordered_map<uintptr_t, CdEntCache> &m) {
+            for (auto it = m.begin(); it != m.end();) {
+                if (live.find(it->first) == live.end()) it = m.erase(it);
+                else ++it;
+            }
+        };
+        prune(g_heroNameByEnt);
+        pruneCd(g_cdByEnt);
     }
 
     out.mapsCount = 0;
@@ -1055,36 +1142,34 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
         frame.selfScreenValid = true;
     }
 
-    std::vector<size_t> order(frame.targets.size());
-    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
-    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
-        return frame.targets[a].kind < frame.targets[b].kind;
-    });
-
+    /* Two passes (players then monsters) — avoids per-frame sort; order within a kind stays stable. */
     std::unordered_map<uintptr_t, EntScreenHold> live;
-    for (size_t idx : order) {
-        EspTarget &t = frame.targets[idx];
-        if (!t.ent) continue;
-        const auto it = g_entScreen.find(t.ent);
-        const bool hadPrev = it != g_entScreen.end();
-        const bool ok =
-            camSnap.validMatrixProj
-                ? esp_camera_proj_snap_w2s(camSnap, t.worldX, t.worldY, t.worldZ, sx, sy)
-                : esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy);
-        if (ok) {
-            t.screenX = sx;
-            t.screenY = sy;
-            t.screenValid = true;
-            live[t.ent] = {sx, sy, 0};
-            continue;
-        }
-        if (hadPrev && it->second.miss < kScreenHoldFrames) {
-            EntScreenHold st = it->second;
-            ++st.miss;
-            t.screenX = st.x;
-            t.screenY = st.y;
-            t.screenValid = true;
-            live[t.ent] = st;
+    for (int kindPass = 0; kindPass <= 1; ++kindPass) {
+        for (size_t idx = 0; idx < frame.targets.size(); ++idx) {
+            if (frame.targets[idx].kind != kindPass) continue;
+            EspTarget &t = frame.targets[idx];
+            if (!t.ent) continue;
+            const auto it = g_entScreen.find(t.ent);
+            const bool hadPrev = it != g_entScreen.end();
+            const bool ok =
+                camSnap.validMatrixProj
+                    ? esp_camera_proj_snap_w2s(camSnap, t.worldX, t.worldY, t.worldZ, sx, sy)
+                    : esp_camera_world_to_screen(t.worldX, t.worldY, t.worldZ, sx, sy);
+            if (ok) {
+                t.screenX = sx;
+                t.screenY = sy;
+                t.screenValid = true;
+                live[t.ent] = {sx, sy, 0};
+                continue;
+            }
+            if (hadPrev && it->second.miss < kScreenHoldFrames) {
+                EntScreenHold st = it->second;
+                ++st.miss;
+                t.screenX = st.x;
+                t.screenY = st.y;
+                t.screenValid = true;
+                live[t.ent] = st;
+            }
         }
     }
     g_entScreen.swap(live);
