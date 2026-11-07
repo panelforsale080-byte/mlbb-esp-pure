@@ -82,7 +82,7 @@ static bool bullet_pos_ok(pid_t pid, uintptr_t bullet, uintptr_t bulPosOff, floa
 }
 
 static void foreach_run_bullet(pid_t pid, uintptr_t bmStatics, const EspRuntimeOff &R,
-                                 const std::function<bool(uintptr_t bullet)> &fn) {
+                                 const std::function<void(uintptr_t bullet)> &fn) {
     if (!bmStatics || !R.bulletId) return;
 
     auto scan_hashset = [&]() {
