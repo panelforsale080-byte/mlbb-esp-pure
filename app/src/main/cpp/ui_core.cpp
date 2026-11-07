@@ -266,25 +266,6 @@ static void draw_ui() {
 
     if (!g_showMenu) return;
 
-    /* Full-screen invisible layer behind the panel: tap outside window closes menu (pass-through on next frame). */
-    {
-        ImGuiIO &io = ImGui::GetIO();
-        ImGui::SetNextWindowPos(ImVec2(0.f, 0.f));
-        ImGui::SetNextWindowSize(io.DisplaySize);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.f, 0.f));
-        ImGui::Begin(
-                "##xorel_backdrop", nullptr,
-                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings
-                        | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove);
-        ImGui::InvisibleButton("##backdrop_hit", io.DisplaySize);
-        if (ImGui::IsItemClicked(0))
-            ui_minimize_menu();
-        ImGui::End();
-        ImGui::PopStyleVar(3);
-    }
-
     {
         ImGuiIO &io = ImGui::GetIO();
         const ImVec2 panelSz(400.f, 480.f);
@@ -299,6 +280,7 @@ static void draw_ui() {
     ImGui::SetNextWindowBgAlpha(0.98f);
     if (ImGui::Begin("Xorel", &g_showMenu, ImGuiWindowFlags_None)) {
         ImGui::TextDisabled("#147 ESP | IL2CPP runtime offsets only (conRentV1 accuracy)");
+        ImGui::TextColored(ImVec4(1.f, 0.85f, 0.4f, 1.f), "Tap X (top-right) to close & play");
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
 
@@ -474,7 +456,7 @@ void ui_gl_surface_created() {
     if (!init_imgui_backends()) return;
     g_glReady = true;
     reader_start_once();
-    ui_log("Xorel overlay — tap icon for menu; tap outside panel to close & play");
+    ui_log("Xorel overlay — tap icon for menu; tap X on panel to close & play");
 }
 
 static void reader_start_once() {
