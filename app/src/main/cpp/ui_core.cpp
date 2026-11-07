@@ -316,13 +316,21 @@ static void draw_ui() {
         ImGui::SeparatorText("ESP control");
         ImGui::Text("World draw: %s", g_espActive.load() ? "ON" : "OFF");
         if (ImGui::Button("Start ESP", ImVec2(118.f, 0.f))) {
-            if (fr.status == EspStatus::Ready)
+            if (fr.status == EspStatus::Ready) {
                 ui_esp_start();
-            else
-                ui_log("[esp] not Ready — Find pid + Resolve in match first");
+                ui_log("[esp] START — menu remains open, tap X to play");
+            } else {
+                ui_log("[esp] NOT READY (%s) — FIX:", status_name(fr.status));
+                ui_log("  1) Find pid  (MLBB must be running)");
+                ui_log("  2) Resolve   (must be IN MATCH, not lobby)");
+                ui_log("  3) Tap Start ESP again");
+            }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Stop ESP", ImVec2(118.f, 0.f))) ui_esp_stop();
+        if (ImGui::Button("Stop ESP", ImVec2(118.f, 0.f))) {
+            ui_esp_stop();
+            ui_log("[esp] stopped");
+        }
 
         ImGui::SeparatorText("Enemy");
         ImGui::Checkbox("Box", &g_feat.box);
