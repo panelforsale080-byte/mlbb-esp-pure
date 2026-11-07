@@ -65,6 +65,8 @@ struct ConrentResolve {
     uintptr_t camera_projection_matrix_method = 0;
     uintptr_t camera_get_main_native = 0; /* methodPointer — conRent direct call */
     uintptr_t camera_w2s_native = 0;
+    uintptr_t retri_try_use_skill_mi = 0; /* ShowSelfPlayer.TryUseSkill */
+    uintptr_t retri_show_self_player_klass = 0;
     uintptr_t battle_bridge = 0;          /* BattleData.m_BattleBridge live ptr */
     uintptr_t get_bStartBattle_native = 0;
     bool metadata_ready = false;

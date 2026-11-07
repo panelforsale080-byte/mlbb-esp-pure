@@ -496,9 +496,20 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
 
     fill_runtime_field_offsets(s, pid, il2, images, out);
 
+    out.retri_show_self_player_klass =
+        find_class_fast(s, pid, il2, images, "ShowSelfPlayer", false);
+    if (out.retri_show_self_player_klass) {
+        out.retri_try_use_skill_mi =
+            method_from_name(s, pid, il2, out.retri_show_self_player_klass, "TryUseSkill", 9);
+        if (!out.retri_try_use_skill_mi)
+            out.retri_try_use_skill_mi =
+                method_from_name(s, pid, il2, out.retri_show_self_player_klass, "TryUseSkill", 7);
+    }
+
     static const char *kModMenuClasses[] = {
         "UnityEngine.Camera", "BattleData",     "BattleBridge",   "BattleManager",
-        "ShowEntity",         "ShowPlayer",     "LogicBattleManager",
+        "ShowEntity",         "ShowPlayer",     "ShowSelfPlayer",
+        "LogicBattleManager",
         "Battle.LogicFighter", "Battle.LogicSkillComp", "Battle.CoolDownComp",
         "Battle.CoolDownData", "Battle.ShowOwnSkillComp", "ShowSkillData",
     };

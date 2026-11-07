@@ -340,6 +340,7 @@ static void draw_ui() {
         if (ImGui::CollapsingHeader("AUTO RETRI (EXTERNAL-MLBB)", ImGuiTreeNodeFlags_DefaultOpen)) {
             EspRetriSettings &rt = esp_retri_settings();
             ImGui::Checkbox("Enable Auto Retri", &rt.enabled);
+            ImGui::Checkbox("IL2 cast (no root / virtual)", &rt.useIl2SummonCast);
             ImGui::Checkbox("Show Circle", &rt.showCircle);
             ImGui::Checkbox("Screen anchor (auto scale)", &rt.useScreenAnchor);
             if (ImGui::Button("Reset spell anchor (EXTERNAL default)")) esp_retri_set_default_spell_anchor();
@@ -373,7 +374,7 @@ static void draw_ui() {
                 ImGui::Checkbox("Lito", &rt.targetLito);
                 ImGui::TreePop();
             }
-            ImGui::TextDisabled("Tap: uinput virtual + su/input (root). Log shows inject method.");
+            ImGui::TextDisabled("Virtual: IL2 TryUseSkill via ptrace (same as ESP). Uncheck for tap fallback.");
         }
 
         ImGui::SeparatorText("Monster");

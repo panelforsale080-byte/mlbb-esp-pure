@@ -20,6 +20,8 @@ struct EspRetriSettings {
     float tapY = 661.f;
     /** Fallback when ShowEntity.m_Level cannot be read. */
     int assumedLevel = 8;
+    /** Virtual/non-root: cast via IL2 TryUseSkill(20020), not screen tap. */
+    bool useIl2SummonCast = true;
 };
 
 EspRetriSettings &esp_retri_settings();

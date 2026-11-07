@@ -2,6 +2,7 @@
 #include "esp_engine.hpp"
 #include "esp_runtime_off.hpp"
 #include "mem.hpp"
+#include "esp_retri_il2.hpp"
 #include "touch_uinput.hpp"
 #include "ui_log.hpp"
 
@@ -184,8 +185,31 @@ void esp_retri_process(const EspFrame &frame) {
     const int realHp = read_entity_hp(frame.pid, closestEnt, R.hp);
     if (realHp <= 0 || realHp > retriDmg) return;
 
-    fire_retri_tap();
-    ui_log("[retri] TAP id=%d hp=%d dist=%.1f", closestId, realHp, closestDist);
+    bool castOk = false;
+    if (g_retri.useIl2SummonCast && esp_retri_il2_ready() && frame.localPlayerEnt) {
+        float mx = 0, my = 0, mz = 0;
+        if (esp_read_entity_world(frame.pid, closestEnt, mx, my, mz)) {
+            float dx = mx - frame.selfX;
+            float dy = my - frame.selfY;
+            float dz = mz - frame.selfZ;
+            const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (len > 1e-4f) {
+                dx /= len;
+                dy /= len;
+                dz /= len;
+            } else {
+                dx = 1.f;
+                dy = 0.f;
+                dz = 0.f;
+            }
+            castOk = esp_retri_il2_cast_summon(frame.pid, frame.localPlayerEnt, dx, dy, dz);
+        }
+        ui_log("[retri] %s id=%d hp=%d dist=%.1f (IL2 TryUseSkill 20020)",
+               castOk ? "CAST" : "CAST-FAIL", closestId, realHp, closestDist);
+    } else {
+        fire_retri_tap();
+        ui_log("[retri] TAP id=%d hp=%d dist=%.1f (shell fallback)", closestId, realHp, closestDist);
+    }
     s_lastTapMs = now;
     s_holdEnt = closestEnt;
     s_holdUntilMs = now + 1800;

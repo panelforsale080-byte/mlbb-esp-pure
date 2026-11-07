@@ -1,5 +1,6 @@
 #include "esp_engine.hpp"
 #include "esp_camera.hpp"
+#include "esp_retri_il2.hpp"
 #include "conrent_esp.hpp"
 #include "il2_layout.hpp"
 #include "esp_monster.hpp"
@@ -881,6 +882,13 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     esp_camera_set_runtime(camRt);
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
                               cr.camera_w2s_method);
+    esp_retri_il2_bind(il2.sym_runtime_invoke, cr.retri_try_use_skill_mi);
+    if (cr.retri_try_use_skill_mi) {
+        ui_log("[retri] IL2 ShowSelfPlayer.TryUseSkill mi=0x%llx (no root / no a11y)",
+               (unsigned long long)cr.retri_try_use_skill_mi);
+    } else {
+        ui_log("[retri] WARN: TryUseSkill not resolved — enable Resolve in match");
+    }
 
     if (crRan && (cr.battle_manager || cr.battle_manager_klass || cr.metadata_ready)) {
         g_bmKlass = cr.battle_manager_klass;
