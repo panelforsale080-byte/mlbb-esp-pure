@@ -1,4 +1,5 @@
 #include "conrent_esp.hpp"
+#include "esp_retri_resolve.hpp"
 #include "camera_lib_chain.hpp"
 #include "il2_layout.hpp"
 #include "il2_lib_globals.hpp"
@@ -210,6 +211,17 @@ static uintptr_t instance_field_offset(RemoteSession &s, pid_t pid, RemoteIl2Cpp
         if (mem_read(pid, field + fo, o) && o >= 0x08 && o < 0x2000) return o;
     }
     return 0;
+}
+
+static void log_and_warm_auto_retri_classes(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
+                                            const ResolveImages &images) {
+    ui_log("[resolve] auto retri classes (pre-cache):");
+    for (unsigned i = 0; i < kEspAutoRetriClassCount; ++i) {
+        const char *cn = kEspAutoRetriClasses[i];
+        const bool unity = std::strstr(cn, "UnityEngine") != nullptr;
+        const uintptr_t k = find_class_fast(s, pid, il2, images, cn, unity);
+        ui_log("  %s -> 0x%llx", cn, (unsigned long long)k);
+    }
 }
 
 static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
@@ -514,6 +526,7 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
     out.metadata_ready =
         klass && out.camera_get_main_method && out.camera_w2s_method && out.runtime_ready;
 
+    log_and_warm_auto_retri_classes(s, pid, il2, images);
     fill_runtime_field_offsets(s, pid, il2, images, out);
 
     out.retri_show_self_player_klass =
