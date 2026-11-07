@@ -24,14 +24,13 @@ static float overlay_font_size() {
 static void draw_text_shadow(ImDrawList *draw, ImFont *font, float size, const ImVec2 &pos, ImU32 col,
                             const char *txt) {
     if (!txt) return;
-    const ImU32 sh = IM_COL32(0, 0, 0, 210);
-    const float o = 1.2f;
+    const ImU32 sh = IM_COL32(0, 0, 0, 200);
+    const float o = 1.f;
     if (font) {
-        for (int i = -1; i <= 1; i++)
-            for (int j = -1; j <= 1; j++) {
-                if (i == 0 && j == 0) continue;
-                draw->AddText(font, size, ImVec2(pos.x + i * o, pos.y + j * o), sh, txt);
-            }
+        draw->AddText(font, size, ImVec2(pos.x + o, pos.y), sh, txt);
+        draw->AddText(font, size, ImVec2(pos.x - o, pos.y), sh, txt);
+        draw->AddText(font, size, ImVec2(pos.x, pos.y + o), sh, txt);
+        draw->AddText(font, size, ImVec2(pos.x, pos.y - o), sh, txt);
         draw->AddText(font, size, pos, col, txt);
     } else {
         draw->AddText(ImVec2(pos.x + o, pos.y + o), sh, txt);

@@ -22,17 +22,19 @@
 
 static std::atomic<bool> g_tickHeroName{true};
 static std::atomic<bool> g_tickEnemyCd{true};
+static std::atomic<bool> g_tickMonsters{true};
 
 /* Reader tick index: stagger heavy per-entity reads (IL2 string + cooldown dict) so busy
  * fights do not run full cost for every entity every frame. */
 static std::atomic<uint64_t> g_readerTickIndex{0};
 
-/** How many reader frames between full heavy reads for one entity (power-of-two for cheap mask). */
-static constexpr unsigned kHeavyReadInterval = 4;
+/** Stagger IL2 hero-name / cooldown dict walks — higher = less CPU, slightly staler CD/name. */
+static constexpr unsigned kHeavyReadInterval = 6;
 
-void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown) {
+void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown, bool monsters) {
     g_tickHeroName.store(heroName);
     g_tickEnemyCd.store(enemyCooldown);
+    g_tickMonsters.store(monsters);
 }
 
 static bool read_u32_pair(pid_t pid, uintptr_t offStart, uintptr_t offCool, uint32_t &startTime,
@@ -764,6 +766,7 @@ void esp_reset() {
     g_resolved = false;
     g_tickHeroName.store(true);
     g_tickEnemyCd.store(true);
+    g_tickMonsters.store(true);
     g_readerTickIndex.store(0);
     g_cooldownTimers.clear();
     g_heroNameByEnt.clear();
@@ -953,10 +956,11 @@ EspStatus esp_tick(EspFrame &out) {
 
     uintptr_t pDict = 0, mDict = 0;
     mem_read(g_pid, bm + R.dicPlayerShow, pDict);
-    mem_read(g_pid, bm + R.dicMonsterShow, mDict);
+    const bool wantMonsters = g_tickMonsters.load();
+    if (wantMonsters) mem_read(g_pid, bm + R.dicMonsterShow, mDict);
     std::vector<std::pair<int, uintptr_t>> players, monsters;
     dict_entries(g_pid, pDict, players);
-    dict_entries(g_pid, mDict, monsters);
+    if (wantMonsters) dict_entries(g_pid, mDict, monsters);
     if (players.empty() && R.listPlayerShow) {
         uintptr_t pList = 0;
         mem_read(g_pid, bm + R.listPlayerShow, pList);
@@ -964,7 +968,7 @@ EspStatus esp_tick(EspFrame &out) {
         if (list_entities(g_pid, pList, listP))
             for (size_t i = 0; i < listP.size(); ++i) players.emplace_back((int)i, listP[i]);
     }
-    if (monsters.empty() && R.listMonsterShow) {
+    if (wantMonsters && monsters.empty() && R.listMonsterShow) {
         uintptr_t mList = 0;
         mem_read(g_pid, bm + R.listMonsterShow, mList);
         std::vector<uintptr_t> listM;
@@ -1091,8 +1095,12 @@ EspStatus esp_tick(EspFrame &out) {
 namespace {
 
 constexpr int kScreenHoldFrames = 2;
+/** Beyond this distance (m), W2S runs on a staggered schedule to cut vm_read / matrix work. */
+constexpr int kW2sNearMeters = 22;
+constexpr unsigned kW2sFarStagger = 3u;
 
 static pid_t g_screenPid = 0;
+static uint32_t g_w2sFrame = 0;
 static float g_selfSx = 0.f, g_selfSy = 0.f;
 static bool g_haveSelf = false;
 static int g_selfMiss = 0;
@@ -1119,6 +1127,7 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
         g_selfMiss = 0;
     }
 
+    ++g_w2sFrame;
     esp_camera_frame_begin(frame.pid, screenW, screenH, true);
     EspCameraProjSnap camSnap{};
     esp_camera_acquire_proj_for_draw(frame.pid, camSnap);
@@ -1151,6 +1160,16 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
             if (!t.ent) continue;
             const auto it = g_entScreen.find(t.ent);
             const bool hadPrev = it != g_entScreen.end();
+            const unsigned mix = static_cast<unsigned>(t.ent >> 4) ^ g_w2sFrame;
+            const bool needW2s =
+                t.meters <= kW2sNearMeters || (mix % kW2sFarStagger) == 0u;
+            if (!needW2s && hadPrev) {
+                t.screenX = it->second.x;
+                t.screenY = it->second.y;
+                t.screenValid = true;
+                live[t.ent] = it->second;
+                continue;
+            }
             const bool ok =
                 camSnap.validMatrixProj
                     ? esp_camera_proj_snap_w2s(camSnap, t.worldX, t.worldY, t.worldZ, sx, sy)

@@ -48,6 +48,7 @@ static bool g_menuLayoutReset = false;
 static bool g_logScrollBottom = true;
 static EspFeatures g_feat{};
 static std::atomic<bool> g_espActive{false};
+static std::atomic<int> g_lastTargetCount{0};
 
 static void apply_menu_style() {
     ImGuiStyle &s = ImGui::GetStyle();
@@ -198,7 +199,9 @@ static void reader_loop() {
             g_needResolve.store(true);
             lastPid = 0;
         } else if (pid > 0) {
-            esp_tick_set_feature_flags(g_feat.name, g_feat.enemyCooldown);
+            const bool wantMon =
+                    g_feat.monsterBox || g_feat.monsterName || g_feat.monsterHealth;
+            esp_tick_set_feature_flags(g_feat.name, g_feat.enemyCooldown, wantMon);
             if (g_needResolve.load()) {
                 if (g_espActive.load()) {
                     /* #147: vm_read tick only while ESP on; Resolve runs when ESP off */
@@ -211,6 +214,7 @@ static void reader_loop() {
             }
             EspFrame f;
             esp_tick(f);
+            g_lastTargetCount.store(static_cast<int>(f.targets.size()), std::memory_order_relaxed);
             if (g_espActive.load() && f.status == EspStatus::Ready) {
                 float sw = (float)g_width;
                 float sh = (float)g_height;
@@ -234,17 +238,22 @@ static void reader_loop() {
             g_frameLatest.store(w, std::memory_order_release);
         }
 
-        if (g_espActive.load())
-            /* Tiny sleep: yields CPU for game + GL; staggered heavy reads keep tick latency low */
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (g_espActive.load()) {
+            int ms = 1;
+            const int n = g_lastTargetCount.load(std::memory_order_relaxed);
+            if (n > 22) ms = 3;
+            else if (n > 14) ms = 2;
+            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        } else if (g_showMenu)
+            std::this_thread::sleep_for(std::chrono::milliseconds(12));
         else
-            std::this_thread::sleep_for(std::chrono::milliseconds(8));
+            std::this_thread::sleep_for(std::chrono::milliseconds(24));
     }
 }
 
 static void draw_ui() {
     const int slot = g_frameLatest.load(std::memory_order_acquire);
-    EspFrame fr = g_frameSlots[slot];
+    const EspFrame &fr = g_frameSlots[slot];
     const EspResolveReport &rep = esp_last_resolve_report();
     float sw = (float)g_width;
     float sh = (float)g_height;
@@ -482,6 +491,17 @@ void ui_gl_surface_destroyed() {
 }
 
 void ui_gl_draw_frame() {
+    /* Cap GPU work ~60 Hz when ESP-only (helps Android 13–16 on mid devices). */
+    if (g_espActive.load() && !g_showMenu) {
+        using clock = std::chrono::steady_clock;
+        static thread_local clock::time_point s_lastDraw{};
+        const auto now = clock::now();
+        if (s_lastDraw.time_since_epoch().count() != 0
+            && now - s_lastDraw < std::chrono::milliseconds(16)) {
+            return;
+        }
+        s_lastDraw = now;
+    }
     std::lock_guard<std::mutex> lock(g_glMu);
     render_imgui_frame();
 }
