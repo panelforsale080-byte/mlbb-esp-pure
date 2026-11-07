@@ -110,6 +110,12 @@ static bool find_closest_retri_target(const EspFrame &frame, const EspRuntimeOff
     return outEnt != 0;
 }
 
+struct CastBusyGuard {
+    std::atomic<bool> &busy;
+    explicit CastBusyGuard(std::atomic<bool> &b) : busy(b) {}
+    ~CastBusyGuard() { busy.store(false, std::memory_order_release); }
+};
+
 } // namespace
 
 EspRetriSettings &esp_retri_settings() { return g_retri; }
@@ -146,16 +152,8 @@ void esp_retri_process(const EspFrame &frame) {
     const EspRuntimeOff &R = esp_runtime_off();
     if (!R.entityId || !R.hp) return;
 
-    static uint64_t s_lastScanMs = 0;
-    static uint64_t s_lastTapMs = 0;
-    static uintptr_t s_holdEnt = 0;
-    static uint64_t s_holdUntilMs = 0;
+    static std::atomic<bool> s_castBusy{false};
     const uint64_t now = steady_ms();
-    constexpr uint64_t kScanIntervalMs = 0;
-    constexpr uint64_t kCastCooldownMs = 65;
-    if (kScanIntervalMs > 0 && now - s_lastScanMs < kScanIntervalMs) return;
-    s_lastScanMs = now;
-    if (now - s_lastTapMs < kCastCooldownMs) return;
 
     const int playerLevel = read_player_level(frame, R);
     const int retriDmg = calculate_retri_damage(playerLevel);
@@ -182,10 +180,12 @@ void esp_retri_process(const EspFrame &frame) {
 
     if (!closestEnt || closestDist > kMaxDist) return;
     if (closestHp <= 0 || closestHp > retriDmg) return;
-    if (closestEnt == s_holdEnt && now < s_holdUntilMs) return;
 
     const int realHp = read_entity_hp(frame.pid, closestEnt, R.hp);
     if (realHp <= 0 || realHp > retriDmg) return;
+
+    if (s_castBusy.exchange(true, std::memory_order_acq_rel)) return;
+    CastBusyGuard castGuard(s_castBusy);
 
     bool castOk = false;
     if (g_retri.useIl2SummonCast && esp_retri_il2_ready() && frame.localPlayerEnt) {
@@ -206,15 +206,19 @@ void esp_retri_process(const EspFrame &frame) {
             }
             castOk = esp_retri_il2_cast_summon(frame.pid, frame.localPlayerEnt, dx, dy, dz);
         }
-        ui_log("[retri] %s id=%d hp=%d dist=%.1f (IL2 TryUseSkill 20020)",
-               castOk ? "CAST" : "CAST-FAIL", closestId, realHp, closestDist);
+        static uint64_t s_lastCastLogMs = 0;
+        if (!castOk || now - s_lastCastLogMs > 200) {
+            s_lastCastLogMs = now;
+            ui_log("[retri] %s id=%d hp=%d dist=%.1f (IL2 TryUseSkill 20020)",
+                   castOk ? "CAST" : "CAST-FAIL", closestId, realHp, closestDist);
+        }
+        if (!castOk)
+            fire_retri_tap();
     } else {
         fire_retri_tap();
-        ui_log("[retri] TAP id=%d hp=%d dist=%.1f (shell fallback)", closestId, realHp, closestDist);
+        castOk = true;
+        ui_log("[retri] TAP id=%d hp=%d dist=%.1f (shell / uinput)", closestId, realHp, closestDist);
     }
-    s_lastTapMs = now;
-    s_holdEnt = closestEnt;
-    s_holdUntilMs = now + 220;
 }
 
 void esp_retri_draw_indicator(ImDrawList *draw) {

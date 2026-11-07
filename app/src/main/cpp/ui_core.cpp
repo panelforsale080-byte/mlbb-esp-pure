@@ -242,7 +242,7 @@ static void reader_loop() {
 
         if (g_espActive.load()) {
             const int tickMs =
-                    esp_retri_settings().enabled ? 8 : 12;
+                    esp_retri_settings().enabled ? 2 : 12;
             std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
         } else if (g_showMenu)
             std::this_thread::sleep_for(std::chrono::milliseconds(12));
@@ -263,6 +263,7 @@ static void draw_ui() {
     esp_retri_sync_anchor_pixels(sw, sh);
     if (g_espActive.load() && fr.status == EspStatus::Ready) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
+        if (esp_retri_settings().enabled) esp_retri_process(fr);
         esp_draw_overlay(bg, sw, sh, fr, g_feat, g_showMenu);
         if (esp_retri_settings().enabled && esp_retri_settings().showCircle) {
             esp_retri_draw_indicator(bg);
