@@ -76,3 +76,7 @@ EspStatus esp_tick(EspFrame &out);
 /** conRent IL2 W2S on reader thread (not GL) — fills screen* fields. */
 void esp_project_screens(EspFrame &frame, float screenW, float screenH);
 const EspResolveReport &esp_last_resolve_report();
+/** Full monster dict (BattleManager), not ESP-filtered targets. */
+bool esp_monster_dict_entries(pid_t pid, uintptr_t bmInstance,
+                              std::vector<std::pair<int, uintptr_t>> &out);
+bool esp_read_entity_world(pid_t pid, uintptr_t ent, float &x, float &y, float &z);

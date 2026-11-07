@@ -1194,3 +1194,30 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
     g_entScreen.swap(live);
     esp_camera_frame_end();
 }
+
+bool esp_read_entity_world(pid_t pid, uintptr_t ent, float &x, float &y, float &z) {
+    Vec3 p{};
+    if (!read_entity_pos(pid, ent, p)) return false;
+    x = p.x;
+    y = p.y;
+    z = p.z;
+    return true;
+}
+
+bool esp_monster_dict_entries(pid_t pid, uintptr_t bmInstance,
+                              std::vector<std::pair<int, uintptr_t>> &out) {
+    if (!esp_runtime_off_ready() || !bmInstance) return false;
+    const EspRuntimeOff &R = esp_runtime_off();
+    uintptr_t mDict = 0;
+    if (!mem_read(pid, bmInstance + R.dicMonsterShow, mDict) || !mDict) {
+        if (!R.listMonsterShow) return false;
+        uintptr_t mList = 0;
+        if (!mem_read(pid, bmInstance + R.listMonsterShow, mList) || !mList) return false;
+        std::vector<uintptr_t> listM;
+        if (!list_entities(pid, mList, listM)) return false;
+        out.clear();
+        for (size_t i = 0; i < listM.size(); ++i) out.emplace_back((int)i, listM[i]);
+        return !out.empty();
+    }
+    return dict_entries(pid, mDict, out);
+}
