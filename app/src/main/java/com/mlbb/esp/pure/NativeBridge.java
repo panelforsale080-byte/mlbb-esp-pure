@@ -27,4 +27,14 @@ public final class NativeBridge {
         OverlayService svc = OverlayService.instance;
         if (svc != null) svc.setMenuTouch(menuInteractive);
     }
+
+    /** Called from native auto-retri (EXTERNAL-MLBB Touch_Tap). */
+    public static void dispatchRetriTap(float x, float y) {
+        if (RetriGestureService.dispatchTap(x, y)) return;
+        try {
+            Runtime.getRuntime()
+                    .exec(new String[] {"sh", "-c", "input tap " + (int) x + " " + (int) y});
+        } catch (Throwable ignored) {
+        }
+    }
 }

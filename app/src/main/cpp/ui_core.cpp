@@ -1,6 +1,7 @@
 #include "ui_core.hpp"
 #include "esp_engine.hpp"
 #include "esp_draw.hpp"
+#include "esp_retri.hpp"
 #include "proc.hpp"
 #include "ui_log.hpp"
 #include "clip_android.hpp"
@@ -236,6 +237,7 @@ static void reader_loop() {
             const int w = 1 - pub;
             g_frameSlots[w] = std::move(f);
             g_frameLatest.store(w, std::memory_order_release);
+            if (g_espActive.load() && esp_retri_settings().enabled) esp_retri_process(f);
         }
 
         if (g_espActive.load()) {
@@ -257,7 +259,9 @@ static void draw_ui() {
     if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
 
     if (g_espActive.load() && fr.status == EspStatus::Ready) {
-        esp_draw_overlay(ImGui::GetBackgroundDrawList(), sw, sh, fr, g_feat, g_showMenu);
+        ImDrawList *bg = ImGui::GetBackgroundDrawList();
+        esp_draw_overlay(bg, sw, sh, fr, g_feat, g_showMenu);
+        esp_retri_draw_indicator(bg);
     }
 
     if (!g_showMenu) return;
@@ -324,6 +328,25 @@ static void draw_ui() {
         ImGui::Indent();
         ImGui::Checkbox("CD side panel (transparent)", &g_feat.enemyCdSidePanel);
         ImGui::Unindent();
+
+        if (ImGui::CollapsingHeader("AUTO RETRI (EXTERNAL-MLBB)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            EspRetriSettings &rt = esp_retri_settings();
+            ImGui::Checkbox("Enable Auto Retribution", &rt.enabled);
+            ImGui::Checkbox("Show skill button circle", &rt.showCircle);
+            ImGui::SliderFloat("Retri tap X", &rt.tapX, 0.f, sw > 1.f ? sw : 2400.f);
+            ImGui::SliderFloat("Retri tap Y", &rt.tapY, 0.f, sh > 1.f ? sh : 1200.f);
+            ImGui::SliderInt("Assumed level (damage)", &rt.assumedLevel, 1, 15);
+            ImGui::TextDisabled("Enable Accessibility: Xorel Auto Retri (tap) in system settings");
+            ImGui::Checkbox("Lord", &rt.targetLord);
+            ImGui::SameLine();
+            ImGui::Checkbox("Turtle", &rt.targetTurtle);
+            ImGui::Checkbox("Red buff", &rt.targetRed);
+            ImGui::SameLine();
+            ImGui::Checkbox("Blue buff", &rt.targetBlue);
+            ImGui::Checkbox("Crab", &rt.targetCrab);
+            ImGui::SameLine();
+            ImGui::Checkbox("Litho", &rt.targetLito);
+        }
 
         ImGui::SeparatorText("Monster");
         ImGui::Checkbox("Box##m", &g_feat.monsterBox);
