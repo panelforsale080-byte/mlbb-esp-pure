@@ -7,6 +7,7 @@ static JavaVM *g_vm = nullptr;
 static jclass g_bridgeCls = nullptr;
 static jmethodID g_setMenuTouch = nullptr;
 static jmethodID g_setComboFab = nullptr;
+static bool g_menuTouchNotified = false;
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
     g_vm = vm;
@@ -65,8 +66,6 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeGlSurfaceDestroyed(JNIEnv *, jclass) {
     ui_gl_surface_destroyed();
 }
-
-static bool g_menuTouchNotified = false;
 
 void ui_sync_menu_touch_state() {
     const bool now = ui_menu_interactive();
