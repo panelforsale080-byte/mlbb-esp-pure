@@ -337,44 +337,63 @@ static void draw_ui() {
         ImGui::Checkbox("CD side panel (transparent)", &g_feat.enemyCdSidePanel);
         ImGui::Unindent();
 
-        if (ImGui::CollapsingHeader("AUTO RETRI (EXTERNAL-MLBB)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("AUTO RETRI", ImGuiTreeNodeFlags_DefaultOpen)) {
             EspRetriSettings &rt = esp_retri_settings();
             ImGui::Checkbox("Enable Auto Retri", &rt.enabled);
-            ImGui::Checkbox("IL2 cast (no root / virtual)", &rt.useIl2SummonCast);
-            ImGui::Checkbox("Show Circle", &rt.showCircle);
-            ImGui::Checkbox("Screen anchor (auto scale)", &rt.useScreenAnchor);
-            if (ImGui::Button("Reset spell anchor (EXTERNAL default)")) esp_retri_set_default_spell_anchor();
-            ImGui::SameLine();
-            if (ImGui::Button("Sync to screen")) esp_retri_sync_anchor_pixels(sw, sh);
-            if (rt.useScreenAnchor) {
-                if (ImGui::SliderFloat("Anchor X %", &rt.tapNormX, 0.f, 1.f)) {
-                    rt.tapX = rt.tapNormX * (sw > 1.f ? sw : 2400.f);
-                }
-                if (ImGui::SliderFloat("Anchor Y %", &rt.tapNormY, 0.f, 1.f)) {
-                    rt.tapY = rt.tapNormY * (sh > 1.f ? sh : 1080.f);
-                }
-            } else {
-                if (ImGui::SliderFloat("Retri X", &rt.tapX, 0.f, sw > 1.f ? sw : 3000.f)) {
-                    if (sw > 1.f) rt.tapNormX = rt.tapX / sw;
-                }
-                if (ImGui::SliderFloat("Retri Y", &rt.tapY, 0.f, sh > 1.f ? sh : 1500.f)) {
-                    if (sh > 1.f) rt.tapNormY = rt.tapY / sh;
-                }
-            }
-            ImGui::Text("Tap pixel: %.0f, %.0f", rt.tapX, rt.tapY);
+            ImGui::Checkbox("IL2 cast (virtual / no root)", &rt.useIl2SummonCast);
             ImGui::SliderInt("Level fallback", &rt.assumedLevel, 1, 15);
-            ImGui::TextDisabled("Live level: ShowEntity.m_Level after Resolve.");
-            ImGui::TextDisabled("Drag white circle on game (menu open) to set anchor.");
-            if (ImGui::TreeNode("Targets")) {
-                ImGui::Checkbox("Buff Red", &rt.targetRed);
-                ImGui::Checkbox("Buff Blue", &rt.targetBlue);
-                ImGui::Checkbox("Lord", &rt.targetLord);
-                ImGui::Checkbox("Turtle", &rt.targetTurtle);
-                ImGui::Checkbox("Crab", &rt.targetCrab);
-                ImGui::Checkbox("Lito", &rt.targetLito);
-                ImGui::TreePop();
+            ImGui::TextDisabled("Damage uses live ShowEntity.m_Level when Resolve OK.");
+
+            ImGui::SeparatorText("Targets (pick jungle)");
+            if (ImGui::Button("All ON")) {
+                rt.targetLord = rt.targetTurtle = rt.targetRed = rt.targetBlue = rt.targetCrab =
+                        rt.targetLito = true;
             }
-            ImGui::TextDisabled("Virtual: IL2 TryUseSkill via ptrace (same as ESP). Uncheck for tap fallback.");
+            ImGui::SameLine();
+            if (ImGui::Button("Lord + Turtle")) {
+                rt.targetLord = rt.targetTurtle = true;
+                rt.targetRed = rt.targetBlue = rt.targetCrab = rt.targetLito = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Buffs only")) {
+                rt.targetRed = rt.targetBlue = true;
+                rt.targetLord = rt.targetTurtle = rt.targetCrab = rt.targetLito = false;
+            }
+            if (ImGui::Button("Crab + Lito")) {
+                rt.targetCrab = rt.targetLito = true;
+                rt.targetLord = rt.targetTurtle = rt.targetRed = rt.targetBlue = false;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("All OFF")) {
+                rt.targetLord = rt.targetTurtle = rt.targetRed = rt.targetBlue = rt.targetCrab =
+                        rt.targetLito = false;
+            }
+            ImGui::Checkbox("Lord (2002)", &rt.targetLord);
+            ImGui::SameLine();
+            ImGui::Checkbox("Turtle (2003)", &rt.targetTurtle);
+            ImGui::Checkbox("Buff Red (2004)", &rt.targetRed);
+            ImGui::SameLine();
+            ImGui::Checkbox("Buff Blue (2005)", &rt.targetBlue);
+            ImGui::Checkbox("Crab (2222/2223)", &rt.targetCrab);
+            ImGui::SameLine();
+            ImGui::Checkbox("Lito (2056)", &rt.targetLito);
+
+            if (!rt.useIl2SummonCast) {
+                ImGui::SeparatorText("Tap fallback (root)");
+                ImGui::Checkbox("Show anchor circle", &rt.showCircle);
+                ImGui::Checkbox("Screen anchor %", &rt.useScreenAnchor);
+                if (ImGui::Button("Reset anchor")) esp_retri_set_default_spell_anchor();
+                ImGui::SameLine();
+                if (ImGui::Button("Sync screen")) esp_retri_sync_anchor_pixels(sw, sh);
+                if (rt.useScreenAnchor) {
+                    ImGui::SliderFloat("Anchor X %", &rt.tapNormX, 0.f, 1.f);
+                    ImGui::SliderFloat("Anchor Y %", &rt.tapNormY, 0.f, 1.f);
+                    esp_retri_sync_anchor_pixels(sw, sh);
+                } else {
+                    ImGui::SliderFloat("Retri X", &rt.tapX, 0.f, sw > 1.f ? sw : 3000.f);
+                    ImGui::SliderFloat("Retri Y", &rt.tapY, 0.f, sh > 1.f ? sh : 1500.f);
+                }
+            }
         }
 
         ImGui::SeparatorText("Monster");
