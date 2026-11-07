@@ -22,8 +22,6 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     g_off.hp = rt.se_m_Hp;
     g_off.hpMax = rt.se_m_HpMax;
     g_off.level = rt.se_m_Level;
-    g_off.logicFighter = rt.se_logicFighter;
-    g_off.logicKillWildTimes = rt.lp_m_KillWildTimes;
     g_off.showKillWildTimes = rt.sp_m_KillWildTimes;
     g_off.showCooldownComp = rt.se_m_ShowCoolDownComp;
     g_off.heroName = rt.sp_m_HeroName;
@@ -46,9 +44,8 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     ui_log("  hero/CD off: SE.m_ShowCoolDownComp=0x%llx SP.m_HeroName=0x%llx _dicCD=0x%llx",
            (unsigned long long)g_off.showCooldownComp, (unsigned long long)g_off.heroName,
            (unsigned long long)g_off.showCdDic);
-    ui_log("  [retri] m_Level=0x%llx logicFighter=0x%llx LogicPlayer.kw=0x%llx ShowPlayer.kw=0x%llx",
-           (unsigned long long)g_off.level, (unsigned long long)g_off.logicFighter,
-           (unsigned long long)g_off.logicKillWildTimes, (unsigned long long)g_off.showKillWildTimes);
+    ui_log("  [retri] ShowEntity.m_Level=0x%llx (EXTERNAL CalculateRetriDamage)",
+           (unsigned long long)g_off.level);
     if (!g_off.ready) ui_log("[resolve] WARN: incomplete runtime field offsets");
 }
 

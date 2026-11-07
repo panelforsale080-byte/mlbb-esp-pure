@@ -213,17 +213,6 @@ static uintptr_t instance_field_offset(RemoteSession &s, pid_t pid, RemoteIl2Cpp
     return 0;
 }
 
-static void log_and_warm_auto_retri_classes(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
-                                            const ResolveImages &images) {
-    ui_log("[resolve] auto retri classes (pre-cache):");
-    for (unsigned i = 0; i < kEspAutoRetriClassCount; ++i) {
-        const char *cn = kEspAutoRetriClasses[i];
-        const bool unity = std::strstr(cn, "UnityEngine") != nullptr;
-        const uintptr_t k = find_class_fast(s, pid, il2, images, cn, unity);
-        ui_log("  %s -> 0x%llx", cn, (unsigned long long)k);
-    }
-}
-
 static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
                                        const ResolveImages &images, ConrentResolve &out) {
     const uintptr_t bmKlass = out.battle_manager_klass;
@@ -267,26 +256,8 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
         out.runtime_fields.se_m_Hp = instance_field_offset(s, pid, il2, seKlass, "m_Hp");
         out.runtime_fields.se_m_HpMax = instance_field_offset(s, pid, il2, seKlass, "m_HpMax");
         out.runtime_fields.se_m_Level = instance_field_offset(s, pid, il2, seKlass, "m_Level");
-        out.runtime_fields.se_logicFighter =
-            instance_field_offset(s, pid, il2, seKlass, "<logicFighter>k__BackingField");
-        if (!out.runtime_fields.se_logicFighter)
-            out.runtime_fields.se_logicFighter =
-                instance_field_offset(s, pid, il2, seKlass, "logicFighter");
-        if (!out.runtime_fields.se_logicFighter)
-            out.runtime_fields.se_logicFighter =
-                instance_field_offset(s, pid, il2, seKlass, "_logicFighter");
         out.runtime_fields.se_m_ShowCoolDownComp =
             instance_field_offset(s, pid, il2, seKlass, "m_ShowCoolDownComp");
-    }
-
-    uintptr_t lpKlass = find_class_fast(s, pid, il2, images, "Battle.LogicPlayer", false);
-    if (!lpKlass) lpKlass = find_class_fast(s, pid, il2, images, "LogicPlayer", false);
-    if (lpKlass) {
-        out.runtime_fields.lp_m_KillWildTimes =
-            instance_field_offset(s, pid, il2, lpKlass, "m_KillWildTimes");
-        if (!out.runtime_fields.lp_m_KillWildTimes)
-            out.runtime_fields.lp_m_KillWildTimes =
-                instance_field_offset(s, pid, il2, lpKlass, "_KillWildTimes");
     }
 
     uintptr_t spKlass = find_class_fast(s, pid, il2, images, "ShowPlayer", false);
@@ -526,7 +497,6 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
     out.metadata_ready =
         klass && out.camera_get_main_method && out.camera_w2s_method && out.runtime_ready;
 
-    log_and_warm_auto_retri_classes(s, pid, il2, images);
     fill_runtime_field_offsets(s, pid, il2, images, out);
 
     out.retri_show_self_player_klass =
@@ -539,17 +509,11 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
                 method_from_name(s, pid, il2, out.retri_show_self_player_klass, "TryUseSkill", 7);
     }
 
-    static const char *kModMenuClasses[] = {
-        "UnityEngine.Camera", "BattleData",     "BattleBridge",   "BattleManager",
-        "ShowEntity",         "ShowPlayer",     "ShowSelfPlayer",
-        "LogicBattleManager", "Battle.LogicPlayer", "LogicPlayer",
-        "Battle.LogicFighter", "Battle.LogicSkillComp", "Battle.CoolDownComp",
-        "Battle.CoolDownData", "Battle.ShowOwnSkillComp", "ShowSkillData",
-    };
-    ui_log("[resolve] mod menu classes (FindClass):");
-    for (const char *cn : kModMenuClasses) {
+    ui_log("[resolve] mod menu + auto retri classes (FindClass):");
+    for (unsigned i = 0; i < kEspResolveFindClassCount; ++i) {
+        const char *cn = kEspResolveFindClasses[i];
         const bool unity = std::strstr(cn, "UnityEngine") != nullptr;
-        uintptr_t k = find_class_fast(s, pid, il2, images, cn, unity);
+        const uintptr_t k = find_class_fast(s, pid, il2, images, cn, unity);
         ui_log("  %s -> 0x%llx", cn, (unsigned long long)k);
     }
 

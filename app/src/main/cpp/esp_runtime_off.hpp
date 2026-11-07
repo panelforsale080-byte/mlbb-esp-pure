@@ -19,11 +19,6 @@ struct EspRuntimeOff {
     uintptr_t hp = 0;
     uintptr_t hpMax = 0;
     uintptr_t level = 0;
-    /** ShowEntity → ILogicFighter / LogicPlayer pointer. */
-    uintptr_t logicFighter = 0;
-    /** LogicPlayer.m_KillWildTimes (jungle item / punish stacks). */
-    uintptr_t logicKillWildTimes = 0;
-    /** ShowPlayer.m_KillWildTimes on local show entity (fallback). */
     uintptr_t showKillWildTimes = 0;
     uintptr_t showCooldownComp = 0;
     uintptr_t heroName = 0;

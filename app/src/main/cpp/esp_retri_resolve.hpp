@@ -1,18 +1,24 @@
 #pragma once
 
-/**
- * Auto Retri IL2CPP classes — resolved up front during conRent Resolve so
- * find_class_fast hits cache (no slow image scan for ShowEntity / LogicPlayer).
- */
-inline constexpr const char *kEspAutoRetriClasses[] = {
-    "BattleManager",
-    "ShowEntity",
-    "ShowPlayer",
-    "ShowSelfPlayer",
-    "Battle.LogicPlayer",
-    "LogicPlayer",
-    "Battle.LogicFighter",
+/** Single FindClass list at Resolve: mod menu + Auto Retri (one pass, fast cache). */
+inline constexpr const char *kEspResolveFindClasses[] = {
+        "UnityEngine.Camera",
+        "BattleData",
+        "BattleBridge",
+        "BattleManager",
+        "ShowEntity",
+        "ShowPlayer",
+        "ShowSelfPlayer",
+        "LogicBattleManager",
+        "Battle.LogicFighter",
+        "Battle.LogicSkillComp",
+        "Battle.CoolDownComp",
+        "Battle.CoolDownData",
+        "Battle.ShowOwnSkillComp",
+        "ShowSkillData",
+        /* Auto Retri */
+        "Battle.LogicPlayer",
 };
 
-inline constexpr unsigned kEspAutoRetriClassCount =
-        sizeof(kEspAutoRetriClasses) / sizeof(kEspAutoRetriClasses[0]);
+inline constexpr unsigned kEspResolveFindClassCount =
+        sizeof(kEspResolveFindClasses) / sizeof(kEspResolveFindClasses[0]);

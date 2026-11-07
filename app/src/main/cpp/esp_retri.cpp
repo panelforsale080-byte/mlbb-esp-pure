@@ -49,11 +49,7 @@ static bool read_kill_wild_times(pid_t pid, uintptr_t localEnt, const EspRuntime
 
     if (R.showKillWildTimes && read_int_field(pid, localEnt, R.showKillWildTimes, outKw))
         return true;
-
-    if (!R.logicFighter || !R.logicKillWildTimes) return false;
-    uintptr_t logic = 0;
-    if (!mem_read(pid, localEnt + R.logicFighter, logic) || !mem_ptr_ok(logic)) return false;
-    return read_int_field(pid, logic, R.logicKillWildTimes, outKw);
+    return false;
 }
 
 static int resolve_retri_damage(const EspFrame &frame, const EspRuntimeOff &R, int &outLevel,
