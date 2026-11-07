@@ -22,3 +22,5 @@ void ui_esp_start();
 void ui_esp_stop();
 bool ui_esp_is_active();
 void ui_sync_combo_fab_visible(bool show);
+/** Push menu open/closed to Android overlay touch flags (pass-through when closed). */
+void ui_sync_menu_touch_state();

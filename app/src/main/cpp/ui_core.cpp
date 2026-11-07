@@ -262,6 +262,13 @@ static void reader_loop() {
     }
 }
 
+static bool ui_wants_continuous_gl() {
+    if (g_espActive.load() || g_showMenu) return true;
+    if (esp_retri_settings().enabled) return true;
+    const EspHeroAutoSettings &h = esp_hero_auto_settings();
+    return h.lingSword || h.gusionCombo;
+}
+
 static void draw_ui() {
     const int slot = g_frameLatest.load(std::memory_order_acquire);
     const EspFrame &fr = g_frameSlots[slot];
@@ -514,6 +521,7 @@ static void draw_ui() {
         }
     }
     ImGui::End();
+    ui_sync_menu_touch_state();
 }
 
 static void apply_display_metrics() {
@@ -633,9 +641,8 @@ void ui_gl_surface_destroyed() {
 }
 
 void ui_gl_draw_frame() {
-    /* Throttle only when idle (no ESP, menu closed). Never skip while ESP draws — skipping
-     * left stale transparent frames → glitchy boxes / alert / CD when menu was minimized. */
-    if (!g_espActive.load() && !g_showMenu) {
+    /* Throttle only when idle (no ESP/menu/retri/hero). Skipping draw left stale menu + stuck touch. */
+    if (!ui_wants_continuous_gl()) {
         using clock = std::chrono::steady_clock;
         static thread_local clock::time_point s_lastDraw{};
         const auto now = clock::now();
@@ -680,6 +687,7 @@ void ui_toggle_menu() { g_showMenu = !g_showMenu; }
 void ui_minimize_menu() {
     g_showMenu = false;
     g_menuLayoutReset = false;
+    ui_sync_menu_touch_state();
 }
 
 bool ui_menu_interactive() { return g_showMenu; }

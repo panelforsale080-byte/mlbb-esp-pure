@@ -66,12 +66,14 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeGlSurfaceDestroyed(JNIEnv *, jclass) {
 
 static bool g_menuTouchNotified = false;
 
-static void sync_menu_touch_to_java() {
+void ui_sync_menu_touch_state() {
     const bool now = ui_menu_interactive();
     if (now == g_menuTouchNotified) return;
     g_menuTouchNotified = now;
     notify_menu_touch(now);
 }
+
+static void sync_menu_touch_to_java() { ui_sync_menu_touch_state(); }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeGlDrawFrame(JNIEnv *, jclass) {
