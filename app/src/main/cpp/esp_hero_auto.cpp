@@ -80,83 +80,56 @@ static int read_local_hero_id(pid_t pid, uintptr_t localPlayer, const EspRuntime
 /** Ling 8452 only — real _bulletPos; no forward guess (stops dash to wrong aim). */
 static bool ling_sword_world_pos(pid_t pid, uintptr_t bullet, const EspRuntimeOff &R, float &x,
                                  float &y, float &z) {
-    const uintptr_t offs[3] = {R.bulletPos, 0xfc, 0x100};
-    for (uintptr_t off : offs) {
-        if (!off) continue;
-        float pos[3]{};
-        if (!mem_read(pid, bullet + off, pos, sizeof(pos))) continue;
-        if (std::fabs(pos[0]) < 0.08f && std::fabs(pos[2]) < 0.08f) continue;
-        if (!std::isfinite(pos[0]) || !std::isfinite(pos[2])) continue;
-        x = pos[0];
-        y = pos[1];
-        z = pos[2];
-        return true;
-    }
-    return false;
+    if (!R.bulletPos) return false;
+    float pos[3]{};
+    if (!mem_read(pid, bullet + R.bulletPos, pos, sizeof(pos))) return false;
+    if (std::fabs(pos[0]) < 0.08f && std::fabs(pos[2]) < 0.08f) return false;
+    x = pos[0];
+    y = pos[1];
+    z = pos[2];
+    return true;
 }
 
-struct LingSwordSnap {
-    uintptr_t ptr = 0;
-    float x = 0, y = 0, z = 0;
-};
-
-static LingSwordSnap s_lingSnap[4];
-static int s_lingSnapCount = 0;
-static int s_lingSnapTotal = 0;
-static uint64_t s_lingSnapMs = 0;
-
-static int ling_refresh_sword_snap(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
-                                   const EspRuntimeOff &R, uint64_t nowMs) {
-    const int interval = g_hero.lingScanMs < 45 ? 45 : g_hero.lingScanMs;
-    if (s_lingSnapMs > 0 && nowMs - s_lingSnapMs < (uint64_t)interval) return s_lingSnapCount;
-
-    s_lingSnapCount = 0;
-    s_lingSnapTotal =
-        foreach_run_bullet(pid, bmStatics, bmKlass, R, [&](uintptr_t bullet) {
-            int bid = 0;
-            if (!mem_read(pid, bullet + R.bulletId, bid) || bid != kLingSwordBulletId) return;
-            float bx = 0, by = 0, bz = 0;
-            if (!ling_sword_world_pos(pid, bullet, R, bx, by, bz)) return;
-            if (s_lingSnapCount >= 4) return;
-            s_lingSnap[s_lingSnapCount++] = LingSwordSnap{bullet, bx, by, bz};
-        });
-    g_hero.lastBulletTotal = s_lingSnapTotal;
-    g_hero.lastBulletScan = s_lingSnapCount;
-    s_lingSnapMs = nowMs;
-    return s_lingSnapCount;
-}
-
-static bool ling_pick_nearest_sword(float selfX, float selfY, float selfZ, float maxRange,
-                                    uintptr_t preferPtr, float &tx, float &ty, float &tz,
-                                    uintptr_t &outPtr) {
-    outPtr = 0;
+static bool find_nearest_ling_sword(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
+                                    const EspRuntimeOff &R, float selfX, float selfY, float selfZ,
+                                    float maxRange, uintptr_t preferBullet, float &outX, float &outY,
+                                    float &outZ, uintptr_t &outBullet) {
+    outBullet = 0;
     float bestD = maxRange;
     bool found = false;
-    if (preferPtr) {
-        for (int i = 0; i < s_lingSnapCount; ++i) {
-            if (s_lingSnap[i].ptr != preferPtr) continue;
-            tx = s_lingSnap[i].x;
-            ty = s_lingSnap[i].y;
-            tz = s_lingSnap[i].z;
-            outPtr = preferPtr;
-            return true;
-        }
-    }
-    for (int i = 0; i < s_lingSnapCount; ++i) {
-        const float dx = s_lingSnap[i].x - selfX;
-        const float dy = s_lingSnap[i].y - selfY;
-        const float dz = s_lingSnap[i].z - selfZ;
+    int seen8452 = 0;
+    auto consider = [&](uintptr_t bullet) {
+        if (!bullet) return;
+        int bid = 0;
+        if (!mem_read(pid, bullet + R.bulletId, bid) || bid != kLingSwordBulletId) return;
+        ++seen8452;
+        if (seen8452 > 4) return;
+        float bx = 0, by = 0, bz = 0;
+        if (!ling_sword_world_pos(pid, bullet, R, bx, by, bz)) return;
+        const float dx = bx - selfX;
+        const float dy = by - selfY;
+        const float dz = bz - selfZ;
         const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (d < 0.42f || d > maxRange) continue;
-        if (d < bestD) {
-            bestD = d;
-            tx = s_lingSnap[i].x;
-            ty = s_lingSnap[i].y;
-            tz = s_lingSnap[i].z;
-            outPtr = s_lingSnap[i].ptr;
+        if (d < 0.42f || d > maxRange) return;
+        if (preferBullet && bullet == preferBullet) {
+            outX = bx;
+            outY = by;
+            outZ = bz;
+            outBullet = bullet;
             found = true;
+            bestD = -1.f;
+            return;
         }
-    }
+        if (bestD >= 0.f && d >= bestD) return;
+        bestD = d;
+        outX = bx;
+        outY = by;
+        outZ = bz;
+        outBullet = bullet;
+        found = true;
+    };
+    foreach_run_bullet(pid, bmStatics, bmKlass, R, consider);
+    g_hero.lastBulletScan = seen8452 > 4 ? 4 : seen8452;
     return found;
 }
 
@@ -264,7 +237,7 @@ static int foreach_run_bullet(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
             .count();
-    if (bmKlass && nowMs - s_il2StaticMs > 220) {
+    if (bmKlass && nowMs - s_il2StaticMs > 200) {
         RemoteIl2CppInfo il2{};
         if (esp_resolved_il2(il2)) {
             uintptr_t p = 0;
@@ -423,14 +396,15 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
     static uintptr_t s_chaseBullet = 0;
     const uint64_t now = steady_ms();
 
-    const int swordCount =
-        ling_refresh_sword_snap(frame.pid, frame.bmStatics, bmKlass, R, now);
+    int swordCount = count_bullets_by_id(frame.pid, frame.bmStatics, bmKlass, R, kLingSwordBulletId);
+    if (swordCount > 4) swordCount = 4;
+    g_hero.lastBulletScan = swordCount;
     const int minS = g_hero.lingMinSwords < 1 ? 1 : (g_hero.lingMinSwords > 4 ? 4 : g_hero.lingMinSwords);
     if (swordCount < minS) {
         static uint64_t s_noSwordLog = 0;
-        if (now - s_noSwordLog > 5000) {
+        if (now - s_noSwordLog > 4000) {
             s_noSwordLog = now;
-            ui_log("[ling] wait sword 8452 (ready %d/%d, pool=%d)", swordCount, minS,
+            ui_log("[ling] wait sword 8452 (have %d/%d, bullets=%d)", swordCount, minS,
                    g_hero.lastBulletTotal);
         }
         s_chaseStartMs = 0;
@@ -460,9 +434,9 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
 
     float tx = 0, ty = 0, tz = 0;
     uintptr_t swordBullet = 0;
-    const bool hasSword =
-        ling_pick_nearest_sword(frame.selfX, frame.selfY, frame.selfZ, g_hero.lingMaxRange,
-                                s_chaseBullet, tx, ty, tz, swordBullet);
+    const bool hasSword = find_nearest_ling_sword(
+        frame.pid, frame.bmStatics, bmKlass, R, frame.selfX, frame.selfY, frame.selfZ,
+        g_hero.lingMaxRange, s_chaseBullet, tx, ty, tz, swordBullet);
     if (!hasSword || !swordBullet) return;
 
     float dx = tx - frame.selfX;
@@ -670,13 +644,14 @@ void esp_hero_auto_process(const EspFrame &frame) {
 
     static uint64_t s_dbg = 0;
     const uint64_t now = steady_ms();
-    if (now - s_dbg > 12000) {
+    if (now - s_dbg > 5000) {
         s_dbg = now;
-        if (heroId == kHeroLing && g_hero.lingSword)
-            (void)ling_refresh_sword_snap(frame.pid, frame.bmStatics, frame.bmKlass, R, now);
-        ui_log("[hero] id=%d bullets=%d swords=%d list=0x%llx hash=0x%llx", heroId,
-               g_hero.lastBulletTotal, g_hero.lastBulletScan,
-               (unsigned long long)g_hero.dbgRunListPtr, (unsigned long long)g_hero.dbgHashSetPtr);
+        (void)foreach_run_bullet(frame.pid, frame.bmStatics, frame.bmKlass, R,
+                                 [](uintptr_t) {});
+        ui_log("[hero] id=%d bullets=%d mark/sword=%d statics=0x%llx list=0x%llx hash=0x%llx",
+               heroId, g_hero.lastBulletTotal, g_hero.lastBulletScan,
+               (unsigned long long)g_hero.dbgStaticsPtr, (unsigned long long)g_hero.dbgRunListPtr,
+               (unsigned long long)g_hero.dbgHashSetPtr);
     }
 
     if (heroId != kHeroLing && heroId != kHeroGusion) return;
