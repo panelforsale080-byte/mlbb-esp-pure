@@ -18,6 +18,7 @@ struct EspRuntimeOff {
     uintptr_t sameCamp = 0;
     uintptr_t hp = 0;
     uintptr_t hpMax = 0;
+    uintptr_t level = 0;
     uintptr_t showCooldownComp = 0;
     uintptr_t heroName = 0;
     uintptr_t summonSkillId = 0;

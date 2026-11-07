@@ -21,6 +21,7 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     g_off.sameCamp = rt.se_m_bSameCampType;
     g_off.hp = rt.se_m_Hp;
     g_off.hpMax = rt.se_m_HpMax;
+    g_off.level = rt.se_m_Level;
     g_off.showCooldownComp = rt.se_m_ShowCoolDownComp;
     g_off.heroName = rt.sp_m_HeroName;
     g_off.summonSkillId = rt.sp_m_iSummonSkillId;
@@ -35,13 +36,15 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     ui_log("  BM local=0x%llx dictP=0x%llx dictM=0x%llx",
            (unsigned long long)g_off.localPlayerShow, (unsigned long long)g_off.dicPlayerShow,
            (unsigned long long)g_off.dicMonsterShow);
-    ui_log("  SE pos=0x%llx id=0x%llx death=0x%llx camp=0x%llx hp=0x%llx",
+    ui_log("  SE pos=0x%llx id=0x%llx death=0x%llx camp=0x%llx hp=0x%llx level=0x%llx",
            (unsigned long long)g_off.lastPosition, (unsigned long long)g_off.entityId,
            (unsigned long long)g_off.entityDeath, (unsigned long long)g_off.sameCamp,
-           (unsigned long long)g_off.hp);
+           (unsigned long long)g_off.hp, (unsigned long long)g_off.level);
     ui_log("  hero/CD off: SE.m_ShowCoolDownComp=0x%llx SP.m_HeroName=0x%llx _dicCD=0x%llx",
            (unsigned long long)g_off.showCooldownComp, (unsigned long long)g_off.heroName,
            (unsigned long long)g_off.showCdDic);
+    ui_log("  [retri] ShowEntity.m_Level=0x%llx (EXTERNAL CalculateRetriDamage)",
+           (unsigned long long)g_off.level);
     if (!g_off.ready) ui_log("[resolve] WARN: incomplete runtime field offsets");
 }
 

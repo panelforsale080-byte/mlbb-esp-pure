@@ -20,6 +20,7 @@ struct ConrentRuntimeOffsets {
     uintptr_t se_m_bSameCampType = 0;
     uintptr_t se_m_Hp = 0;
     uintptr_t se_m_HpMax = 0;
+    uintptr_t se_m_Level = 0;
     uintptr_t se_m_ShowCoolDownComp = 0;
     uintptr_t sp_m_HeroName = 0;
     uintptr_t sp_m_iSummonSkillId = 0;

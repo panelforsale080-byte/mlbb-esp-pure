@@ -200,8 +200,8 @@ static void reader_loop() {
             g_needResolve.store(true);
             lastPid = 0;
         } else if (pid > 0) {
-            const bool wantMon =
-                    g_feat.monsterBox || g_feat.monsterName || g_feat.monsterHealth;
+            const bool wantMon = g_feat.monsterBox || g_feat.monsterName || g_feat.monsterHealth ||
+                                 esp_retri_settings().enabled;
             esp_tick_set_feature_flags(g_feat.name, g_feat.enemyCooldown, wantMon);
             if (g_needResolve.load()) {
                 if (g_espActive.load()) {
@@ -258,10 +258,18 @@ static void draw_ui() {
     if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
     if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
 
+    esp_retri_sync_anchor_pixels(sw, sh);
     if (g_espActive.load() && fr.status == EspStatus::Ready) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
         esp_draw_overlay(bg, sw, sh, fr, g_feat, g_showMenu);
+        if (esp_retri_settings().enabled && esp_retri_settings().showCircle) {
+            esp_retri_draw_indicator(bg);
+            esp_retri_anchor_drag(g_showMenu, sw, sh);
+        }
+    } else if (g_showMenu && esp_retri_settings().enabled && esp_retri_settings().showCircle) {
+        ImDrawList *bg = ImGui::GetBackgroundDrawList();
         esp_retri_draw_indicator(bg);
+        esp_retri_anchor_drag(true, sw, sh);
     }
 
     if (!g_showMenu) return;
@@ -329,27 +337,43 @@ static void draw_ui() {
         ImGui::Checkbox("CD side panel (transparent)", &g_feat.enemyCdSidePanel);
         ImGui::Unindent();
 
-        if (ImGui::CollapsingHeader("AUTO RETRI (VIP / external tap)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("AUTO RETRI (EXTERNAL-MLBB)", ImGuiTreeNodeFlags_DefaultOpen)) {
             EspRetriSettings &rt = esp_retri_settings();
-            ImGui::Checkbox("Enable Auto Retribution", &rt.enabled);
-            if (ImGui::Button("Shortcut Buff+Turtle+Lord")) {
-                rt.buff = true;
-                rt.turtle = true;
-                rt.lord = true;
+            ImGui::Checkbox("Enable Auto Retri", &rt.enabled);
+            ImGui::Checkbox("Show Circle", &rt.showCircle);
+            ImGui::Checkbox("Screen anchor (auto scale)", &rt.useScreenAnchor);
+            if (ImGui::Button("Reset spell anchor (EXTERNAL default)")) esp_retri_set_default_spell_anchor();
+            ImGui::SameLine();
+            if (ImGui::Button("Sync to screen")) esp_retri_sync_anchor_pixels(sw, sh);
+            if (rt.useScreenAnchor) {
+                if (ImGui::SliderFloat("Anchor X %", &rt.tapNormX, 0.f, 1.f)) {
+                    rt.tapX = rt.tapNormX * (sw > 1.f ? sw : 2400.f);
+                }
+                if (ImGui::SliderFloat("Anchor Y %", &rt.tapNormY, 0.f, 1.f)) {
+                    rt.tapY = rt.tapNormY * (sh > 1.f ? sh : 1080.f);
+                }
+            } else {
+                if (ImGui::SliderFloat("Retri X", &rt.tapX, 0.f, sw > 1.f ? sw : 3000.f)) {
+                    if (sw > 1.f) rt.tapNormX = rt.tapX / sw;
+                }
+                if (ImGui::SliderFloat("Retri Y", &rt.tapY, 0.f, sh > 1.f ? sh : 1500.f)) {
+                    if (sh > 1.f) rt.tapNormY = rt.tapY / sh;
+                }
             }
-            ImGui::Checkbox("Buff (red/blue)", &rt.buff);
-            ImGui::SameLine();
-            ImGui::Checkbox("Turtle", &rt.turtle);
-            ImGui::Checkbox("Lord", &rt.lord);
-            ImGui::SameLine();
-            ImGui::Checkbox("Lithowanderer", &rt.litho);
-            ImGui::Checkbox("Crab", &rt.crab);
-            ImGui::Checkbox("Show retri button circle", &rt.showCircle);
-            ImGui::SliderFloat("Retri tap X", &rt.tapX, 0.f, sw > 1.f ? sw : 2400.f);
-            ImGui::SliderFloat("Retri tap Y", &rt.tapY, 0.f, sh > 1.f ? sh : 1200.f);
-            ImGui::SliderInt("Level (VIP dmg)", &rt.assumedLevel, 1, 15);
-            ImGui::SliderInt("KillWildTimes (VIP)", &rt.assumedKillWildTimes, 0, 20);
-            ImGui::TextDisabled("VIP inject uses TryUseSkill; external needs root/shell input tap.");
+            ImGui::Text("Tap pixel: %.0f, %.0f", rt.tapX, rt.tapY);
+            ImGui::SliderInt("Level fallback", &rt.assumedLevel, 1, 15);
+            ImGui::TextDisabled("Live level: ShowEntity.m_Level after Resolve.");
+            ImGui::TextDisabled("Drag white circle on game (menu open) to set anchor.");
+            if (ImGui::TreeNode("Targets")) {
+                ImGui::Checkbox("Buff Red", &rt.targetRed);
+                ImGui::Checkbox("Buff Blue", &rt.targetBlue);
+                ImGui::Checkbox("Lord", &rt.targetLord);
+                ImGui::Checkbox("Turtle", &rt.targetTurtle);
+                ImGui::Checkbox("Crab", &rt.targetCrab);
+                ImGui::Checkbox("Lito", &rt.targetLito);
+                ImGui::TreePop();
+            }
+            ImGui::TextDisabled("Tap: TouchHelper uinput (root) or shell input tap fallback.");
         }
 
         ImGui::SeparatorText("Monster");
@@ -458,6 +482,7 @@ void ui_set_display_size(int width, int height) {
     if (width > 0 && height > 0) {
         g_displayW = width;
         g_displayH = height;
+        esp_retri_notify_display(width, height);
         if (initialScreenSize.x <= 0.f)
             initialScreenSize = ImVec2((float)width, (float)height);
         if (ImGui::GetCurrentContext()) {
