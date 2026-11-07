@@ -2,30 +2,29 @@
 #include "esp_engine.hpp"
 #include "imgui.h"
 
-/** EXTERNAL-MLBB ProcessAutoRetribution — in-process (no file handoff). */
+/**
+ * Auto Retribution — EXTERNAL overlay port of VIP {@code SoliceRetri.h} / EXTERNAL-MLBB
+ * {@code ProcessAutoRetribution}. VIP inject calls {@code TryUseSkill(20020, ...)}; pure
+ * external uses {@code input tap} at the Retribution button (root / shell).
+ */
 struct EspRetriSettings {
     bool enabled = false;
+    /** VIP: Toggle_Shortcut Buff/Turtle/Lord */
+    bool shortcutBuffTurtleLord = false;
+    bool buff = true;    /* red + blue (VIP AutoRetriBuff) */
+    bool turtle = true;
+    bool lord = true;
+    bool litho = true;
+    bool crab = true;
     bool showCircle = true;
-    bool targetLord = true;
-    bool targetTurtle = true;
-    bool targetRed = true;
-    bool targetBlue = true;
-    bool targetCrab = true;
-    bool targetLito = true;
     float tapX = 1575.f;
     float tapY = 661.f;
-    /** Assumed hero level when IL2CPP Level field is not resolved (retri damage formula). */
     int assumedLevel = 8;
+    /** VIP LogicPlayer_m_KillWildTimes — use 0 if unread (lower retri dmg formula). */
+    int assumedKillWildTimes = 0;
 };
 
 EspRetriSettings &esp_retri_settings();
 
-/** Reader thread: evaluate jungle HP / distance and fire tap when lethal in range. */
 void esp_retri_process(const EspFrame &frame);
-
-/** GL / ImGui background — retribution button position marker. */
 void esp_retri_draw_indicator(ImDrawList *draw);
-
-void esp_retri_fire_tap(float x, float y);
-/** Implemented in overlay_jni.cpp (JNI → Java). */
-void esp_retri_jni_tap(float x, float y);

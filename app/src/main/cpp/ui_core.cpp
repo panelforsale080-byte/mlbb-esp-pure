@@ -329,23 +329,27 @@ static void draw_ui() {
         ImGui::Checkbox("CD side panel (transparent)", &g_feat.enemyCdSidePanel);
         ImGui::Unindent();
 
-        if (ImGui::CollapsingHeader("AUTO RETRI (EXTERNAL-MLBB)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("AUTO RETRI (VIP / external tap)", ImGuiTreeNodeFlags_DefaultOpen)) {
             EspRetriSettings &rt = esp_retri_settings();
             ImGui::Checkbox("Enable Auto Retribution", &rt.enabled);
-            ImGui::Checkbox("Show skill button circle", &rt.showCircle);
+            if (ImGui::Button("Shortcut Buff+Turtle+Lord")) {
+                rt.buff = true;
+                rt.turtle = true;
+                rt.lord = true;
+            }
+            ImGui::Checkbox("Buff (red/blue)", &rt.buff);
+            ImGui::SameLine();
+            ImGui::Checkbox("Turtle", &rt.turtle);
+            ImGui::Checkbox("Lord", &rt.lord);
+            ImGui::SameLine();
+            ImGui::Checkbox("Lithowanderer", &rt.litho);
+            ImGui::Checkbox("Crab", &rt.crab);
+            ImGui::Checkbox("Show retri button circle", &rt.showCircle);
             ImGui::SliderFloat("Retri tap X", &rt.tapX, 0.f, sw > 1.f ? sw : 2400.f);
             ImGui::SliderFloat("Retri tap Y", &rt.tapY, 0.f, sh > 1.f ? sh : 1200.f);
-            ImGui::SliderInt("Assumed level (damage)", &rt.assumedLevel, 1, 15);
-            ImGui::TextDisabled("Enable Accessibility: Xorel Auto Retri (tap) in system settings");
-            ImGui::Checkbox("Lord", &rt.targetLord);
-            ImGui::SameLine();
-            ImGui::Checkbox("Turtle", &rt.targetTurtle);
-            ImGui::Checkbox("Red buff", &rt.targetRed);
-            ImGui::SameLine();
-            ImGui::Checkbox("Blue buff", &rt.targetBlue);
-            ImGui::Checkbox("Crab", &rt.targetCrab);
-            ImGui::SameLine();
-            ImGui::Checkbox("Litho", &rt.targetLito);
+            ImGui::SliderInt("Level (VIP dmg)", &rt.assumedLevel, 1, 15);
+            ImGui::SliderInt("KillWildTimes (VIP)", &rt.assumedKillWildTimes, 0, 20);
+            ImGui::TextDisabled("VIP inject uses TryUseSkill; external needs root/shell input tap.");
         }
 
         ImGui::SeparatorText("Monster");

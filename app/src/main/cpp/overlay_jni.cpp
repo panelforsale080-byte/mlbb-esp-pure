@@ -1,12 +1,10 @@
 #include "ui_core.hpp"
 #include "clip_android.hpp"
-#include "esp_retri.hpp"
 #include <jni.h>
 
 static JavaVM *g_vm = nullptr;
 static jclass g_bridgeCls = nullptr;
 static jmethodID g_setMenuTouch = nullptr;
-static jmethodID g_dispatchRetriTap = nullptr;
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
     g_vm = vm;
@@ -26,17 +24,7 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeInit(JNIEnv *env, jclass clazz) {
     if (!g_bridgeCls) g_bridgeCls = (jclass)env->NewGlobalRef(clazz);
     if (!g_setMenuTouch)
         g_setMenuTouch = env->GetStaticMethodID(clazz, "applyMenuTouch", "(Z)V");
-    if (!g_dispatchRetriTap)
-        g_dispatchRetriTap = env->GetStaticMethodID(clazz, "dispatchRetriTap", "(FF)V");
     ui_esp_pipeline_idle();
-}
-
-void esp_retri_jni_tap(float x, float y) {
-    if (!g_vm || !g_bridgeCls || !g_dispatchRetriTap) return;
-    JNIEnv *env = nullptr;
-    if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
-    env->CallStaticVoidMethod(g_bridgeCls, g_dispatchRetriTap, (jfloat)x, (jfloat)y);
-    if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
 extern "C" JNIEXPORT void JNICALL

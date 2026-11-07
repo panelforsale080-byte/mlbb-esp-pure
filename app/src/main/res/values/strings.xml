@@ -26,6 +26,4 @@
     <string name="notif_channel">Xorel</string>
     <string name="notif_title">Xorel</string>
     <string name="notif_text">Tap Xorel icon — Start/Stop ESP is inside the menu</string>
-    <string name="retri_accessibility_label">Xorel Auto Retri (tap)</string>
-    <string name="retri_accessibility_desc">Allows Xorel to tap your Retribution skill when jungle HP is in kill range.</string>
 </resources>

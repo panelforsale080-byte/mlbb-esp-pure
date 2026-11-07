@@ -6,25 +6,26 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 namespace {
 
 static EspRetriSettings g_retri{};
 
-static inline int retri_damage_for_level(int lv) {
-    if (lv < 1) lv = 1;
-    if (lv > 30) lv = 30;
-    if (lv < 4) return 520 + 80 * lv;
-    return (int)(1.5f * (float)(520 + 80 * lv));
+/** VIP SoliceRetri.h — simplified (broken ternary in original). */
+static int calculate_retri_damage(int level, int killWildTimes) {
+    if (level < 1) level = 1;
+    if (level > 30) level = 30;
+    if (killWildTimes < 5) return 530 + 80 * level;
+    return (int)(1.5f * (float)(530 + 80 * level));
 }
 
-static inline bool id_is_target(int id, const EspRetriSettings &s) {
-    if (s.targetLord && id == 2002) return true;
-    if (s.targetTurtle && (id == 2003 || id == 2110)) return true;
-    if (s.targetBlue && (id == 2005 || id == 2221)) return true;
-    if (s.targetLito && (id == 2056 || id == 2072)) return true;
-    if (s.targetCrab && (id == 2222 || id == 2223)) return true;
-    if (s.targetRed && (id == 2004 || id == 2220)) return true;
+static inline bool id_matches_vip(int id, const EspRetriSettings &s) {
+    if (s.lord && id == 2002) return true;
+    if (s.turtle && id == 2003) return true;
+    if (s.buff && (id == 2004 || id == 2005)) return true;
+    if (s.litho && (id == 2056 || id == 2072)) return true;
+    if (s.crab && (id == 2011 || id == 2013)) return true;
     return false;
 }
 
@@ -40,13 +41,15 @@ static uint64_t steady_ms() {
             .count();
 }
 
+static void touch_tap_screen(int x, int y) {
+    char cmd[128];
+    std::snprintf(cmd, sizeof(cmd), "input tap %d %d 2>/dev/null", x, y);
+    (void)std::system(cmd);
+}
+
 } // namespace
 
 EspRetriSettings &esp_retri_settings() { return g_retri; }
-
-void esp_retri_fire_tap(float x, float y) {
-    esp_retri_jni_tap(x, y);
-}
 
 void esp_retri_process(const EspFrame &frame) {
     if (!g_retri.enabled) return;
@@ -54,49 +57,49 @@ void esp_retri_process(const EspFrame &frame) {
     if (!esp_runtime_off_ready()) return;
 
     const EspRuntimeOff &R = esp_runtime_off();
-    if (!R.entityId || !R.hp) return;
+    if (!R.entityId || !R.hp || !R.hpMax) return;
 
     static uint64_t s_lastTapMs = 0;
     const uint64_t now = steady_ms();
     if (now - s_lastTapMs < 450) return;
 
-    const int retriDmg = retri_damage_for_level(g_retri.assumedLevel);
+    const int retriDmg = calculate_retri_damage(g_retri.assumedLevel, g_retri.assumedKillWildTimes);
+    constexpr float kMaxDist = 5.4f; /* VIP UpdateRetribution */
 
-    uintptr_t closestEnt = 0;
-    float closestDist = 1e9f;
-    int closestHp = 0;
+    uintptr_t bestEnt = 0;
+    float bestDist = 1e9f;
+    int bestHp = 0;
 
     for (const EspTarget &t : frame.targets) {
         if (t.kind != 1 || !t.ent) continue;
         int hid = 0;
-        if (!mem_read(frame.pid, t.ent + R.entityId, hid) || !id_is_target(hid, g_retri)) continue;
+        if (!mem_read(frame.pid, t.ent + R.entityId, hid) || !id_matches_vip(hid, g_retri)) continue;
+        int curHp = 0, maxHp = 0;
+        if (!mem_read(frame.pid, t.ent + R.hp, curHp)) continue;
+        if (!mem_read(frame.pid, t.ent + R.hpMax, maxHp)) continue;
+        if (curHp <= 0 || curHp >= maxHp) continue;
         const float dist = world_dist_xz(frame, t);
-        int hp = 0;
-        if (!mem_read(frame.pid, t.ent + R.hp, hp)) continue;
-        if (hp <= 0) continue;
-        if (dist < closestDist) {
-            closestDist = dist;
-            closestEnt = t.ent;
-            closestHp = hp;
+        if (dist >= kMaxDist) continue;
+        if (curHp > retriDmg) continue;
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestEnt = t.ent;
+            bestHp = curHp;
         }
     }
 
-    if (!closestEnt || closestDist > 8.f) return;
-    if (closestHp <= 0 || closestHp > retriDmg) return;
-
+    if (!bestEnt) return;
     int realHp = 0;
-    if (!mem_read(frame.pid, closestEnt + R.hp, realHp)) return;
+    if (!mem_read(frame.pid, bestEnt + R.hp, realHp)) return;
     if (realHp <= 0 || realHp > retriDmg) return;
 
-    esp_retri_fire_tap(g_retri.tapX, g_retri.tapY);
+    touch_tap_screen((int)g_retri.tapX, (int)g_retri.tapY);
     s_lastTapMs = now;
-    __android_log_print(ANDROID_LOG_INFO, "MlbbEsp",
-                        "[retri] TAP hp=%d dmg=%d dist=%.2f @(%.0f,%.0f)", realHp, retriDmg,
-                        closestDist, g_retri.tapX, g_retri.tapY);
+    __android_log_print(ANDROID_LOG_INFO, "MlbbEsp", "[retri] tap hp=%d dmg=%d dist=%.2f", realHp,
+                        retriDmg, bestDist);
 }
 
 void esp_retri_draw_indicator(ImDrawList *draw) {
     if (!draw || !g_retri.showCircle) return;
     draw->AddCircleFilled(ImVec2(g_retri.tapX, g_retri.tapY), 18.f, IM_COL32(255, 255, 255, 180), 16);
-    draw->AddCircle(ImVec2(g_retri.tapX, g_retri.tapY), 20.f, IM_COL32(255, 120, 80, 220), 16, 2.f);
 }
