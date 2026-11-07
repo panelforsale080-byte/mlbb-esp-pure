@@ -388,6 +388,13 @@ static void ling_touch_swipe(int scrW, int scrH, float tx, float tz, float selfX
                               swipeMs, scrW, scrH);
 }
 
+static bool ling_read_locked_sword(pid_t pid, const EspRuntimeOff &R, uintptr_t bullet, float &x,
+                                   float &y, float &z) {
+    int bid = 0;
+    return mem_ptr_ok(bullet) && mem_read(pid, bullet + R.bulletId, bid) &&
+           bid == kLingSwordBulletId && ling_sword_world_pos(pid, bullet, R, x, y, z);
+}
+
 static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int heroId, int scrW,
                          int scrH) {
     if (!g_hero.lingSword || heroId != kHeroLing) return;
@@ -395,30 +402,29 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
     const uintptr_t bmKlass = frame.bmKlass;
 
     static uint64_t s_lastCastMs = 0;
-    static float s_chaseTx = 0, s_chaseTy = 0, s_chaseTz = 0;
-    static uint64_t s_chaseStartMs = 0;
-    static uintptr_t s_chaseBullet = 0;
-    static uintptr_t s_lastCastBullet = 0;
-    static uint64_t s_lastCastBulletMs = 0;
+    static uint64_t s_lockStartMs = 0;
+    static uint64_t s_lockCooldownMs = 0;
+    static uintptr_t s_lockBullet = 0;
+    static bool s_chasing = false;
     const uint64_t now = steady_ms();
 
     const int minS = g_hero.lingMinSwords < 1 ? 1 : (g_hero.lingMinSwords > 4 ? 4 : g_hero.lingMinSwords);
+    const int chaseLock = g_hero.lingChaseLockMs < 350 ? 350 : g_hero.lingChaseLockMs;
 
-    const int chaseLock = g_hero.lingChaseLockMs < 200 ? 200 : g_hero.lingChaseLockMs;
-    if (s_chaseStartMs > 0 && s_chaseBullet) {
+    if (s_lockCooldownMs > 0 && now - s_lockCooldownMs < 180) return;
+
+    if (s_chasing && s_lockBullet) {
         float lx = 0, ly = 0, lz = 0;
-        int bid = 0;
-        const bool live =
-            mem_ptr_ok(s_chaseBullet) && mem_read(frame.pid, s_chaseBullet + R.bulletId, bid) &&
-            bid == kLingSwordBulletId && ling_sword_world_pos(frame.pid, s_chaseBullet, R, lx, ly, lz);
-        const float cdx = (live ? lx : s_chaseTx) - frame.selfX;
-        const float cdz = (live ? lz : s_chaseTz) - frame.selfZ;
+        const bool live = ling_read_locked_sword(frame.pid, R, s_lockBullet, lx, ly, lz);
+        const float cdx = lx - frame.selfX;
+        const float cdz = lz - frame.selfZ;
         const float chaseDist = std::sqrt(cdx * cdx + cdz * cdz);
-        if (!live || chaseDist < 0.6f || now - s_chaseStartMs > (uint64_t)chaseLock) {
-            s_chaseStartMs = 0;
-            s_chaseBullet = 0;
-        } else
-            return;
+        if (!live || chaseDist < 0.62f || now - s_lockStartMs > (uint64_t)chaseLock) {
+            s_chasing = false;
+            s_lockBullet = 0;
+            s_lockCooldownMs = now;
+        }
+        return;
     }
 
     const int castGap = g_hero.lingCastMs < 70 ? 70 : g_hero.lingCastMs;
@@ -436,18 +442,17 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
             s_noSwordLog = now;
             ui_log("[ling] wait grounded 8452 (ready %d/%d)", swordCount, minS);
         }
-        s_chaseStartMs = 0;
-        s_chaseBullet = 0;
+        s_chasing = false;
+        s_lockBullet = 0;
         return;
     }
     if (!hasSword || !swordBullet) return;
-    if (swordBullet == s_lastCastBullet && now - s_lastCastBulletMs < 650) return;
 
     float dx = tx - frame.selfX;
     float dy = ty - frame.selfY;
     float dz = tz - frame.selfZ;
     const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-    if (dist < 0.42f) return;
+    if (dist < 0.45f) return;
 
     float ndx, ndy, ndz;
     norm_dir(dx, dy, dz, ndx, ndy, ndz);
@@ -465,18 +470,17 @@ static void process_ling(const EspFrame &frame, const EspRuntimeOff &R, int hero
     } else if (!ok) {
         return;
     }
+
     s_lastCastMs = now;
-    s_lastCastBullet = swordBullet;
-    s_lastCastBulletMs = now;
-    s_chaseTx = tx;
-    s_chaseTy = ty;
-    s_chaseTz = tz;
-    s_chaseBullet = swordBullet;
-    s_chaseStartMs = now;
+    s_lockBullet = swordBullet;
+    s_lockStartMs = now;
+    s_chasing = true;
+    s_lockCooldownMs = 0;
     static uint64_t s_log = 0;
-    if (now - s_log > 2000) {
+    if (now - s_log > 2500) {
         s_log = now;
-        ui_log("[ling] auto sword %s dist=%.1f swords=%d", ok ? "IL2" : "swipe", dist, swordCount);
+        ui_log("[ling] lock sword 0x%llx dist=%.1f (1 dash / sword)", (unsigned long long)swordBullet,
+               dist);
     }
 }
 
