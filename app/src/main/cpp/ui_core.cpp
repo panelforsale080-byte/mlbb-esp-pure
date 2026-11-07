@@ -239,17 +239,22 @@ static void reader_loop() {
             g_frameSlots[w] = std::move(f);
             g_frameLatest.store(w, std::memory_order_release);
             if (esp_retri_settings().enabled) esp_retri_process(f);
-            if (g_espActive.load()) esp_hero_auto_process(f);
+            {
+                const EspHeroAutoSettings &haRun = esp_hero_auto_settings();
+                if (haRun.lingSword || haRun.gusionCombo) esp_hero_auto_process(f);
+            }
         }
 
+        const EspHeroAutoSettings &haSleep = esp_hero_auto_settings();
+        const bool heroFast = haSleep.lingSword || haSleep.gusionCombo;
+        const bool retriOn = esp_retri_settings().enabled;
         if (g_espActive.load()) {
-            const EspHeroAutoSettings &ha = esp_hero_auto_settings();
-            const bool heroFast = ha.lingSword || ha.gusionCombo;
             const int tickMs =
-                (esp_retri_settings().enabled || heroFast) ? (ha.lingSword ? 10 : 6) : 12;
+                (retriOn || heroFast) ? (haSleep.lingSword ? 10 : 6) : 12;
             std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
-        } else if (pid > 0 && esp_retri_settings().enabled) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        } else if (pid > 0 && (retriOn || heroFast)) {
+            const int tickMs = haSleep.lingSword ? 10 : 8;
+            std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
         } else if (g_showMenu)
             std::this_thread::sleep_for(std::chrono::milliseconds(12));
         else
@@ -270,7 +275,7 @@ static void draw_ui() {
     esp_hero_auto_sync_skill_pixels(sw, sh);
     {
         static bool s_comboFabOn = false;
-        const bool wantComboFab = g_espActive.load() && esp_hero_auto_combo_fab_enabled();
+        const bool wantComboFab = esp_hero_auto_combo_fab_enabled();
         if (wantComboFab != s_comboFabOn) {
             s_comboFabOn = wantComboFab;
             ui_sync_combo_fab_visible(wantComboFab);
@@ -686,7 +691,7 @@ void ui_esp_start() {
 
 void ui_esp_stop() {
     g_espActive.store(false);
-    ui_sync_combo_fab_visible(false);
+    ui_sync_combo_fab_visible(esp_hero_auto_combo_fab_enabled());
     if (g_needResolve.load())
         ui_log("[esp] STOP — pending Resolve will run on reader thread");
     ui_log("[esp] STOP — no ESP on world");
