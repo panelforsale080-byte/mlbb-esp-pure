@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
     steps:
@@ -18,6 +19,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: wrapper
+
       - name: Install Android SDK + NDK
         run: |
           SDKM="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
@@ -26,8 +31,27 @@ jobs:
 
       - run: chmod +x gradlew
 
+      - name: Fetch Gradle wrapper (retry)
+        run: |
+          set +e
+          for attempt in 1 2 3 4 5; do
+            ./gradlew --version && exit 0
+            echo "Gradle wrapper fetch failed (attempt ${attempt}/5), waiting..."
+            sleep 30
+          done
+          exit 1
+
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+        run: |
+          set -e
+          for attempt in 1 2 3; do
+            if ./gradlew assembleDebug --stacktrace --no-daemon; then
+              exit 0
+            fi
+            echo "assembleDebug failed (attempt ${attempt}/3), retrying in 20s..."
+            sleep 20
+          done
+          exit 1
 
       - name: Verify application APK
         run: |
