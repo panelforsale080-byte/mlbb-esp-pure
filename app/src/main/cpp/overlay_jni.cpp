@@ -1,6 +1,7 @@
 #include "ui_core.hpp"
 #include "clip_android.hpp"
 #include "esp_hero_auto.hpp"
+#include "license_native.hpp"
 #include <jni.h>
 
 static JavaVM *g_vm = nullptr;
@@ -150,6 +151,7 @@ static void sync_menu_touch_to_java() { ui_sync_menu_touch_state(); }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeGlDrawFrame(JNIEnv *, jclass) {
+    if (!license_native_attested()) return;
     ui_gl_draw_frame();
     sync_menu_touch_to_java();
 }

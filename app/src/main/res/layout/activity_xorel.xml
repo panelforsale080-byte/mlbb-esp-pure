@@ -106,6 +106,17 @@
                     android:layout_marginBottom="12dp"
                     android:background="@drawable/bg_xorel_divider" />
 
+                <EditText
+                    android:id="@+id/licensePassword"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/license_password_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:maxLines="1"
+                    android:textColor="@color/xorel_text_primary"
+                    android:textColorHint="@color/xorel_text_secondary" />
+
                 <TextView
                     android:id="@+id/keyStatus"
                     android:layout_width="match_parent"

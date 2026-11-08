@@ -8,8 +8,10 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
+import android.widget.EditText;
 import android.provider.Settings;
 import android.view.View;
 import android.view.animation.AccelerateDecelerateInterpolator;
@@ -36,8 +38,10 @@ public class EspActivity extends Activity {
     private ImageView logo;
     private TextView title;
     private TextView tagline;
+    private EditText licensePassword;
     private TextView keyStatus;
     private ProgressBar keyProgress;
+    private SharedPreferences prefs;
     private Button btnOverlay;
     private Button btnStart;
     private Button btnGame;
@@ -51,8 +55,12 @@ public class EspActivity extends Activity {
         logo = findViewById(R.id.logo);
         title = findViewById(R.id.title);
         tagline = findViewById(R.id.tagline);
+        prefs = getSharedPreferences("xorel_license", MODE_PRIVATE);
+        licensePassword = findViewById(R.id.licensePassword);
         keyStatus = findViewById(R.id.keyStatus);
         keyProgress = findViewById(R.id.keyProgress);
+        final String savedPass = prefs.getString("password", "");
+        if (!savedPass.isEmpty()) licensePassword.setText(savedPass);
         btnOverlay = findViewById(R.id.btnOverlay);
         btnStart = findViewById(R.id.btnStart);
         btnGame = findViewById(R.id.btnGame);
@@ -133,15 +141,21 @@ public class EspActivity extends Activity {
         keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_text_primary));
         btnStart.setEnabled(false);
 
+        final String pass = licensePassword.getText().toString().trim();
         LicenseGate.verifyAsync(
+                pass,
                 (ok, message) -> {
                     licenseOk = ok;
+                    if (ok) prefs.edit().putString("password", pass).apply();
+                    else LicenseNative.nativeSetLicenseAttested(false);
                     keyProgress.setVisibility(View.GONE);
                     if (ok) {
                         keyStatus.setText(R.string.key_valid);
                         keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_success));
                     } else {
                         if ("expired".equals(message)) keyStatus.setText(R.string.key_expired);
+                        else if ("password".equals(message)) keyStatus.setText(R.string.key_wrong_password);
+                        else if ("signature".equals(message)) keyStatus.setText(R.string.key_bad_signature);
                         else if ("invalid".equals(message)) keyStatus.setText(R.string.key_invalid_format);
                         else keyStatus.setText(R.string.key_network_error);
                         keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_error));
@@ -190,7 +204,7 @@ public class EspActivity extends Activity {
 
     private void tryStartOverlay() {
         if (!licenseOk) {
-            Toast.makeText(this, R.string.key_expired, Toast.LENGTH_LONG).show();
+            Toast.makeText(this, R.string.key_wrong_password, Toast.LENGTH_LONG).show();
             verifyLicense();
             return;
         }
@@ -212,7 +226,7 @@ public class EspActivity extends Activity {
 
     private void startOverlay() {
         if (!licenseOk) {
-            Toast.makeText(this, R.string.key_expired, Toast.LENGTH_LONG).show();
+            Toast.makeText(this, R.string.key_wrong_password, Toast.LENGTH_LONG).show();
             return;
         }
         if (OverlayService.instance != null) {

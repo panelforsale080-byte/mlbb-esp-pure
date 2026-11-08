@@ -9,6 +9,9 @@
     <string name="key_expired">License expired</string>
     <string name="key_network_error">Could not verify license (network)</string>
     <string name="key_invalid_format">Invalid license data from server</string>
+    <string name="key_wrong_password">Wrong license password</string>
+    <string name="key_bad_signature">License rejected (invalid signature)</string>
+    <string name="license_password_hint">License password</string>
     <string name="btn_overlay_perm">Allow display over apps</string>
     <string name="btn_start_overlay">Launch overlay</string>
     <string name="btn_open_game">Open game &amp; play</string>

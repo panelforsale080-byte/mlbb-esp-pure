@@ -78,6 +78,10 @@ public class OverlayService extends Service {
             stopSelf();
             return;
         }
+        if (!LicenseNative.nativeIsLicenseAttested()) {
+            stopSelf();
+            return;
+        }
         try {
             NativeBridge.nativeInit();
             NativeBridge.nativeSetContext(getApplicationContext());

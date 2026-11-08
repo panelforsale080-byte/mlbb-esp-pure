@@ -23,6 +23,7 @@ add_library(MlbbEsp SHARED
     esp_runtime_off.cpp
     remote_elf.cpp
     clip_android.cpp
+    license_native.cpp
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
     ${IMGUI_DIR}/imgui_tables.cpp
