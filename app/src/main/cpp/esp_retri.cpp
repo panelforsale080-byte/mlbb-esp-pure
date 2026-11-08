@@ -232,11 +232,6 @@ void esp_retri_process(const EspFrame &frame) {
     const int realHp = read_entity_hp(frame.pid, closestEnt, R.hp);
     if (realHp <= 0 || realHp > retriDmg) return;
 
-    static uintptr_t s_lastCastEnt = 0;
-    static int s_lastCastHp = 0;
-    static uint64_t s_lastCastMs = 0;
-    if (closestEnt == s_lastCastEnt && realHp == s_lastCastHp && now - s_lastCastMs < 250) return;
-
     if (s_castBusy.exchange(true, std::memory_order_acq_rel)) return;
     CastBusyGuard castGuard(s_castBusy);
 
@@ -272,9 +267,6 @@ void esp_retri_process(const EspFrame &frame) {
         castOk = true;
         ui_log("[retri] TAP id=%d hp=%d dist=%.1f (shell / uinput)", closestId, realHp, closestDist);
     }
-    s_lastCastEnt = closestEnt;
-    s_lastCastHp = realHp;
-    s_lastCastMs = now;
 }
 
 void esp_retri_draw_indicator(ImDrawList *draw) {

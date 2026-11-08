@@ -57,9 +57,9 @@ static constexpr int kGusionMarkBulletId = 5610;
 static constexpr int kGusionS1 = 5610;
 static constexpr int kGusionS2 = 5620;
 static constexpr int kGusionS3 = 5630;
-static constexpr int kLingCastGapMs = 55;
+static constexpr int kLingCastGapMs = 0;
 static constexpr int kLingSwipeMs = 32;
-static constexpr int kLingLockCooldownMs = 80;
+static constexpr int kLingLockCooldownMs = 0;
 
 static uint64_t steady_ms() {
     return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -238,7 +238,7 @@ static int foreach_run_bullet(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
     static uintptr_t s_cacheStatics = 0;
     const uint64_t nowMs = steady_ms();
     const bool refresh =
-        nowMs - s_lastScanMs > 100 || s_cachedBullets.empty() || pid != s_cachePid
+        nowMs - s_lastScanMs > 50 || s_cachedBullets.empty() || pid != s_cachePid
         || statics != s_cacheStatics;
 
     g_hero.dbgStaticsPtr = statics;
@@ -519,8 +519,8 @@ static void process_gusion(const EspFrame &frame, const EspRuntimeOff &R, int he
     if (s_gusionFsmReset.exchange(false, std::memory_order_acq_rel)) s_state = 0;
     const uint64_t now = steady_ms();
     if (g_hero.gusionOneShot && s_oneShotStartMs == 0) s_oneShotStartMs = now;
-    const int delay = g_hero.comboDelayMs < 40 ? 40 : g_hero.comboDelayMs;
-    if (now - s_lastActionMs < (uint64_t)delay) return;
+    const int delay = g_hero.comboDelayMs < 0 ? 0 : g_hero.comboDelayMs;
+    if (delay > 0 && now - s_lastActionMs < (uint64_t)delay) return;
 
     const bool markAlive =
         has_bullet_id(frame.pid, frame.bmStatics, bmKlass, R, kGusionMarkBulletId);

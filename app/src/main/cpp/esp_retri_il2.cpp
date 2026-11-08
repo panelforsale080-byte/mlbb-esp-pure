@@ -2,7 +2,6 @@
 #include "mem.hpp"
 #include "remote_call.hpp"
 
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -29,16 +28,6 @@ bool esp_retri_il2_ready() { return g_rtInvoke && g_tryUseSkillMi; }
 bool esp_il2_try_use_skill(pid_t pid, uintptr_t showSelfPlayer, int32_t skillId, float dirX,
                            float dirY, float dirZ, float posX, float posY, float posZ) {
     if (!esp_retri_il2_ready() || pid <= 0 || !mem_ptr_ok(showSelfPlayer)) return false;
-
-    static uint64_t s_lastCastMs = 0;
-    static int32_t s_lastSkillId = 0;
-    const uint64_t nowMs = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
-                               std::chrono::steady_clock::now().time_since_epoch())
-                               .count();
-    const uint64_t gapMs = (skillId == kRetriSkillId) ? 1500u : 300u;
-    if (s_lastSkillId == skillId && nowMs - s_lastCastMs < gapMs) return false;
-    s_lastCastMs = nowMs;
-    s_lastSkillId = skillId;
 
     RemoteSession s{};
     if (!remote_session_begin_try(pid, s)) return false;
