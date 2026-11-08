@@ -3,7 +3,6 @@ package com.mlbb.esp.pure;
 import android.Manifest;
 import android.animation.AnimatorSet;
 import android.animation.ObjectAnimator;
-import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -15,7 +14,9 @@ import android.widget.EditText;
 import android.provider.Settings;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.graphics.Typeface;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.OvershootInterpolator;
 import android.widget.Button;
@@ -55,6 +56,7 @@ public class EspActivity extends Activity {
         setContentView(R.layout.activity_xorel);
 
         contentColumn = findViewById(R.id.contentColumn);
+        applyLauncherFont(contentColumn);
         logo = findViewById(R.id.logo);
         title = findViewById(R.id.title);
         tagline = findViewById(R.id.tagline);
@@ -83,10 +85,34 @@ public class EspActivity extends Activity {
         keyProgress.setVisibility(View.GONE);
         keyStatus.setVisibility(View.GONE);
         keyStatus.setText("");
-        LicenseNative.nativeSetLicenseAttested(false);
+        try {
+            LicenseNative.nativeSetLicenseAttested(false);
+        } catch (Throwable ignored) {
+        }
 
         runEntranceAnimation();
         refreshUiState();
+    }
+
+    /** Asset font, not res/font — clone apps still inflate the layout if the TTF is missing. */
+    private void applyLauncherFont(View root) {
+        if (root == null) return;
+        Typeface face;
+        try {
+            face = Typeface.createFromAsset(getAssets(), "monocraft.ttf");
+        } catch (Throwable ignored) {
+            return;
+        }
+        if (face == null) return;
+        applyTypeface(root, face);
+    }
+
+    private void applyTypeface(View view, Typeface face) {
+        if (view instanceof TextView) ((TextView) view).setTypeface(face);
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) applyTypeface(group.getChildAt(i), face);
+        }
     }
 
     private void runEntranceAnimation() {
