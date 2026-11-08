@@ -2,7 +2,21 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <unistd.h>
 #include <vector>
+
+/** Direct kernel syscall — no libc process_vm_readv/process_vm_writev. */
+inline ssize_t mem_vm_readv(pid_t pid, const iovec *local, unsigned long liovcnt,
+                            const iovec *remote, unsigned long riovcnt, unsigned long flags) {
+    return syscall(SYS_process_vm_readv, pid, local, liovcnt, remote, riovcnt, flags);
+}
+
+inline ssize_t mem_vm_writev(pid_t pid, const iovec *local, unsigned long liovcnt,
+                             const iovec *remote, unsigned long riovcnt, unsigned long flags) {
+    return syscall(SYS_process_vm_writev, pid, local, liovcnt, remote, riovcnt, flags);
+}
 
 struct Vec3 {
     float x = 0, y = 0, z = 0;

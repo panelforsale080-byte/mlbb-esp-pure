@@ -1,11 +1,5 @@
 #include "mem.hpp"
 #include "external_esp_read.hpp"
-#include <sys/syscall.h>
-#include <sys/uio.h>
-#include <unistd.h>
-
-#define process_vm_readv(pid, local, liovcnt, remote, riovcnt, flags)                             \
-    syscall(SYS_process_vm_readv, pid, local, liovcnt, remote, riovcnt, flags)
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
@@ -90,7 +84,7 @@ bool mem_read(pid_t pid, uintptr_t addr, void *buf, size_t n) {
     if (!pid || !addr || !buf || !n) return false;
     iovec local{(void *)buf, n};
     iovec remote{(void *)addr, n};
-    const ssize_t ret = process_vm_readv(pid, &local, 1, &remote, 1, 0);
+    const ssize_t ret = mem_vm_readv(pid, &local, 1, &remote, 1, 0);
     return ret == (ssize_t)n;
 }
 
@@ -98,5 +92,5 @@ bool mem_write(pid_t pid, uintptr_t addr, const void *buf, size_t n) {
     if (!pid || !addr || !buf || !n) return false;
     iovec local{(void *)buf, n};
     iovec remote{(void *)addr, n};
-    return process_vm_writev(pid, &local, 1, &remote, 1, 0) == (ssize_t)n;
+    return mem_vm_writev(pid, &local, 1, &remote, 1, 0) == (ssize_t)n;
 }

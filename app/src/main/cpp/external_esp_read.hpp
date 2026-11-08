@@ -37,7 +37,7 @@ inline ssize_t read_batch(pid_t pid, const std::vector<std::pair<uintptr_t, size
         remote[i].iov_len = reqs[i].second;
     }
     const ssize_t total =
-        process_vm_readv(pid, local.data(), local.size(), remote.data(), remote.size(), 0);
+        mem_vm_readv(pid, local.data(), local.size(), remote.data(), remote.size(), 0);
     if (total < 0 && errno != EFAULT) return -1;
     return total;
 }
