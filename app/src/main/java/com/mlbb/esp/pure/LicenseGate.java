@@ -8,33 +8,24 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.ArrayList;
 import java.util.Calendar;
-import java.util.List;
-import java.util.Locale;
 import java.util.TimeZone;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
-
 /**
- * Pastebin format (3 lines, UTF-8):
+ * GitHub raw file, one line:
  * <pre>
- * PASSWORD
- * YYYY/MM/DD   (or YYYY-MM-DD)
- * hex_hmac_sha256   (see tools/sign_license.py)
+ * PASSWORD YYYY/MM/DD
  * </pre>
- * URL comes from native only — swapping Java constants is not enough.
+ * A trailing hex token is ignored so older signed lines still match on password + date.
  */
 public final class LicenseGate {
 
-    private static final Pattern DATE_LINE = Pattern.compile(
-            "^\\s*(20\\d{2})\\s*[/\\-]\\s*(\\d{1,2})\\s*[/\\-]\\s*(\\d{1,2})\\s*$");
+    private static final Pattern ONE_LINE = Pattern.compile(
+            "^(\\S+)\\s+(20\\d{2})[/\\-](\\d{1,2})[/\\-](\\d{1,2})(?:\\s+\\S+)?\\s*$");
 
     public interface Callback {
         void onResult(boolean ok, String message);
@@ -86,40 +77,36 @@ public final class LicenseGate {
                 return new Result(false, "network");
             }
 
-            final List<String> lines = new ArrayList<>();
+            String bodyLine = null;
             try (BufferedReader br =
                          new BufferedReader(
                                  new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = br.readLine()) != null) {
                     final String t = line.trim();
-                    if (!t.isEmpty()) lines.add(t);
+                    if (!t.isEmpty()) {
+                        bodyLine = t;
+                        break;
+                    }
                 }
             }
-            if (lines.size() < 3) {
+            if (bodyLine == null) {
                 return new Result(false, "invalid");
             }
 
-            final String remotePass = lines.get(0);
+            final Matcher m = ONE_LINE.matcher(bodyLine);
+            if (!m.matches()) {
+                return new Result(false, "invalid");
+            }
+
+            final String remotePass = m.group(1);
             if (!constantTimeEquals(pass, remotePass)) {
                 return new Result(false, "password");
             }
 
-            final Matcher m = DATE_LINE.matcher(lines.get(1));
-            if (!m.matches()) {
-                return new Result(false, "invalid");
-            }
-            final int y = Integer.parseInt(m.group(1));
-            final int mo = Integer.parseInt(m.group(2));
-            final int d = Integer.parseInt(m.group(3));
-            final String dateKey =
-                    String.format(Locale.US, "%04d-%02d-%02d", y, mo, d);
-
-            final String sigExpected = computeSignature(remotePass, dateKey);
-            final String sigRemote = lines.get(2).trim().toLowerCase(Locale.US);
-            if (!constantTimeEquals(sigExpected, sigRemote)) {
-                return new Result(false, "signature");
-            }
+            final int y = Integer.parseInt(m.group(2));
+            final int mo = Integer.parseInt(m.group(3));
+            final int d = Integer.parseInt(m.group(4));
 
             final Calendar end = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
             end.set(y, mo - 1, d, 23, 59, 59);
@@ -135,24 +122,6 @@ public final class LicenseGate {
         } finally {
             if (c != null) c.disconnect();
         }
-    }
-
-    private static String computeSignature(String password, String dateYmd) throws Exception {
-        final String pepper = LicenseNative.nativeGetHmacPepper();
-        final String pasteId = LicenseNative.nativeGetBoundPasteId();
-        final String msg = pepper + "|" + password + "|" + dateYmd + "|" + pasteId;
-        final byte[] key = LicenseNative.nativeGetHmacKey();
-        if (key == null || key.length == 0) throw new IllegalStateException("key");
-        final Mac mac = Mac.getInstance("HmacSHA256");
-        mac.init(new SecretKeySpec(key, "HmacSHA256"));
-        final byte[] out = mac.doFinal(msg.getBytes(StandardCharsets.UTF_8));
-        return bytesToHex(out);
-    }
-
-    private static String bytesToHex(byte[] b) {
-        final StringBuilder sb = new StringBuilder(b.length * 2);
-        for (byte x : b) sb.append(String.format(Locale.US, "%02x", x));
-        return sb.toString();
     }
 
     private static boolean constantTimeEquals(String a, String b) {

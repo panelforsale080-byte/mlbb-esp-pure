@@ -13,6 +13,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.widget.EditText;
 import android.provider.Settings;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import android.view.View;
 import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.OvershootInterpolator;
@@ -42,7 +44,9 @@ public class EspActivity extends Activity {
     private TextView keyStatus;
     private ProgressBar keyProgress;
     private SharedPreferences prefs;
+    private Button btnCheckLicense;
     private Button btnOverlay;
+    private ObjectAnimator licensePulse;
     private Button btnStart;
     private Button btnGame;
 
@@ -59,18 +63,29 @@ public class EspActivity extends Activity {
         licensePassword = findViewById(R.id.licensePassword);
         keyStatus = findViewById(R.id.keyStatus);
         keyProgress = findViewById(R.id.keyProgress);
-        final String savedPass = prefs.getString("password", "");
-        if (!savedPass.isEmpty()) licensePassword.setText(savedPass);
+        btnCheckLicense = findViewById(R.id.btnCheckLicense);
         btnOverlay = findViewById(R.id.btnOverlay);
         btnStart = findViewById(R.id.btnStart);
         btnGame = findViewById(R.id.btnGame);
 
+        btnCheckLicense.setOnClickListener(v -> verifyLicense());
+        licensePassword.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        licensePassword.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE || actionId == EditorInfo.IME_ACTION_GO) {
+                verifyLicense();
+                return true;
+            }
+            return false;
+        });
         btnOverlay.setOnClickListener(v -> openOverlaySettings());
         btnStart.setOnClickListener(v -> tryStartOverlay());
         btnGame.setOnClickListener(v -> openMobileLegends());
 
+        keyProgress.setVisibility(View.GONE);
+        keyStatus.setText(R.string.key_enter_password);
+        LicenseNative.nativeSetLicenseAttested(false);
+
         runEntranceAnimation();
-        verifyLicense();
         refreshUiState();
     }
 
@@ -136,15 +151,36 @@ public class EspActivity extends Activity {
     }
 
     private void verifyLicense() {
+        final String pass = licensePassword.getText().toString().trim();
+        final View card = findViewById(R.id.cardLicense);
+        if (pass.isEmpty()) {
+            licenseOk = false;
+            LicenseNative.nativeSetLicenseAttested(false);
+            keyProgress.setVisibility(View.GONE);
+            keyStatus.setText(R.string.key_enter_password);
+            keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_text_secondary));
+            refreshUiState();
+            return;
+        }
+
+        licenseOk = false;
         keyProgress.setVisibility(View.VISIBLE);
         keyStatus.setText(R.string.key_checking);
         keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_text_primary));
+        InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (imm != null) imm.hideSoftInputFromWindow(licensePassword.getWindowToken(), 0);
+        btnCheckLicense.setEnabled(false);
+        btnCheckLicense.setText(R.string.key_checking);
         btnStart.setEnabled(false);
+        startLicensePulse(card);
 
-        final String pass = licensePassword.getText().toString().trim();
         LicenseGate.verifyAsync(
                 pass,
                 (ok, message) -> {
+                    if (isFinishing()) return;
+                    stopLicensePulse(card);
+                    btnCheckLicense.setEnabled(true);
+                    btnCheckLicense.setText(R.string.btn_check_license);
                     licenseOk = ok;
                     if (ok) prefs.edit().putString("password", pass).apply();
                     else LicenseNative.nativeSetLicenseAttested(false);
@@ -161,14 +197,47 @@ public class EspActivity extends Activity {
                         keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_error));
                     }
                     refreshUiState();
-                    /* Small feedback scale on license card (must match root type in layout — LinearLayout) */
-                    View card = findViewById(R.id.cardLicense);
                     if (card != null) {
                         card.setScaleX(0.97f);
                         card.setScaleY(0.97f);
                         card.animate().scaleX(1f).scaleY(1f).setDuration(280).start();
                     }
                 });
+    }
+
+    private void startLicensePulse(View card) {
+        stopLicensePulse(card);
+        if (card == null) return;
+        card.setPivotX(card.getWidth() * 0.5f);
+        card.setPivotY(card.getHeight() * 0.5f);
+        licensePulse = ObjectAnimator.ofFloat(card, View.SCALE_X, 1f, 1.035f);
+        ObjectAnimator scaleY = ObjectAnimator.ofFloat(card, View.SCALE_Y, 1f, 1.035f);
+        licensePulse.setDuration(520);
+        scaleY.setDuration(520);
+        licensePulse.setRepeatMode(ValueAnimator.REVERSE);
+        scaleY.setRepeatMode(ValueAnimator.REVERSE);
+        licensePulse.setRepeatCount(ValueAnimator.INFINITE);
+        scaleY.setRepeatCount(ValueAnimator.INFINITE);
+        licensePulse.setInterpolator(new AccelerateDecelerateInterpolator());
+        scaleY.setInterpolator(new AccelerateDecelerateInterpolator());
+        licensePulse.start();
+        scaleY.start();
+        card.setTag(scaleY);
+    }
+
+    private void stopLicensePulse(View card) {
+        if (licensePulse != null) {
+            licensePulse.cancel();
+            licensePulse = null;
+        }
+        if (card != null) {
+            Object tag = card.getTag();
+            if (tag instanceof ObjectAnimator) ((ObjectAnimator) tag).cancel();
+            card.setTag(null);
+            card.setScaleX(1f);
+            card.setScaleY(1f);
+            card.setAlpha(1f);
+        }
     }
 
     private void refreshUiState() {
@@ -204,8 +273,7 @@ public class EspActivity extends Activity {
 
     private void tryStartOverlay() {
         if (!licenseOk) {
-            Toast.makeText(this, R.string.key_wrong_password, Toast.LENGTH_LONG).show();
-            verifyLicense();
+            Toast.makeText(this, R.string.key_enter_password, Toast.LENGTH_LONG).show();
             return;
         }
         if (!canOverlay()) {
@@ -226,7 +294,7 @@ public class EspActivity extends Activity {
 
     private void startOverlay() {
         if (!licenseOk) {
-            Toast.makeText(this, R.string.key_wrong_password, Toast.LENGTH_LONG).show();
+            Toast.makeText(this, R.string.key_enter_password, Toast.LENGTH_LONG).show();
             return;
         }
         if (OverlayService.instance != null) {
