@@ -3,6 +3,8 @@
 #include "esp_hero_auto.hpp"
 #include "license_native.hpp"
 #include <jni.h>
+#include <cstdio>
+#include <cstring>
 
 static JavaVM *g_vm = nullptr;
 static jclass g_bridgeCls = nullptr;
@@ -219,4 +221,117 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeHeroComboPulse(JNIEnv *, jclass) {
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeSetRecordingHide(JNIEnv *, jclass, jboolean hide) {
     ui_set_recording_hide(hide == JNI_TRUE);
+}
+
+static jmethodID g_musicRefresh = nullptr;
+static jmethodID g_musicPlay = nullptr;
+static jmethodID g_musicVolume = nullptr;
+static jmethodID g_musicMuted = nullptr;
+static jmethodID g_musicStop = nullptr;
+static jmethodID g_musicSnapshot = nullptr;
+
+static void ensure_music_methods(JNIEnv *env) {
+    if (!g_bridgeCls || !env) return;
+    if (!g_musicRefresh) g_musicRefresh = env->GetStaticMethodID(g_bridgeCls, "musicRefresh", "()V");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (!g_musicPlay) g_musicPlay = env->GetStaticMethodID(g_bridgeCls, "musicPlay", "(I)V");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (!g_musicVolume) g_musicVolume = env->GetStaticMethodID(g_bridgeCls, "musicSetVolume", "(I)V");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (!g_musicMuted) g_musicMuted = env->GetStaticMethodID(g_bridgeCls, "musicSetMuted", "(Z)V");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (!g_musicStop) g_musicStop = env->GetStaticMethodID(g_bridgeCls, "musicStop", "()V");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (!g_musicSnapshot)
+        g_musicSnapshot = env->GetStaticMethodID(g_bridgeCls, "musicSnapshot", "()Ljava/lang/String;");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+static bool music_env(JNIEnv *&env) {
+    env = nullptr;
+    if (!g_vm || !g_bridgeCls) return false;
+    if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return false;
+    ensure_music_methods(env);
+    return true;
+}
+
+void music_refresh() {
+    JNIEnv *env = nullptr;
+    if (!music_env(env) || !g_musicRefresh) return;
+    env->CallStaticVoidMethod(g_bridgeCls, g_musicRefresh);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+void music_play(int index) {
+    JNIEnv *env = nullptr;
+    if (!music_env(env) || !g_musicPlay) return;
+    env->CallStaticVoidMethod(g_bridgeCls, g_musicPlay, (jint)index);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+void music_set_volume(int percent) {
+    JNIEnv *env = nullptr;
+    if (!music_env(env) || !g_musicVolume) return;
+    env->CallStaticVoidMethod(g_bridgeCls, g_musicVolume, (jint)percent);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+void music_set_muted(bool muted) {
+    JNIEnv *env = nullptr;
+    if (!music_env(env) || !g_musicMuted) return;
+    env->CallStaticVoidMethod(g_bridgeCls, g_musicMuted, muted ? JNI_TRUE : JNI_FALSE);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+void music_stop() {
+    JNIEnv *env = nullptr;
+    if (!music_env(env) || !g_musicStop) return;
+    env->CallStaticVoidMethod(g_bridgeCls, g_musicStop);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+void music_poll(MusicSnapshot &out) {
+    out = {};
+    out.progress = -1;
+    out.volume = 70;
+    JNIEnv *env = nullptr;
+    if (!music_env(env) || !g_musicSnapshot) {
+        std::snprintf(out.status, sizeof(out.status), "Music not ready");
+        return;
+    }
+    jstring js = (jstring)env->CallStaticObjectMethod(g_bridgeCls, g_musicSnapshot);
+    if (env->ExceptionCheck() || !js) {
+        env->ExceptionClear();
+        std::snprintf(out.status, sizeof(out.status), "Music not ready");
+        return;
+    }
+    const char *utf = env->GetStringUTFChars(js, nullptr);
+    if (!utf) {
+        env->DeleteLocalRef(js);
+        return;
+    }
+    int muted = 0, playing = 0, downloading = 0;
+    char status[160] = {};
+    std::sscanf(utf, "%d\t%d\t%d\t%d\t%d\t%159[^\n]", &out.progress, &out.volume, &muted, &playing,
+                &downloading, status);
+    out.muted = muted != 0;
+    out.playing = playing != 0;
+    out.downloading = downloading != 0;
+    std::snprintf(out.status, sizeof(out.status), "%s", status);
+    const char *line = std::strchr(utf, '\n');
+    if (line) line++;
+    while (line && *line && out.count < 24) {
+        const char *next = std::strchr(line, '\n');
+        size_t n = next ? (size_t)(next - line) : std::strlen(line);
+        if (n >= sizeof(out.names[0])) n = sizeof(out.names[0]) - 1;
+        if (n > 0) {
+            std::memcpy(out.names[out.count], line, n);
+            out.names[out.count][n] = '\0';
+            out.count++;
+        }
+        if (!next) break;
+        line = next + 1;
+    }
+    env->ReleaseStringUTFChars(js, utf);
+    env->DeleteLocalRef(js);
 }

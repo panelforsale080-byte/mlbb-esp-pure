@@ -102,6 +102,7 @@ public class OverlayService extends Service {
         try {
             NativeBridge.nativeInit();
             NativeBridge.nativeSetContext(getApplicationContext());
+            MusicController.attach(getApplicationContext());
             startForegroundNotif();
             wm = (WindowManager) getSystemService(WINDOW_SERVICE);
             DisplayMetrics dm = new DisplayMetrics();
@@ -229,7 +230,7 @@ public class OverlayService extends Service {
 
     private void applyComboFabVisibility() {
         if (fabCombo == null) return;
-        final boolean show = comboFabWanted && !menuInteractive;
+        final boolean show = comboFabWanted && !menuInteractive && !hideWhileRecording;
         fabCombo.setVisibility(show ? View.VISIBLE : View.GONE);
         if (show && fabComboLp != null) {
             clampComboFabToScreen();
@@ -487,6 +488,8 @@ public class OverlayService extends Service {
                     hideWhileRecording = on;
                     main.removeCallbacks(recordingPoll);
                     setRecordingSecure(on);
+                    applyComboFabVisibility();
+                    syncRecordedOverlay();
                 };
         if (Looper.myLooper() == Looper.getMainLooper()) apply.run();
         else main.post(apply);
@@ -655,6 +658,7 @@ public class OverlayService extends Service {
             }
         }
         applyComboFabVisibility();
+        syncRecordedOverlay();
         if (!interactive) hideMenuVideoWindow();
         if (glView != null) {
             glView.requestRender();
@@ -664,6 +668,10 @@ public class OverlayService extends Service {
                 main.postDelayed(glView::requestRender, 120);
             }
         }
+    }
+
+    private void syncRecordedOverlay() {
+        if (glView != null) glView.requestRender();
     }
 
     private void hideMenuVideoWindow() {
@@ -733,7 +741,11 @@ public class OverlayService extends Service {
                             .build();
             try {
                 if (Build.VERSION.SDK_INT >= 34) {
-                    startForeground(7, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+                    startForeground(
+                            7,
+                            n,
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                                    | ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
                 } else {
                     startForeground(7, n);
                 }
@@ -788,6 +800,7 @@ public class OverlayService extends Service {
             if (root != null) wm.removeView(root);
         } catch (Throwable ignored) {
         }
+        MusicController.stop();
         instance = null;
         super.onDestroy();
     }

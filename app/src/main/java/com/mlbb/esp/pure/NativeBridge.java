@@ -60,4 +60,28 @@ public final class NativeBridge {
     public static native void nativeSetRecordingHide(boolean hide);
 
     public static native void nativeSetMenuVideoMuted(boolean muted);
+
+    public static void musicRefresh() {
+        MusicController.refresh();
+    }
+
+    public static void musicPlay(int index) {
+        MusicController.play(index);
+    }
+
+    public static void musicSetVolume(int percent) {
+        MusicController.setVolume(percent);
+    }
+
+    public static void musicSetMuted(boolean muted) {
+        MusicController.setMuted(muted);
+    }
+
+    public static void musicStop() {
+        MusicController.stop();
+    }
+
+    public static String musicSnapshot() {
+        return MusicController.snapshot();
+    }
 }

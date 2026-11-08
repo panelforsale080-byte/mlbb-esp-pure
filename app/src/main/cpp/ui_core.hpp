@@ -32,6 +32,23 @@ bool ui_menu_video_is_muted();
 void ui_sync_anti_capture(bool on);
 void ui_sync_hide_while_recording(bool on);
 void ui_set_recording_hide(bool hide);
+
+struct MusicSnapshot {
+    int progress;
+    int volume;
+    bool muted;
+    bool playing;
+    bool downloading;
+    char status[160];
+    int count;
+    char names[24][96];
+};
+void music_refresh();
+void music_poll(MusicSnapshot &out);
+void music_play(int index);
+void music_set_volume(int percent);
+void music_set_muted(bool muted);
+void music_stop();
 /** Hide video + force Java pass-through (menu X / minimize). */
 void ui_force_menu_pass_through();
 void ui_mark_menu_dismissed();

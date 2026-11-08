@@ -400,6 +400,37 @@ static bool ui_wants_continuous_gl() {
     return h.lingSword || h.gusionCombo;
 }
 
+static void draw_music_panel() {
+    static bool asked = false;
+    if (!asked) {
+        asked = true;
+        music_refresh();
+    }
+    MusicSnapshot snap{};
+    music_poll(snap);
+    if (ImGui::Button("Check music available", ImVec2(-FLT_MIN, 0.f))) music_refresh();
+    if (snap.downloading) {
+        if (snap.progress >= 0)
+            ImGui::Text("Please wait downloading %d%%", snap.progress);
+        else
+            ImGui::TextUnformatted("Please wait downloading...");
+    } else {
+        ImGui::TextWrapped("%s", snap.status[0] ? snap.status : "Check music available");
+        for (int i = 0; i < snap.count; ++i) {
+            char label[128];
+            std::snprintf(label, sizeof(label), "%s##track%d", snap.names[i], i);
+            if (ImGui::Button(label, ImVec2(-FLT_MIN, 0.f))) music_play(i);
+        }
+        if (snap.count == 0) ImGui::TextDisabled("No music available yet.");
+    }
+    int volume = snap.volume;
+    if (ImGui::SliderInt("Volume", &volume, 0, 100)) music_set_volume(volume);
+    bool muted = snap.muted;
+    if (ImGui::Checkbox("Mute", &muted)) music_set_muted(muted);
+    if (ImGui::Button("Stop music", ImVec2(-FLT_MIN, 0.f))) music_stop();
+    ImGui::TextDisabled(snap.playing ? "Playing in background" : "Pick a track to download and play");
+}
+
 static void draw_ui() {
     const int slot = g_frameLatest.load(std::memory_order_acquire);
     const EspFrame &fr = g_frameSlots[slot];
@@ -419,7 +450,8 @@ static void draw_ui() {
             ui_sync_combo_fab_visible(wantComboFab);
         }
     }
-    if (g_espActive.load() && fr.status == EspStatus::Ready) {
+    const bool hideEspOverlay = g_hideWhileRecording;
+    if (!hideEspOverlay && g_espActive.load() && fr.status == EspStatus::Ready) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
         esp_draw_overlay(bg, sw, sh, fr, g_feat, g_showMenu);
         if (esp_retri_settings().enabled && esp_retri_settings().showCircle) {
@@ -431,11 +463,12 @@ static void draw_ui() {
             esp_hero_auto_draw_indicator(bg);
             esp_hero_auto_anchor_drag(g_showMenu, sw, sh);
         }
-    } else if (g_showMenu && esp_retri_settings().enabled && esp_retri_settings().showCircle) {
+    } else if (!hideEspOverlay && g_showMenu && esp_retri_settings().enabled &&
+               esp_retri_settings().showCircle) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
         esp_retri_draw_indicator(bg);
         esp_retri_anchor_drag(true, sw, sh);
-    } else if (g_showMenu) {
+    } else if (!hideEspOverlay && g_showMenu) {
         const EspHeroAutoSettings &hM = esp_hero_auto_settings();
         if ((hM.lingSword || hM.gusionCombo) && hM.showSkillCircles) {
             ImDrawList *bg = ImGui::GetBackgroundDrawList();
@@ -500,16 +533,27 @@ static void draw_ui() {
             attach_pid(p, "find");
         }
 
+        bool showOverlayTab = true;
+        if (ImGui::BeginTabBar("xorelTabs")) {
+            if (ImGui::BeginTabItem("Overlay")) ImGui::EndTabItem();
+            if (ImGui::BeginTabItem("Music")) {
+                draw_music_panel();
+                ImGui::EndTabItem();
+                showOverlayTab = false;
+            }
+            ImGui::EndTabBar();
+        }
+        if (showOverlayTab) {
         ImGui::SeparatorText("ESP control");
         if (ImGui::Checkbox("Anti screenshot / record", &g_antiCapture))
             ui_sync_anti_capture(g_antiCapture);
         ImGui::SameLine();
         ImGui::TextDisabled(g_antiCapture ? "ON" : "OFF");
-        if (ImGui::Checkbox("Hide ESP + logo in recording", &g_hideWhileRecording))
+        if (ImGui::Checkbox("Hide overlay for recording", &g_hideWhileRecording))
             ui_sync_hide_while_recording(g_hideWhileRecording);
         ImGui::SameLine();
-        ImGui::TextDisabled(g_hideWhileRecording ? "PROTECTED" : "OFF");
-        ImGui::TextDisabled("Stays on your screen. Hidden only in the recording.");
+        ImGui::TextDisabled(g_hideWhileRecording ? "HIDING" : "OFF");
+        ImGui::TextDisabled("ESP turns off while this is checked. Logo stays so you can open the menu.");
         ImGui::Text("World draw: %s", g_espActive.load() ? "ON" : "OFF");
         if (ImGui::Button("Start ESP", ImVec2(menu_half_button_width(), 0.f))) {
             if (fr.status == EspStatus::Ready) {
@@ -692,6 +736,7 @@ static void draw_ui() {
             ImGui::EndChild();
         }
 
+        }
         ImGui::PopItemWidth();
         ImGui::End();
     }
