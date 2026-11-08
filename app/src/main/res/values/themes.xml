@@ -4,5 +4,22 @@
         <item name="android:statusBarColor">@color/xorel_bg_start</item>
         <item name="android:navigationBarColor">@color/xorel_bg_start</item>
         <item name="android:windowBackground">@drawable/bg_xorel_gradient</item>
+        <item name="android:fontFamily">@font/monocraft</item>
+        <item name="android:textViewStyle">@style/XorelText</item>
+        <item name="android:buttonStyle">@style/XorelButton</item>
+        <item name="android:editTextStyle">@style/XorelEdit</item>
+    </style>
+
+    <style name="XorelText" parent="@android:style/Widget.TextView">
+        <item name="android:fontFamily">@font/monocraft</item>
+    </style>
+
+    <style name="XorelButton" parent="@android:style/Widget.DeviceDefault.Button">
+        <item name="android:fontFamily">@font/monocraft</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+
+    <style name="XorelEdit" parent="@android:style/Widget.DeviceDefault.EditText">
+        <item name="android:fontFamily">@font/monocraft</item>
     </style>
 </resources>
