@@ -29,6 +29,7 @@ void ui_menu_video_sync(bool visible, int x, int y, int w, int h);
 void ui_menu_video_set_muted(bool muted);
 void ui_menu_video_apply_muted_from_java(bool muted);
 bool ui_menu_video_is_muted();
+void ui_sync_anti_capture(bool on);
 /** Hide video + force Java pass-through (menu X / minimize). */
 void ui_force_menu_pass_through();
 void ui_mark_menu_dismissed();

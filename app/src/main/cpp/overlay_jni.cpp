@@ -9,6 +9,8 @@ static jmethodID g_setMenuTouch = nullptr;
 static jmethodID g_setComboFab = nullptr;
 static jmethodID g_updateMenuVideo = nullptr;
 static jmethodID g_applyMenuVideoMuted = nullptr;
+static jmethodID g_applyAntiCapture = nullptr;
+static bool g_lastAntiCapture = false;
 static bool g_menuTouchNotified = false;
 static bool g_lastMenuVideoVisible = false;
 static int g_lastMenuVideoX = -1;
@@ -41,7 +43,19 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeInit(JNIEnv *env, jclass clazz) {
             env->GetStaticMethodID(clazz, "updateMenuVideoLayout", "(ZIIII)V");
     if (!g_applyMenuVideoMuted)
         g_applyMenuVideoMuted = env->GetStaticMethodID(clazz, "applyMenuVideoMuted", "(Z)V");
+    if (!g_applyAntiCapture)
+        g_applyAntiCapture = env->GetStaticMethodID(clazz, "applyAntiCaptureSecure", "(Z)V");
     ui_esp_pipeline_idle();
+}
+
+void ui_sync_anti_capture(bool on) {
+    if (!g_vm || !g_bridgeCls || !g_applyAntiCapture) return;
+    if (on == g_lastAntiCapture) return;
+    g_lastAntiCapture = on;
+    JNIEnv *env = nullptr;
+    if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    env->CallStaticVoidMethod(g_bridgeCls, g_applyAntiCapture, on ? JNI_TRUE : JNI_FALSE);
+    if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
 void ui_menu_video_sync(bool visible, int x, int y, int w, int h) {

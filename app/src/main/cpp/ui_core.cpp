@@ -63,6 +63,7 @@ static std::atomic<bool> g_needResolve{true};
 static bool g_autoFind = true;
 static bool g_fallbackPid = true;
 static bool g_showMenu = false;
+static bool g_antiCapture = false;
 static bool g_menuLayoutReset = false;
 static ImVec2 g_menuLayoutScreen{0.f, 0.f};
 static bool g_logScrollBottom = true;
@@ -490,6 +491,10 @@ static void draw_ui() {
         }
 
         ImGui::SeparatorText("ESP control");
+        if (ImGui::Checkbox("Anti screenshot / record", &g_antiCapture))
+            ui_sync_anti_capture(g_antiCapture);
+        ImGui::SameLine();
+        ImGui::TextDisabled(g_antiCapture ? "ON" : "OFF");
         ImGui::Text("World draw: %s", g_espActive.load() ? "ON" : "OFF");
         if (ImGui::Button("Start ESP", ImVec2(menu_half_button_width(), 0.f))) {
             if (fr.status == EspStatus::Ready) {

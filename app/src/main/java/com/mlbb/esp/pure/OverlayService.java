@@ -44,6 +44,7 @@ public class OverlayService extends Service {
     private WindowManager.LayoutParams menuVideoLp;
     private boolean comboFabWanted;
     private boolean menuInteractive;
+    private boolean antiCaptureSecure;
     private final Handler main = new Handler(Looper.getMainLooper());
     private volatile boolean glReady = false;
     private String pendingCmd = null;
@@ -63,13 +64,11 @@ public class OverlayService extends Service {
                     | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                     | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                     | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                    | WindowManager.LayoutParams.FLAG_SPLIT_TOUCH
-                    | WindowManager.LayoutParams.FLAG_SECURE;
+                    | WindowManager.LayoutParams.FLAG_SPLIT_TOUCH;
     private static final int SURFACE_FLAGS_MENU =
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                     | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                    | WindowManager.LayoutParams.FLAG_SECURE;
+                    | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
 
     @Override
     public void onCreate() {
@@ -449,6 +448,43 @@ public class OverlayService extends Service {
         }
     }
 
+    void applyAntiCaptureSecure(boolean on) {
+        antiCaptureSecure = on;
+        Runnable apply =
+                () -> {
+                    refreshSurfaceLpFlags();
+                    if (surfaceLp != null && wm != null && root != null) {
+                        try {
+                            wm.updateViewLayout(root, surfaceLp);
+                        } catch (Throwable t) {
+                            Log.w(TAG, "applyAntiCaptureSecure surface", t);
+                        }
+                    }
+                    if (menuVideo != null && menuVideoLp != null && wm != null) {
+                        try {
+                            wm.updateViewLayout(menuVideo, menuVideoLp);
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                };
+        if (Looper.myLooper() == Looper.getMainLooper()) apply.run();
+        else main.post(apply);
+    }
+
+    private void refreshSurfaceLpFlags() {
+        if (surfaceLp == null) return;
+        int flags = menuInteractive ? SURFACE_FLAGS_MENU : SURFACE_FLAGS_PASS;
+        if (antiCaptureSecure) flags |= WindowManager.LayoutParams.FLAG_SECURE;
+        surfaceLp.flags = flags;
+        if (menuVideoLp != null) {
+            int vf =
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
+            if (antiCaptureSecure) vf |= WindowManager.LayoutParams.FLAG_SECURE;
+            menuVideoLp.flags = vf;
+        }
+    }
+
     private void applyMenuTouchFlags(boolean interactive) {
         if (surfaceLp == null || wm == null || root == null) return;
         menuInteractive = interactive;
@@ -463,7 +499,7 @@ public class OverlayService extends Service {
                 Log.w(TAG, "nativeMinimizeMenu", t);
             }
         }
-        surfaceLp.flags = interactive ? SURFACE_FLAGS_MENU : SURFACE_FLAGS_PASS;
+        refreshSurfaceLpFlags();
         root.setClickable(interactive);
         root.setFocusable(interactive);
         root.setFocusableInTouchMode(interactive);
@@ -524,9 +560,11 @@ public class OverlayService extends Service {
                         hideMenuVideoWindow();
                         return;
                     }
-                    menuVideoLp.flags =
+                    int vf =
                             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                                     | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
+                    if (antiCaptureSecure) vf |= WindowManager.LayoutParams.FLAG_SECURE;
+                    menuVideoLp.flags = vf;
                     menuVideoLp.x = x;
                     menuVideoLp.y = y;
                     menuVideoLp.width = w;

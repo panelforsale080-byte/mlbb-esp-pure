@@ -45,5 +45,11 @@ public final class NativeBridge {
         if (svc != null) svc.applyMenuVideoMuted(muted);
     }
 
+    /** FLAG_SECURE on overlay (blocks screenshots / screen record when ON). */
+    public static void applyAntiCaptureSecure(boolean on) {
+        OverlayService svc = OverlayService.instance;
+        if (svc != null) svc.applyAntiCaptureSecure(on);
+    }
+
     public static native void nativeSetMenuVideoMuted(boolean muted);
 }
