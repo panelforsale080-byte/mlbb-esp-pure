@@ -1,6 +1,11 @@
 #include "mem.hpp"
 #include "external_esp_read.hpp"
+#include <sys/syscall.h>
 #include <sys/uio.h>
+#include <unistd.h>
+
+#define process_vm_readv(pid, local, liovcnt, remote, riovcnt, flags)                             \
+    syscall(SYS_process_vm_readv, pid, local, liovcnt, remote, riovcnt, flags)
 #include <algorithm>
 #include <cstdio>
 #include <fstream>

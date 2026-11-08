@@ -37,16 +37,21 @@ static bool set_regs(pid_t tid, const struct user_pt_regs &regs) {
     return ptrace(PTRACE_SETREGSET, tid, (void *)NT_PRSTATUS, &iov) == 0;
 }
 
+static bool stable_ptrace_attach(pid_t tid) {
+    if (ptrace(PTRACE_SEIZE, tid, nullptr, (void *)PTRACE_O_TRACESYSGOOD) != 0) return false;
+    if (ptrace(PTRACE_INTERRUPT, tid, nullptr, nullptr) != 0) return false;
+    int st = 0;
+    return waitpid(tid, &st, 0) == tid;
+}
+
 static bool session_begin_locked(pid_t pid, RemoteSession &s) {
     s = RemoteSession{};
     s.pid = pid;
     s.tid = pick_tracee_tid(pid);
-    if (ptrace(PTRACE_ATTACH, s.tid, nullptr, nullptr) != 0) {
-        std::snprintf(s.err, sizeof(s.err), "PTRACE_ATTACH: %s", std::strerror(errno));
+    if (!stable_ptrace_attach(s.tid)) {
+        std::snprintf(s.err, sizeof(s.err), "PTRACE_SEIZE: %s", std::strerror(errno));
         return false;
     }
-    int st = 0;
-    waitpid(s.tid, &st, 0);
     auto *saved = saved_pt(s);
     if (!get_regs(s.tid, *saved)) {
         std::snprintf(s.err, sizeof(s.err), "GETREGSET fail");

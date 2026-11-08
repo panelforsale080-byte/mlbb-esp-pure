@@ -16,10 +16,24 @@
 #include <chrono>
 #include <cstdio>
 #include <mutex>
+#include <random>
+#include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <thread>
 #include <unistd.h>
+
+static void performance_random_sleep(int min_ms, int max_ms) {
+    static std::mt19937 gen{std::random_device{}()};
+    std::uniform_int_distribution<> distr(min_ms, max_ms);
+    std::this_thread::sleep_for(std::chrono::milliseconds(distr(gen)));
+}
+
+static void performance_thread_init() {
+    prctl(PR_SET_NAME, "RenderThread", 0, 0, 0);
+    const pid_t tid = (pid_t)syscall(SYS_gettid);
+    setpriority(PRIO_PROCESS, tid, 19);
+}
 
 /* Lock-free latest-frame handoff: reader writes slot (1-latest), publishes with release;
  * GL/draw copies with acquire — no mutex wait on hot path. */
@@ -277,6 +291,7 @@ static void attach_pid(pid_t p, const char *why) {
 }
 
 static void reader_loop() {
+    performance_thread_init();
     auto lastScan = std::chrono::steady_clock::now();
     EspStatus lastStatus = EspStatus::Idle;
     pid_t lastPid = 0;
@@ -357,13 +372,11 @@ static void reader_loop() {
         const bool heroFast = haSleep.lingSword || haSleep.gusionCombo;
         const bool retriOn = esp_retri_settings().enabled;
         if (g_espActive.load()) {
-            const int tickMs = (retriOn || heroFast) ? 8 : 10;
-            std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
+            performance_random_sleep(7, 15);
         } else if (pid > 0 && (retriOn || heroFast)) {
-            const int tickMs = haSleep.lingSword ? 10 : 8;
-            std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
+            performance_random_sleep(8, 12);
         } else if (g_showMenu)
-            std::this_thread::sleep_for(std::chrono::milliseconds(12));
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
         else
             std::this_thread::sleep_for(std::chrono::milliseconds(24));
     }
@@ -793,11 +806,7 @@ void ui_gl_surface_created() {
 static void reader_start_once() {
     if (g_readerStarted.exchange(true)) return;
     g_runReader.store(true);
-    g_reader = std::thread([]() {
-        const pid_t tid = (pid_t)syscall(SYS_gettid);
-        setpriority(PRIO_PROCESS, tid, 10);
-        reader_loop();
-    });
+    g_reader = std::thread(reader_loop);
 }
 
 void ui_gl_surface_changed(int width, int height) {
