@@ -227,7 +227,7 @@ public class OverlayService extends Service {
 
     private void applyComboFabVisibility() {
         if (fabCombo == null) return;
-        final boolean show = comboFabWanted && !menuInteractive && !concealForRecording;
+        final boolean show = comboFabWanted && !menuInteractive;
         fabCombo.setVisibility(show ? View.VISIBLE : View.GONE);
         if (show && fabComboLp != null) {
             clampComboFabToScreen();
@@ -477,7 +477,7 @@ public class OverlayService extends Service {
                     hideWhileRecording = on;
                     main.removeCallbacks(recordingPoll);
                     if (!on) {
-                        applyRecordingConceal(false);
+                        setRecordingSecure(false);
                         return;
                     }
                     ensureScreenRecordingCallback();
@@ -525,20 +525,42 @@ public class OverlayService extends Service {
         return false;
     }
 
-    private void applyRecordingConceal(boolean conceal) {
-        if (conceal == concealForRecording) return;
-        concealForRecording = conceal;
+    private void applyRecordingConceal(boolean recording) {
+        if (!recording && Build.VERSION.SDK_INT >= 35) return;
+        setRecordingSecure(recording);
+    }
+
+    /** ESP stays on screen. FLAG_SECURE keeps it out of the recording. */
+    private void setRecordingSecure(boolean on) {
+        if (on == concealForRecording) return;
+        concealForRecording = on;
         try {
-            NativeBridge.nativeSetRecordingHide(conceal);
-            if (conceal) NativeBridge.nativeMinimizeMenu();
+            NativeBridge.nativeSetRecordingHide(on);
         } catch (Throwable t) {
-            Log.w(TAG, "recording hide", t);
+            Log.w(TAG, "recording secure", t);
         }
-        if (fabLogo != null) {
-            fabLogo.setVisibility(menuInteractive || conceal ? View.GONE : View.VISIBLE);
+        refreshSurfaceLpFlags();
+        pushSecureWindow(root, surfaceLp);
+        pushSecureWindow(menuVideo, menuVideoLp);
+        pushSecureWindow(fabLogo, fabLp);
+        pushSecureWindow(fabCombo, fabComboLp);
+    }
+
+    private boolean overlaySecure() {
+        return antiCaptureSecure || concealForRecording;
+    }
+
+    private void pushSecureWindow(View view, WindowManager.LayoutParams lp) {
+        if (view == null || lp == null || wm == null) return;
+        int next = lp.flags;
+        if (overlaySecure()) next |= WindowManager.LayoutParams.FLAG_SECURE;
+        else next &= ~WindowManager.LayoutParams.FLAG_SECURE;
+        if (next == lp.flags) return;
+        lp.flags = next;
+        try {
+            wm.updateViewLayout(view, lp);
+        } catch (Throwable ignored) {
         }
-        applyComboFabVisibility();
-        if (glView != null) glView.requestRender();
     }
 
     void applyAntiCaptureSecure(boolean on) {
@@ -559,6 +581,8 @@ public class OverlayService extends Service {
                         } catch (Throwable ignored) {
                         }
                     }
+                    pushSecureWindow(fabLogo, fabLp);
+                    pushSecureWindow(fabCombo, fabComboLp);
                 };
         if (Looper.myLooper() == Looper.getMainLooper()) apply.run();
         else main.post(apply);
@@ -567,13 +591,13 @@ public class OverlayService extends Service {
     private void refreshSurfaceLpFlags() {
         if (surfaceLp == null) return;
         int flags = menuInteractive ? SURFACE_FLAGS_MENU : SURFACE_FLAGS_PASS;
-        if (antiCaptureSecure) flags |= WindowManager.LayoutParams.FLAG_SECURE;
+        if (overlaySecure()) flags |= WindowManager.LayoutParams.FLAG_SECURE;
         surfaceLp.flags = flags;
         if (menuVideoLp != null) {
             int vf =
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                             | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
-            if (antiCaptureSecure) vf |= WindowManager.LayoutParams.FLAG_SECURE;
+            if (overlaySecure()) vf |= WindowManager.LayoutParams.FLAG_SECURE;
             menuVideoLp.flags = vf;
         }
     }
@@ -607,7 +631,7 @@ public class OverlayService extends Service {
             Log.w(TAG, "applyMenuTouchFlags surface", t);
         }
         if (fabLogo != null) {
-            fabLogo.setVisibility(interactive || concealForRecording ? View.GONE : View.VISIBLE);
+            fabLogo.setVisibility(interactive ? View.GONE : View.VISIBLE);
             if (!interactive && fabLp != null) {
                 clampFabToScreen();
                 try {
@@ -637,7 +661,8 @@ public class OverlayService extends Service {
         menuVideoLp.flags =
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | (overlaySecure() ? WindowManager.LayoutParams.FLAG_SECURE : 0);
         try {
             wm.updateViewLayout(menuVideo, menuVideoLp);
         } catch (Throwable ignored) {
@@ -656,7 +681,7 @@ public class OverlayService extends Service {
                     int vf =
                             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                                     | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
-                    if (antiCaptureSecure) vf |= WindowManager.LayoutParams.FLAG_SECURE;
+                    if (overlaySecure()) vf |= WindowManager.LayoutParams.FLAG_SECURE;
                     menuVideoLp.flags = vf;
                     menuVideoLp.x = x;
                     menuVideoLp.y = y;

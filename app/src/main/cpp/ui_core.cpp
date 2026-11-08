@@ -419,11 +419,6 @@ static void draw_ui() {
             ui_sync_combo_fab_visible(wantComboFab);
         }
     }
-    if (g_recordingHide.load(std::memory_order_relaxed)) {
-        if (g_showMenu) ui_minimize_menu();
-        return;
-    }
-
     if (g_espActive.load() && fr.status == EspStatus::Ready) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
         esp_draw_overlay(bg, sw, sh, fr, g_feat, g_showMenu);
@@ -510,13 +505,14 @@ static void draw_ui() {
             ui_sync_anti_capture(g_antiCapture);
         ImGui::SameLine();
         ImGui::TextDisabled(g_antiCapture ? "ON" : "OFF");
-        if (ImGui::Checkbox("Hide ESP + logo while recording", &g_hideWhileRecording))
+        if (ImGui::Checkbox("Hide ESP + logo in recording", &g_hideWhileRecording))
             ui_sync_hide_while_recording(g_hideWhileRecording);
         ImGui::SameLine();
         ImGui::TextDisabled(
-            g_hideWhileRecording
-                ? (g_recordingHide.load(std::memory_order_relaxed) ? "HIDING" : "ON")
-                : "OFF");
+            !g_hideWhileRecording
+                ? "OFF"
+                : (g_recordingHide.load(std::memory_order_relaxed) ? "IN REC" : "ON"));
+        ImGui::TextDisabled("Stays on your screen. Hidden only in the recording.");
         ImGui::Text("World draw: %s", g_espActive.load() ? "ON" : "OFF");
         if (ImGui::Button("Start ESP", ImVec2(menu_half_button_width(), 0.f))) {
             if (fr.status == EspStatus::Ready) {
@@ -944,5 +940,4 @@ bool ui_esp_is_active() { return g_espActive.load(); }
 
 void ui_set_recording_hide(bool hide) {
     g_recordingHide.store(hide, std::memory_order_relaxed);
-    if (hide && g_showMenu) ui_minimize_menu();
 }
