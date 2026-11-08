@@ -1,4 +1,6 @@
 #include "clip_android.hpp"
+#include <android/asset_manager.h>
+#include <android/asset_manager_jni.h>
 #include <jni.h>
 
 static JavaVM *g_clipVm = nullptr;
@@ -47,6 +49,35 @@ static bool copy_with_context(JNIEnv *env, jobject contextObj, const char *text)
     const bool ok = !env->ExceptionCheck();
     if (!ok) env->ExceptionClear();
     return ok;
+}
+
+bool android_read_asset(const char *name, std::vector<uint8_t> &out) {
+    out.clear();
+    if (!g_clipVm || !g_clipCtx || !name) return false;
+    JNIEnv *env = nullptr;
+    if (g_clipVm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return false;
+    jclass ctxCls = env->FindClass("android/content/Context");
+    if (!ctxCls) return false;
+    jmethodID getAssets = env->GetMethodID(ctxCls, "getAssets", "()Landroid/content/res/AssetManager;");
+    if (!getAssets) return false;
+    jobject assets = env->CallObjectMethod(g_clipCtx, getAssets);
+    if (env->ExceptionCheck() || !assets) {
+        env->ExceptionClear();
+        return false;
+    }
+    AAssetManager *mgr = AAssetManager_fromJava(env, assets);
+    if (!mgr) return false;
+    AAsset *asset = AAssetManager_open(mgr, name, AASSET_MODE_BUFFER);
+    if (!asset) return false;
+    const off_t len = AAsset_getLength(asset);
+    if (len <= 0) {
+        AAsset_close(asset);
+        return false;
+    }
+    out.resize((size_t)len);
+    const int n = AAsset_read(asset, out.data(), (size_t)len);
+    AAsset_close(asset);
+    return n == (int)len;
 }
 
 bool android_copy_to_clipboard(const char *text) {
