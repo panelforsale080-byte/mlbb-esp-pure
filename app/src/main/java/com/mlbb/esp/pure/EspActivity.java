@@ -46,7 +46,6 @@ public class EspActivity extends Activity {
     private SharedPreferences prefs;
     private Button btnCheckLicense;
     private Button btnOverlay;
-    private ObjectAnimator licensePulse;
     private Button btnStart;
     private Button btnGame;
 
@@ -82,7 +81,8 @@ public class EspActivity extends Activity {
         btnGame.setOnClickListener(v -> openMobileLegends());
 
         keyProgress.setVisibility(View.GONE);
-        keyStatus.setText(R.string.key_enter_password);
+        keyStatus.setVisibility(View.GONE);
+        keyStatus.setText("");
         LicenseNative.nativeSetLicenseAttested(false);
 
         runEntranceAnimation();
@@ -129,62 +129,35 @@ public class EspActivity extends Activity {
         all.playTogether(rootIn, hero);
         all.play(textIn).after(hero);
         all.start();
-
-        /* Subtle continuous pulse on logo */
-        logo.postDelayed(
-                () -> {
-                    if (isFinishing() || logo == null) return;
-                    ObjectAnimator pulseX = ObjectAnimator.ofFloat(logo, View.SCALE_X, 1f, 1.055f);
-                    pulseX.setRepeatCount(ValueAnimator.INFINITE);
-                    pulseX.setRepeatMode(ValueAnimator.REVERSE);
-                    pulseX.setDuration(1800);
-                    pulseX.setInterpolator(new AccelerateDecelerateInterpolator());
-                    ObjectAnimator pulseY = ObjectAnimator.ofFloat(logo, View.SCALE_Y, 1f, 1.055f);
-                    pulseY.setRepeatCount(ValueAnimator.INFINITE);
-                    pulseY.setRepeatMode(ValueAnimator.REVERSE);
-                    pulseY.setDuration(1800);
-                    pulseY.setInterpolator(new AccelerateDecelerateInterpolator());
-                    pulseX.start();
-                    pulseY.start();
-                },
-                900);
     }
 
     private void verifyLicense() {
         final String pass = licensePassword.getText().toString().trim();
-        final View card = findViewById(R.id.cardLicense);
         if (pass.isEmpty()) {
             licenseOk = false;
             LicenseNative.nativeSetLicenseAttested(false);
-            keyProgress.setVisibility(View.GONE);
-            keyStatus.setText(R.string.key_enter_password);
-            keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_text_secondary));
+            showLicenseSpinner(false);
+            keyStatus.setVisibility(View.GONE);
             refreshUiState();
             return;
         }
 
         licenseOk = false;
-        keyProgress.setVisibility(View.VISIBLE);
-        keyStatus.setText(R.string.key_checking);
-        keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_text_primary));
         InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
         if (imm != null) imm.hideSoftInputFromWindow(licensePassword.getWindowToken(), 0);
-        btnCheckLicense.setEnabled(false);
-        btnCheckLicense.setText(R.string.key_checking);
+        showLicenseSpinner(true);
+        keyStatus.setVisibility(View.GONE);
         btnStart.setEnabled(false);
-        startLicensePulse(card);
 
         LicenseGate.verifyAsync(
                 pass,
                 (ok, message) -> {
                     if (isFinishing()) return;
-                    stopLicensePulse(card);
-                    btnCheckLicense.setEnabled(true);
-                    btnCheckLicense.setText(R.string.btn_check_license);
+                    showLicenseSpinner(false);
                     licenseOk = ok;
                     if (ok) prefs.edit().putString("password", pass).apply();
                     else LicenseNative.nativeSetLicenseAttested(false);
-                    keyProgress.setVisibility(View.GONE);
+                    keyStatus.setVisibility(View.VISIBLE);
                     if (ok) {
                         keyStatus.setText(R.string.key_valid);
                         keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_success));
@@ -197,47 +170,13 @@ public class EspActivity extends Activity {
                         keyStatus.setTextColor(ContextCompat.getColor(this, R.color.xorel_error));
                     }
                     refreshUiState();
-                    if (card != null) {
-                        card.setScaleX(0.97f);
-                        card.setScaleY(0.97f);
-                        card.animate().scaleX(1f).scaleY(1f).setDuration(280).start();
-                    }
                 });
     }
 
-    private void startLicensePulse(View card) {
-        stopLicensePulse(card);
-        if (card == null) return;
-        card.setPivotX(card.getWidth() * 0.5f);
-        card.setPivotY(card.getHeight() * 0.5f);
-        licensePulse = ObjectAnimator.ofFloat(card, View.SCALE_X, 1f, 1.035f);
-        ObjectAnimator scaleY = ObjectAnimator.ofFloat(card, View.SCALE_Y, 1f, 1.035f);
-        licensePulse.setDuration(520);
-        scaleY.setDuration(520);
-        licensePulse.setRepeatMode(ValueAnimator.REVERSE);
-        scaleY.setRepeatMode(ValueAnimator.REVERSE);
-        licensePulse.setRepeatCount(ValueAnimator.INFINITE);
-        scaleY.setRepeatCount(ValueAnimator.INFINITE);
-        licensePulse.setInterpolator(new AccelerateDecelerateInterpolator());
-        scaleY.setInterpolator(new AccelerateDecelerateInterpolator());
-        licensePulse.start();
-        scaleY.start();
-        card.setTag(scaleY);
-    }
-
-    private void stopLicensePulse(View card) {
-        if (licensePulse != null) {
-            licensePulse.cancel();
-            licensePulse = null;
-        }
-        if (card != null) {
-            Object tag = card.getTag();
-            if (tag instanceof ObjectAnimator) ((ObjectAnimator) tag).cancel();
-            card.setTag(null);
-            card.setScaleX(1f);
-            card.setScaleY(1f);
-            card.setAlpha(1f);
-        }
+    private void showLicenseSpinner(boolean on) {
+        keyProgress.setVisibility(on ? View.VISIBLE : View.GONE);
+        btnCheckLicense.setEnabled(!on);
+        btnCheckLicense.setText(on ? "" : getString(R.string.btn_check_license));
     }
 
     private void refreshUiState() {

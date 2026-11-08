@@ -1,22 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Neutral product UI — flat surfaces, subtle borders (no neon gradients) -->
-    <color name="xorel_screen_bg">#FFF3F4F6</color>
+    <color name="xorel_screen_bg">#FFF8FAFC</color>
     <color name="xorel_card">#FFFFFFFF</color>
-    <color name="xorel_border">#FFE5E7EB</color>
-    <color name="xorel_divider">#FFE5E7EB</color>
-    <color name="xorel_btn_primary">#FF374151</color>
-    <color name="xorel_text_primary">#FF111827</color>
-    <color name="xorel_text_secondary">#FF6B7280</color>
-    <color name="xorel_text_muted">#FF9CA3AF</color>
+    <color name="xorel_border">#FFDBEAFE</color>
+    <color name="xorel_divider">#FFDBEAFE</color>
+    <color name="xorel_btn_primary">#FF1D4ED8</color>
+    <color name="xorel_text_primary">#FF0F172A</color>
+    <color name="xorel_text_secondary">#FF334155</color>
+    <color name="xorel_text_muted">#FF1E3A8A</color>
     <color name="xorel_text_on_primary_btn">#FFFFFFFF</color>
-    <color name="xorel_accent">#FF374151</color>
-    <color name="xorel_accent_secondary">#FF6B7280</color>
-    <color name="xorel_accent_dim">#66374151</color>
+    <color name="xorel_accent">#FF1D4ED8</color>
+    <color name="xorel_accent_secondary">#FF2563EB</color>
+    <color name="xorel_accent_dim">#661D4ED8</color>
     <color name="xorel_success">#FF059669</color>
     <color name="xorel_error">#FFDC2626</color>
     <!-- Legacy keys still referenced -->
-    <color name="xorel_bg_start">#FFF3F4F6</color>
-    <color name="xorel_bg_end">#FFF3F4F6</color>
+    <color name="xorel_bg_start">#FFF8FAFC</color>
+    <color name="xorel_bg_end">#FFEFF6FF</color>
     <color name="xorel_glow">#00000000</color>
 </resources>
