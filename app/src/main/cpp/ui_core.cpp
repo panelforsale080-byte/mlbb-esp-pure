@@ -170,10 +170,11 @@ static void menu_draw_enemy_esp_grid() {
         ImGui::TableSetupColumn("e0", ImGuiTableColumnFlags_WidthFixed, colW);
         ImGui::TableSetupColumn("e1", ImGuiTableColumnFlags_WidthFixed, colW);
         ImGui::TableSetupColumn("e2", ImGuiTableColumnFlags_WidthFixed, colW);
-        menu_checkbox_row3("Box", &g_feat.box, "Line", &g_feat.line, "Health", &g_feat.health);
-        menu_checkbox_row3("Name", &g_feat.name, "Dist", &g_feat.distance, nullptr, nullptr);
-        menu_checkbox_row3("12m", &g_feat.proximityAlert12m, "Enemy CD", &g_feat.enemyCooldown,
-                           "CD panel", &g_feat.enemyCdSidePanel);
+        menu_checkbox_row3("Box", &g_feat.box, "Line", &g_feat.line, "Name", &g_feat.name);
+        menu_checkbox_row3("Dist", &g_feat.distance, "Health", &g_feat.health, "Enemy CD",
+                           &g_feat.enemyCooldown);
+        menu_checkbox_row3("12m", &g_feat.proximityAlert12m, "CD panel", &g_feat.enemyCdSidePanel,
+                           nullptr, nullptr);
         ImGui::EndTable();
     }
     ImGui::PopStyleVar();

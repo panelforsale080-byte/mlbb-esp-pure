@@ -45,19 +45,15 @@ final class MenuVideoPanel extends FrameLayout implements TextureView.SurfaceTex
 
     private void init(Context context) {
         setBackgroundResource(R.drawable.bg_menu_video_frame);
-        setPadding(dp(5), dp(5), dp(5), dp(5));
+        setPadding(dp(4), dp(4), dp(4), dp(4));
         setClickable(false);
         setFocusable(false);
 
-        FrameLayout videoBox = new FrameLayout(context);
-        videoBox.setBackgroundResource(R.drawable.bg_menu_video_inner);
-        final int inset = dp(3);
-        videoBox.setPadding(inset, inset, inset, inset);
-
         textureView = new TextureView(context);
         textureView.setSurfaceTextureListener(this);
+        textureView.setOpaque(false);
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-            final float r = dp(8);
+            final float r = dp(10);
             textureView.setOutlineProvider(
                     new ViewOutlineProvider() {
                         @Override
@@ -67,11 +63,9 @@ final class MenuVideoPanel extends FrameLayout implements TextureView.SurfaceTex
                     });
             textureView.setClipToOutline(true);
         }
-        videoBox.addView(
+        addView(
                 textureView,
-                new FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.MATCH_PARENT));
+                new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
 
         muteBtn = new ImageButton(context);
         muteBtn.setBackgroundResource(R.drawable.bg_mute_icon_btn);
@@ -81,14 +75,10 @@ final class MenuVideoPanel extends FrameLayout implements TextureView.SurfaceTex
         muteBtn.setOnClickListener(v -> setMuted(!muted, true));
         final int btn = dp(34);
         FrameLayout.LayoutParams muteLp =
-                new FrameLayout.LayoutParams(btn, btn, Gravity.TOP | Gravity.END);
-        muteLp.topMargin = dp(5);
-        muteLp.rightMargin = dp(5);
-        videoBox.addView(muteBtn, muteLp);
-
-        addView(
-                videoBox,
-                new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+                new LayoutParams(btn, btn, Gravity.TOP | Gravity.END);
+        muteLp.topMargin = dp(2);
+        muteLp.rightMargin = dp(2);
+        addView(muteBtn, muteLp);
 
         setVisibility(GONE);
         updateMuteIcon();
