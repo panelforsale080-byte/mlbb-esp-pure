@@ -16,10 +16,12 @@ import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.TypedValue;
+import android.view.Display;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import java.util.Locale;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
@@ -45,6 +47,19 @@ public class OverlayService extends Service {
     private boolean comboFabWanted;
     private boolean menuInteractive;
     private boolean antiCaptureSecure;
+    private boolean hideWhileRecording;
+    private boolean concealForRecording;
+    private boolean api35Recording;
+    private Object screenRecordingCallback;
+    private final Runnable recordingPoll =
+            new Runnable() {
+                @Override
+                public void run() {
+                    if (!hideWhileRecording) return;
+                    refreshRecordingConceal();
+                    main.postDelayed(this, 1000L);
+                }
+            };
     private final Handler main = new Handler(Looper.getMainLooper());
     private volatile boolean glReady = false;
     private String pendingCmd = null;
@@ -117,10 +132,14 @@ public class OverlayService extends Service {
         displayListener =
                 new DisplayManager.DisplayListener() {
                     @Override
-                    public void onDisplayAdded(int displayId) {}
+                    public void onDisplayAdded(int displayId) {
+                        main.post(OverlayService.this::refreshRecordingConceal);
+                    }
 
                     @Override
-                    public void onDisplayRemoved(int displayId) {}
+                    public void onDisplayRemoved(int displayId) {
+                        main.post(OverlayService.this::refreshRecordingConceal);
+                    }
 
                     @Override
                     public void onDisplayChanged(int displayId) {
@@ -208,7 +227,7 @@ public class OverlayService extends Service {
 
     private void applyComboFabVisibility() {
         if (fabCombo == null) return;
-        final boolean show = comboFabWanted && !menuInteractive;
+        final boolean show = comboFabWanted && !menuInteractive && !concealForRecording;
         fabCombo.setVisibility(show ? View.VISIBLE : View.GONE);
         if (show && fabComboLp != null) {
             clampComboFabToScreen();
@@ -452,6 +471,76 @@ public class OverlayService extends Service {
         }
     }
 
+    void setHideWhileRecording(boolean on) {
+        Runnable apply =
+                () -> {
+                    hideWhileRecording = on;
+                    main.removeCallbacks(recordingPoll);
+                    if (!on) {
+                        applyRecordingConceal(false);
+                        return;
+                    }
+                    ensureScreenRecordingCallback();
+                    refreshRecordingConceal();
+                    main.postDelayed(recordingPoll, 1000L);
+                };
+        if (Looper.myLooper() == Looper.getMainLooper()) apply.run();
+        else main.post(apply);
+    }
+
+    private void ensureScreenRecordingCallback() {
+        if (screenRecordingCallback != null || Build.VERSION.SDK_INT < 35 || wm == null) return;
+        screenRecordingCallback =
+                ScreenRecordingWatch.register(
+                        wm,
+                        main,
+                        recording -> {
+                            api35Recording = recording;
+                            main.post(this::refreshRecordingConceal);
+                        });
+    }
+
+    private void refreshRecordingConceal() {
+        if (!hideWhileRecording) return;
+        applyRecordingConceal(detectScreenRecording());
+    }
+
+    private boolean detectScreenRecording() {
+        if (api35Recording) return true;
+        if (displayManager == null) return false;
+        Display[] displays = displayManager.getDisplays();
+        if (displays == null) return false;
+        for (Display display : displays) {
+            if (display == null || display.getDisplayId() == Display.DEFAULT_DISPLAY) continue;
+            String name = display.getName();
+            if (name == null) continue;
+            String n = name.toLowerCase(Locale.US);
+            if (n.contains("record")
+                    || n.contains("capture")
+                    || n.contains("projection")
+                    || n.contains("cast")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void applyRecordingConceal(boolean conceal) {
+        if (conceal == concealForRecording) return;
+        concealForRecording = conceal;
+        try {
+            NativeBridge.nativeSetRecordingHide(conceal);
+            if (conceal) NativeBridge.nativeMinimizeMenu();
+        } catch (Throwable t) {
+            Log.w(TAG, "recording hide", t);
+        }
+        if (fabLogo != null) {
+            fabLogo.setVisibility(menuInteractive || conceal ? View.GONE : View.VISIBLE);
+        }
+        applyComboFabVisibility();
+        if (glView != null) glView.requestRender();
+    }
+
     void applyAntiCaptureSecure(boolean on) {
         antiCaptureSecure = on;
         Runnable apply =
@@ -518,7 +607,7 @@ public class OverlayService extends Service {
             Log.w(TAG, "applyMenuTouchFlags surface", t);
         }
         if (fabLogo != null) {
-            fabLogo.setVisibility(interactive ? View.GONE : View.VISIBLE);
+            fabLogo.setVisibility(interactive || concealForRecording ? View.GONE : View.VISIBLE);
             if (!interactive && fabLp != null) {
                 clampFabToScreen();
                 try {
@@ -625,6 +714,11 @@ public class OverlayService extends Service {
 
     @Override
     public void onDestroy() {
+        main.removeCallbacks(recordingPoll);
+        if (wm != null && screenRecordingCallback != null) {
+            ScreenRecordingWatch.unregister(wm, screenRecordingCallback);
+            screenRecordingCallback = null;
+        }
         if (displayManager != null && displayListener != null) {
             try {
                 displayManager.unregisterDisplayListener(displayListener);

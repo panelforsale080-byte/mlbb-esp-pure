@@ -51,5 +51,13 @@ public final class NativeBridge {
         if (svc != null) svc.applyAntiCaptureSecure(on);
     }
 
+    /** Menu toggle: hide ESP drawings and the logo while a screen recording is active. */
+    public static void setHideWhileRecording(boolean on) {
+        OverlayService svc = OverlayService.instance;
+        if (svc != null) svc.setHideWhileRecording(on);
+    }
+
+    public static native void nativeSetRecordingHide(boolean hide);
+
     public static native void nativeSetMenuVideoMuted(boolean muted);
 }

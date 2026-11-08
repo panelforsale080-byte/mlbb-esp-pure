@@ -11,7 +11,9 @@ static jmethodID g_setComboFab = nullptr;
 static jmethodID g_updateMenuVideo = nullptr;
 static jmethodID g_applyMenuVideoMuted = nullptr;
 static jmethodID g_applyAntiCapture = nullptr;
+static jmethodID g_setHideWhileRecording = nullptr;
 static bool g_lastAntiCapture = false;
+static bool g_lastHideWhileRecording = false;
 static bool g_menuTouchNotified = false;
 static bool g_lastMenuVideoVisible = false;
 static int g_lastMenuVideoX = -1;
@@ -46,7 +48,20 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeInit(JNIEnv *env, jclass clazz) {
         g_applyMenuVideoMuted = env->GetStaticMethodID(clazz, "applyMenuVideoMuted", "(Z)V");
     if (!g_applyAntiCapture)
         g_applyAntiCapture = env->GetStaticMethodID(clazz, "applyAntiCaptureSecure", "(Z)V");
+    if (!g_setHideWhileRecording)
+        g_setHideWhileRecording =
+            env->GetStaticMethodID(clazz, "setHideWhileRecording", "(Z)V");
     ui_esp_pipeline_idle();
+}
+
+void ui_sync_hide_while_recording(bool on) {
+    if (!g_vm || !g_bridgeCls || !g_setHideWhileRecording) return;
+    if (on == g_lastHideWhileRecording) return;
+    g_lastHideWhileRecording = on;
+    JNIEnv *env = nullptr;
+    if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    env->CallStaticVoidMethod(g_bridgeCls, g_setHideWhileRecording, on ? JNI_TRUE : JNI_FALSE);
+    if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
 void ui_sync_anti_capture(bool on) {
@@ -199,4 +214,9 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeStopEsp(JNIEnv *, jclass) {
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeHeroComboPulse(JNIEnv *, jclass) {
     esp_hero_auto_combo_pulse();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_mlbb_esp_pure_NativeBridge_nativeSetRecordingHide(JNIEnv *, jclass, jboolean hide) {
+    ui_set_recording_hide(hide == JNI_TRUE);
 }
