@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <unordered_set>
 #include <vector>
@@ -182,18 +183,23 @@ static void scan_hashset_bullets(pid_t pid, uintptr_t hashSet,
             if (!mem_read(pid, entries + 0x18, capacity) || capacity <= 0 || capacity > 4096)
                 continue;
             for (int stride : strides) {
+                const size_t totalBytes = (size_t)capacity * (size_t)stride;
+                if (totalBytes > 65536) continue;
+                std::vector<uint8_t> buffer(totalBytes);
+                if (!mem_read(pid, entries + dataOff, buffer.data(), totalBytes)) continue;
                 for (int i = 0; i < capacity; ++i) {
-                    const uintptr_t entryAddr =
-                        entries + dataOff + (uintptr_t)i * (uintptr_t)stride;
+                    const uint8_t *base = buffer.data() + (size_t)i * (size_t)stride;
                     int hashCode = 0;
-                    mem_read(pid, entryAddr, hashCode);
+                    std::memcpy(&hashCode, base, sizeof(hashCode));
                     if (hashCode < 0) continue;
                     for (int vo : valueOffs) {
                         uintptr_t bullet = 0;
-                        if (!mem_read(pid, entryAddr + (uintptr_t)vo, bullet) || !mem_ptr_ok(bullet))
-                            continue;
-                        fn(bullet);
-                        break;
+                        if (vo + (int)sizeof(uintptr_t) > stride) continue;
+                        std::memcpy(&bullet, base + vo, sizeof(bullet));
+                        if (mem_ptr_ok(bullet)) {
+                            fn(bullet);
+                            break;
+                        }
                     }
                 }
             }
@@ -226,25 +232,34 @@ static int foreach_run_bullet(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
     }
     if (!statics) return 0;
 
+    static uint64_t s_lastScanMs = 0;
+    static std::vector<uintptr_t> s_cachedBullets;
+    static pid_t s_cachePid = 0;
+    static uintptr_t s_cacheStatics = 0;
+    const uint64_t nowMs = steady_ms();
+    const bool refresh =
+        nowMs - s_lastScanMs > 100 || s_cachedBullets.empty() || pid != s_cachePid
+        || statics != s_cacheStatics;
+
     g_hero.dbgStaticsPtr = statics;
 
-    int total = 0;
-    std::unordered_set<uintptr_t> dedupe;
-    auto mark = [&](uintptr_t b) {
-        if (!b || dedupe.count(b)) return;
-        dedupe.insert(b);
-        ++total;
-        fn(b);
-    };
+    if (refresh) {
+        s_cachedBullets.clear();
+        s_lastScanMs = nowMs;
+        s_cachePid = pid;
+        s_cacheStatics = statics;
 
-    static uint64_t s_il2StaticMs = 0;
-    static uintptr_t s_listIl2 = 0;
-    static uintptr_t s_hashIl2 = 0;
-    const uint64_t nowMs =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch())
-            .count();
-    if (bmKlass && nowMs - s_il2StaticMs > 200) {
+        std::unordered_set<uintptr_t> dedupe;
+        auto mark = [&](uintptr_t b) {
+            if (!b || dedupe.count(b)) return;
+            dedupe.insert(b);
+            s_cachedBullets.push_back(b);
+        };
+
+        static uint64_t s_il2StaticMs = 0;
+        static uintptr_t s_listIl2 = 0;
+        static uintptr_t s_hashIl2 = 0;
+        if (bmKlass && nowMs - s_il2StaticMs > 200) {
         RemoteIl2CppInfo il2{};
         if (esp_resolved_il2(il2)) {
             uintptr_t p = 0;
@@ -252,33 +267,40 @@ static int foreach_run_bullet(pid_t pid, uintptr_t bmStatics, uintptr_t bmKlass,
             p = 0;
             if (conrent_il2_static_field_ptr(pid, il2, bmKlass, "m_RunBullets", p)) s_hashIl2 = p;
         }
-        s_il2StaticMs = nowMs;
+            s_il2StaticMs = nowMs;
+        }
+
+        auto read_list = [&]() -> uintptr_t {
+            if (s_listIl2 > 0xffffULL) return s_listIl2;
+            uintptr_t listObj = 0;
+            if (R.bmStaticRunBulletsList &&
+                mem_read(pid, statics + R.bmStaticRunBulletsList, listObj) && listObj > 0xffffULL)
+                return listObj;
+            return 0;
+        };
+        auto read_hash = [&]() -> uintptr_t {
+            if (s_hashIl2 > 0xffffULL) return s_hashIl2;
+            uintptr_t hashSet = 0;
+            if (R.bmStaticRunBullets && mem_read(pid, statics + R.bmStaticRunBullets, hashSet)
+                && hashSet > 0xffffULL)
+                return hashSet;
+            return 0;
+        };
+
+        const uintptr_t listObj = read_list();
+        g_hero.dbgRunListPtr = listObj;
+        if (listObj) collect_from_container(pid, listObj, mark);
+
+        const uintptr_t hashSet = read_hash();
+        g_hero.dbgHashSetPtr = hashSet;
+        if (hashSet) scan_hashset_bullets(pid, hashSet, mark);
     }
 
-    auto read_list = [&]() -> uintptr_t {
-        if (s_listIl2 > 0xffffULL) return s_listIl2;
-        uintptr_t listObj = 0;
-        if (R.bmStaticRunBulletsList &&
-            mem_read(pid, statics + R.bmStaticRunBulletsList, listObj) && listObj > 0xffffULL)
-            return listObj;
-        return 0;
-    };
-    auto read_hash = [&]() -> uintptr_t {
-        if (s_hashIl2 > 0xffffULL) return s_hashIl2;
-        uintptr_t hashSet = 0;
-        if (R.bmStaticRunBullets && mem_read(pid, statics + R.bmStaticRunBullets, hashSet) &&
-            hashSet > 0xffffULL)
-            return hashSet;
-        return 0;
-    };
-
-    const uintptr_t listObj = read_list();
-    g_hero.dbgRunListPtr = listObj;
-    if (listObj) collect_from_container(pid, listObj, mark);
-
-    const uintptr_t hashSet = read_hash();
-    g_hero.dbgHashSetPtr = hashSet;
-    if (hashSet) scan_hashset_bullets(pid, hashSet, mark);
+    int total = 0;
+    for (uintptr_t b : s_cachedBullets) {
+        ++total;
+        fn(b);
+    }
     return total;
 }
 

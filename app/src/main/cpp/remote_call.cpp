@@ -1,7 +1,9 @@
 #include "remote_call.hpp"
 #include "mem.hpp"
+#include <chrono>
 #include <cstring>
 #include <mutex>
+#include <thread>
 #include <errno.h>
 #include <sys/ptrace.h>
 #include <sys/uio.h>
@@ -114,9 +116,24 @@ bool remote_session_call(RemoteSession &s, uintptr_t func, const std::vector<uin
     }
     ptrace(PTRACE_CONT, s.tid, nullptr, nullptr);
     int st = 0;
-    waitpid(s.tid, &st, 0);
+    bool success = false;
+    for (int i = 0; i < 40; ++i) {
+        const pid_t w = waitpid(s.tid, &st, WNOHANG);
+        if (w == s.tid) {
+            success = true;
+            break;
+        }
+        if (w < 0 && errno != EINTR) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (!success) {
+        ptrace(PTRACE_INTERRUPT, s.tid, nullptr, nullptr);
+        (void)waitpid(s.tid, &st, 0);
+        std::snprintf(s.err, sizeof(s.err), "ptrace call timeout");
+    }
     if (!get_regs(s.tid, work)) {
         std::snprintf(s.err, sizeof(s.err), "GETREGSET after call");
+        set_regs(s.tid, *saved_pt(s));
         return false;
     }
     ret_x0 = (uintptr_t)work.regs[0];
@@ -124,7 +141,7 @@ bool remote_session_call(RemoteSession &s, uintptr_t func, const std::vector<uin
         std::snprintf(s.err, sizeof(s.err), "restore regs fail");
         return false;
     }
-    return true;
+    return success;
 }
 
 bool remote_call(pid_t pid, uintptr_t func, const std::vector<uintptr_t> &args, uintptr_t &ret_x0,

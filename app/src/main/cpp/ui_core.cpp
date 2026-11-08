@@ -354,8 +354,7 @@ static void reader_loop() {
         const bool heroFast = haSleep.lingSword || haSleep.gusionCombo;
         const bool retriOn = esp_retri_settings().enabled;
         if (g_espActive.load()) {
-            const int tickMs =
-                (retriOn || heroFast) ? (haSleep.lingSword ? 10 : 6) : 12;
+            const int tickMs = (retriOn || heroFast) ? 8 : 10;
             std::this_thread::sleep_for(std::chrono::milliseconds(tickMs));
         } else if (pid > 0 && (retriOn || heroFast)) {
             const int tickMs = haSleep.lingSword ? 10 : 8;
