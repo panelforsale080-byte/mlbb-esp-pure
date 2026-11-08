@@ -508,10 +508,7 @@ static void draw_ui() {
         if (ImGui::Checkbox("Hide ESP + logo in recording", &g_hideWhileRecording))
             ui_sync_hide_while_recording(g_hideWhileRecording);
         ImGui::SameLine();
-        ImGui::TextDisabled(
-            !g_hideWhileRecording
-                ? "OFF"
-                : (g_recordingHide.load(std::memory_order_relaxed) ? "IN REC" : "ON"));
+        ImGui::TextDisabled(g_hideWhileRecording ? "PROTECTED" : "OFF");
         ImGui::TextDisabled("Stays on your screen. Hidden only in the recording.");
         ImGui::Text("World draw: %s", g_espActive.load() ? "ON" : "OFF");
         if (ImGui::Button("Start ESP", ImVec2(menu_half_button_width(), 0.f))) {
@@ -833,12 +830,14 @@ static void ui_apply_safe_startup_defaults() {
 
 void ui_gl_surface_created() {
     std::lock_guard<std::mutex> lock(g_glMu);
+    const bool keepSession = g_glReady;
     shutdown_imgui_only();
-    ui_apply_safe_startup_defaults();
+    if (!keepSession) ui_apply_safe_startup_defaults();
     if (!init_imgui_backends()) return;
     g_glReady = true;
     reader_start_once();
-    ui_log("Xorel — features OFF until you enable them | logo=menu");
+    if (!keepSession)
+        ui_log("Xorel — features OFF until you enable them | logo=menu");
 }
 
 static void reader_start_once() {

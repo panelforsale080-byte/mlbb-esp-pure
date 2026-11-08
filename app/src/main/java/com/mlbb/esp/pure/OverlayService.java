@@ -49,6 +49,8 @@ public class OverlayService extends Service {
     private boolean antiCaptureSecure;
     private boolean hideWhileRecording;
     private boolean concealForRecording;
+    private boolean glSurfaceSecure;
+    private boolean glReadyOnce;
     private boolean api35Recording;
     private Object screenRecordingCallback;
     private final Runnable recordingPoll =
@@ -245,7 +247,14 @@ public class OverlayService extends Service {
         glView.setOnGlReadyListener(
                 v -> main.post(() -> {
                     glReady = true;
-                    NativeBridge.nativeMinimizeMenu();
+                    if (!glReadyOnce) {
+                        glReadyOnce = true;
+                        try {
+                            NativeBridge.nativeMinimizeMenu();
+                        } catch (Throwable t) {
+                            Log.w(TAG, "nativeMinimizeMenu", t);
+                        }
+                    }
                     flushPendingCmd();
                     Log.i(TAG, "GL ready — tap Xorel icon for menu");
                 }));
@@ -476,13 +485,7 @@ public class OverlayService extends Service {
                 () -> {
                     hideWhileRecording = on;
                     main.removeCallbacks(recordingPoll);
-                    if (!on) {
-                        setRecordingSecure(false);
-                        return;
-                    }
-                    ensureScreenRecordingCallback();
-                    refreshRecordingConceal();
-                    main.postDelayed(recordingPoll, 1000L);
+                    setRecordingSecure(on);
                 };
         if (Looper.myLooper() == Looper.getMainLooper()) apply.run();
         else main.post(apply);
@@ -540,10 +543,39 @@ public class OverlayService extends Service {
             Log.w(TAG, "recording secure", t);
         }
         refreshSurfaceLpFlags();
-        pushSecureWindow(root, surfaceLp);
         pushSecureWindow(menuVideo, menuVideoLp);
         pushSecureWindow(fabLogo, fabLp);
         pushSecureWindow(fabCombo, fabComboLp);
+        rebuildGlSurfaceForSecure();
+    }
+
+    /** GL overlay is its own layer. setSecure only sticks if the surface is created again. */
+    private void rebuildGlSurfaceForSecure() {
+        boolean want = overlaySecure();
+        if (want == glSurfaceSecure || glView == null || wm == null || root == null || surfaceLp == null)
+            return;
+        glView.setSecure(want);
+        try {
+            glView.onPause();
+        } catch (Throwable ignored) {
+        }
+        try {
+            wm.removeView(root);
+        } catch (Throwable t) {
+            Log.w(TAG, "detach overlay", t);
+        }
+        try {
+            wm.addView(root, surfaceLp);
+            glSurfaceSecure = want;
+        } catch (Throwable t) {
+            Log.w(TAG, "attach overlay", t);
+        }
+        try {
+            glView.onResume();
+            glView.setRenderMode(android.opengl.GLSurfaceView.RENDERMODE_CONTINUOUSLY);
+            glView.requestRender();
+        } catch (Throwable ignored) {
+        }
     }
 
     private boolean overlaySecure() {
@@ -583,6 +615,7 @@ public class OverlayService extends Service {
                     }
                     pushSecureWindow(fabLogo, fabLp);
                     pushSecureWindow(fabCombo, fabComboLp);
+                    rebuildGlSurfaceForSecure();
                 };
         if (Looper.myLooper() == Looper.getMainLooper()) apply.run();
         else main.post(apply);
