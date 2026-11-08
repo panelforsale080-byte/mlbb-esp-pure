@@ -85,11 +85,8 @@ bool mem_read(pid_t pid, uintptr_t addr, void *buf, size_t n) {
     if (!pid || !addr || !buf || !n) return false;
     iovec local{(void *)buf, n};
     iovec remote{(void *)addr, n};
-    ssize_t ret = process_vm_readv(pid, &local, 1, &remote, 1, 0);
-    if (ret == (ssize_t)n) return true;
-    std::vector<MapsReg> maps;
-    if (!mem_get_maps(pid, maps)) return false;
-    return ext_read::read_mem(pid, maps, addr, buf, n);
+    const ssize_t ret = process_vm_readv(pid, &local, 1, &remote, 1, 0);
+    return ret == (ssize_t)n;
 }
 
 bool mem_write(pid_t pid, uintptr_t addr, const void *buf, size_t n) {

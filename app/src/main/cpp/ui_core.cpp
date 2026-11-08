@@ -16,7 +16,10 @@
 #include <chrono>
 #include <cstdio>
 #include <mutex>
+#include <sys/resource.h>
+#include <sys/syscall.h>
 #include <thread>
+#include <unistd.h>
 
 /* Lock-free latest-frame handoff: reader writes slot (1-latest), publishes with release;
  * GL/draw copies with acquire — no mutex wait on hot path. */
@@ -790,7 +793,11 @@ void ui_gl_surface_created() {
 static void reader_start_once() {
     if (g_readerStarted.exchange(true)) return;
     g_runReader.store(true);
-    g_reader = std::thread(reader_loop);
+    g_reader = std::thread([]() {
+        const pid_t tid = (pid_t)syscall(SYS_gettid);
+        setpriority(PRIO_PROCESS, tid, 10);
+        reader_loop();
+    });
 }
 
 void ui_gl_surface_changed(int width, int height) {

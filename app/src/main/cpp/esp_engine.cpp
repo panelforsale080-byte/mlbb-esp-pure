@@ -147,7 +147,8 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
         return false;
     const uintptr_t data = entries + Il2::ArrData;
     const size_t slotBytes = (size_t)maxLength * Il2::EntryStride;
-    std::vector<uint8_t> raw(slotBytes);
+    static thread_local std::vector<uint8_t> raw;
+    raw.resize(slotBytes);
     if (!mem_read(pid, data, raw.data(), raw.size())) return false;
     for (int i = 0; i < maxLength; ++i) {
         const uint8_t *base = raw.data() + (size_t)i * Il2::EntryStride;

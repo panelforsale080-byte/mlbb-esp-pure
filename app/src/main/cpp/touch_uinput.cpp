@@ -167,21 +167,6 @@ const char *touch_inject_screen_tap(int x, int y, int screenW, int screenH) {
         std::snprintf(s_method, sizeof(s_method), "uinput");
         return s_method;
     }
-    static const char *kSu[] = {
-        "su -c 'input tap %d %d' 2>/dev/null",
-        "su -c \"input tap %d %d\" 2>/dev/null",
-        "su 0 sh -c 'input tap %d %d' 2>/dev/null",
-    };
-    for (const char *fmt : kSu) {
-        if (shell_tap(x, y, fmt)) {
-            std::snprintf(s_method, sizeof(s_method), "su");
-            return s_method;
-        }
-    }
-    if (shell_tap(x, y, "input tap %d %d 2>/dev/null")) {
-        std::snprintf(s_method, sizeof(s_method), "input");
-        return s_method;
-    }
     std::snprintf(s_method, sizeof(s_method), "fail");
     return s_method;
 }

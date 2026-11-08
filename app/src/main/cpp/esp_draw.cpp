@@ -97,8 +97,7 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
             anchor = {frame.selfScreenX, frame.selfScreenY};
         else
             anchor = {screenW * 0.5f, screenH * 0.92f};
-        draw->AddLine(anchor, root, IM_COL32(255, 220, 80, 180), 3.f);
-        draw->AddLine(anchor, root, IM_COL32(255, 255, 255, 255), 1.8f);
+        draw->AddLine(anchor, root, IM_COL32(255, 255, 255, 180), 1.5f);
     }
     if (!onScreen) return;
 
