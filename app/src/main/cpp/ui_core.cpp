@@ -41,6 +41,7 @@ static void performance_thread_init() {
  * GL/draw copies with acquire — no mutex wait on hot path. */
 
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_impl_android.h"
 #include "imgui_impl_opengl3.h"
 
@@ -111,6 +112,11 @@ static void apply_menu_style() {
     c[ImGuiCol_Header] = btn;
     c[ImGuiCol_HeaderHovered] = ImVec4(0.45f, 0.45f, 0.47f, 1.f);
     c[ImGuiCol_HeaderActive] = ImVec4(0.52f, 0.52f, 0.54f, 1.f);
+    c[ImGuiCol_Tab] = card;
+    c[ImGuiCol_TabHovered] = hover;
+    c[ImGuiCol_TabActive] = btn;
+    c[ImGuiCol_TabUnfocused] = card;
+    c[ImGuiCol_TabUnfocusedActive] = btn;
     c[ImGuiCol_Button] = btn;
     c[ImGuiCol_ButtonHovered] = ImVec4(0.48f, 0.48f, 0.50f, 1.f);
     c[ImGuiCol_ButtonActive] = ImVec4(0.56f, 0.56f, 0.58f, 1.f);
@@ -400,6 +406,31 @@ static bool ui_wants_continuous_gl() {
     return h.lingSword || h.gusionCombo;
 }
 
+static int g_menuPage = 0;
+
+/** Grey page button. Activates on touch-down so one tap switches the page. */
+static bool menu_page_button(const char *label, bool selected, float width) {
+    ImGuiWindow *window = ImGui::GetCurrentWindow();
+    if (window->SkipItems) return false;
+    const ImGuiStyle &style = ImGui::GetStyle();
+    const ImVec2 labelSize = ImGui::CalcTextSize(label, nullptr, true);
+    const float h = labelSize.y + style.FramePadding.y * 2.f;
+    const ImVec2 pos = window->DC.CursorPos;
+    const ImRect bb(pos, ImVec2(pos.x + width, pos.y + h));
+    ImGui::ItemSize(bb, style.FramePadding.y);
+    const ImGuiID id = window->GetID(label);
+    if (!ImGui::ItemAdd(bb, id)) return false;
+    bool hovered = false, held = false;
+    const bool pressed =
+            ImGui::ButtonBehavior(bb, id, &hovered, &held, ImGuiButtonFlags_PressedOnClick);
+    const ImVec4 fill = selected ? ImVec4(0.388f, 0.388f, 0.400f, 1.f)
+                                 : (held || hovered) ? ImVec4(0.282f, 0.282f, 0.290f, 1.f)
+                                                     : ImVec4(0.227f, 0.227f, 0.235f, 1.f);
+    window->DrawList->AddRectFilled(bb.Min, bb.Max, ImGui::GetColorU32(fill), style.FrameRounding);
+    ImGui::RenderTextClipped(bb.Min, bb.Max, label, nullptr, &labelSize, ImVec2(0.5f, 0.5f));
+    return pressed;
+}
+
 static void draw_music_panel() {
     static bool asked = false;
     if (!asked) {
@@ -533,17 +564,13 @@ static void draw_ui() {
             attach_pid(p, "find");
         }
 
-        bool showOverlayTab = true;
-        if (ImGui::BeginTabBar("xorelTabs")) {
-            if (ImGui::BeginTabItem("Overlay")) ImGui::EndTabItem();
-            if (ImGui::BeginTabItem("Music")) {
-                draw_music_panel();
-                ImGui::EndTabItem();
-                showOverlayTab = false;
-            }
-            ImGui::EndTabBar();
-        }
-        if (showOverlayTab) {
+        const float pageGap = ImGui::GetStyle().ItemSpacing.x;
+        const float pageW = (ImGui::GetContentRegionAvail().x - pageGap) * 0.5f;
+        if (menu_page_button("Overlay", g_menuPage == 0, pageW)) g_menuPage = 0;
+        ImGui::SameLine();
+        if (menu_page_button("Music", g_menuPage == 1, pageW)) g_menuPage = 1;
+        if (g_menuPage == 1) draw_music_panel();
+        if (g_menuPage == 0) {
         ImGui::SeparatorText("ESP control");
         if (ImGui::Checkbox("Anti screenshot / record", &g_antiCapture))
             ui_sync_anti_capture(g_antiCapture);
