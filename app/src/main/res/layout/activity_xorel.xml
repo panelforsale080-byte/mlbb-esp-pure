@@ -117,8 +117,10 @@
                     android:imeOptions="actionDone"
                     android:inputType="textPassword"
                     android:maxLines="1"
+                    android:background="@drawable/bg_xorel_field"
+                    android:padding="12dp"
                     android:textColor="@color/xorel_text_primary"
-                    android:textColorHint="@color/xorel_text_secondary" />
+                    android:textColorHint="@color/xorel_text_muted" />
 
                 <FrameLayout
                     android:layout_width="match_parent"
