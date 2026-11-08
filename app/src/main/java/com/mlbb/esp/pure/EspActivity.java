@@ -62,6 +62,8 @@ public class EspActivity extends Activity {
         tagline = findViewById(R.id.tagline);
         prefs = getSharedPreferences("xorel_license", MODE_PRIVATE);
         licensePassword = findViewById(R.id.licensePassword);
+        final String savedPass = prefs.getString("password", "");
+        if (!savedPass.isEmpty()) licensePassword.setText(savedPass);
         keyStatus = findViewById(R.id.keyStatus);
         keyProgress = findViewById(R.id.keyProgress);
         btnCheckLicense = findViewById(R.id.btnCheckLicense);
