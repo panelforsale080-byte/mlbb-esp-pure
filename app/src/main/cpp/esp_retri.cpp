@@ -20,20 +20,12 @@ static EspRetriSettings g_retri{};
 static std::atomic<int> g_dispW{0};
 static std::atomic<int> g_dispH{0};
 
-/**
- * Live punish: 520 + 80*Lv, plus 380 + (Lv-3)*40 once m_KillWildTimes > 4.
- * The old 750+150*Lv table is higher than the spell actually deals, so the
- * cast landed while the monster was still above real damage and lived.
- */
-static int calculate_retri_damage(int level, int killWild) {
+/** Retribution true damage: 750 + 150×Lv. Lv1 = 900, Lv15 = 3000. */
+static int calculate_retri_damage(int level) {
     int lv = level;
     if (lv < 1) lv = 1;
     if (lv > 15) lv = 15;
-    int kw = killWild;
-    if (kw < 0 || kw > 40) kw = 0;
-    const int base = 520 + (80 * lv);
-    const int bonus = (kw > 4) ? (380 + (lv - 3) * 40) : 0;
-    return base + (bonus > 0 ? bonus : 0);
+    return 750 + (150 * lv);
 }
 
 static int read_local_level(pid_t pid, uintptr_t localEnt, uintptr_t levelOff, int fallback) {
@@ -64,7 +56,9 @@ static int resolve_retri_damage(const EspFrame &frame, const EspRuntimeOff &R, i
                                 int &outKillWild, bool &outHaveKw) {
     outHaveKw = read_kill_wild_times(frame.pid, frame.localPlayerEnt, R, outKillWild);
     outLevel = read_local_level(frame.pid, frame.localPlayerEnt, R.level, g_retri.assumedLevel);
-    return calculate_retri_damage(outLevel, outHaveKw ? outKillWild : 0);
+    if (outLevel < 1) outLevel = 1;
+    if (outLevel > 15) outLevel = 15;
+    return calculate_retri_damage(outLevel);
 }
 
 static inline bool id_matches_external(int id, const EspRetriSettings &s) {

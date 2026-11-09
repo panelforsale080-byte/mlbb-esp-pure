@@ -615,7 +615,7 @@ static void draw_ui() {
                     ImGui::Text("Live retri dmg: %d  (Lv %d)", rt.liveRetriDamage,
                                 rt.livePlayerLevel);
             } else {
-                ImGui::TextDisabled("Dmg = 520 + 80×Lv, +jungle bonus after 5 wild kills.");
+                ImGui::TextDisabled("Dmg = 750 + 150×Lv (Lv1 = 900, Lv15 = 3000).");
             }
 
             ImGui::SeparatorText("Targets (pick jungle)");
