@@ -224,28 +224,21 @@ static int kind_of_entity(pid_t pid, uintptr_t bm, uintptr_t ent, bool fresh, ch
     }
     char table[96], role[96], prefab[96];
     table[0] = role[0] = prefab[0] = '\0';
-    if (!esp_read_dict_monster_names(pid, ent, table, role, prefab, sizeof(table)))
-        return kRetriNone;
+    const bool haveNames =
+        esp_read_dict_monster_names(pid, ent, table, role, prefab, sizeof(table));
     if (saw && sawSz && !saw[0]) {
         const char *raw = table[0] ? table : (role[0] ? role : prefab);
-        if (raw[0]) std::snprintf(saw, sawSz, "%s", raw);
+        if (raw && raw[0]) std::snprintf(saw, sawSz, "%s", raw);
     }
-    const EspRuntimeOff &R = esp_runtime_off();
+    /* EXTERNAL filters by the real monster id (2002 Lord, 2003 Turtle).
+     * A second body with no config id was labeled Lord/Turtle and blocked the cast. */
     const int cfg = read_cfg_template(pid, ent);
     int kind = kind_from_template(cfg);
-    if (!kind && R.wildType) {
-        int wt = 0;
-        const uintptr_t wtOff = R.wildType ? R.wildType : 0x8f0;
-        if (mem_read(pid, ent + wtOff, wt)) {
-            if (wt == 4) kind = kRetriLord;
-            else if (wt == 3) kind = kRetriTurtle;
-        }
+    if (!kind && haveNames) {
+        const int named = kind_from_display_name(table, role);
+        if (named != kRetriLord && named != kRetriTurtle) kind = named;
     }
-    if (!kind && R.entityId) {
-        int live = 0;
-        if (mem_read(pid, ent + R.entityId, live)) kind = kind_from_template(live);
-    }
-    if (!kind) kind = kind_from_display_name(table, role);
+    if (!kind && !haveNames && !cfg) return kRetriNone;
     if (g_nameCache.size() > 256) g_nameCache.clear();
     NameCacheEntry e;
     e.kind = kind;
@@ -419,23 +412,6 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
     for (const Mob &m : alive) {
         if (m.dist > maxDist) continue;
         if (!hp_ready_to_secure(m.ent, m.hp, m.hpMax, retriDmg)) continue;
-        /* One Lord and one Turtle. A second copy of that name is the old body. */
-        bool ghost = false;
-        const bool uniqueBoss = m.kind == kRetriLord || m.kind == kRetriTurtle;
-        for (const Mob &other : alive) {
-            if (other.ent == m.ent || other.kind != m.kind || other.hp <= m.hp) continue;
-            if (uniqueBoss) {
-                ghost = true;
-                break;
-            }
-            const float ox = other.x - m.x;
-            const float oz = other.z - m.z;
-            if (ox * ox + oz * oz < 18.f * 18.f) {
-                ghost = true;
-                break;
-            }
-        }
-        if (ghost) continue;
         if (!outEnt || m.hp < outHp || (m.hp == outHp && m.dist < outDist)) {
             outDist = m.dist;
             outEnt = m.ent;
