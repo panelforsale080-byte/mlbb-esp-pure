@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -99,21 +100,45 @@ static int read_entity_hp(pid_t pid, uintptr_t ent, uintptr_t hpOff) {
 }
 
 /** Drop stale dict rows: dead flag, bad HP vs max, or invalid world pos. */
-static bool retri_mob_alive(pid_t pid, uintptr_t ent, const EspRuntimeOff &R, int *outHp) {
+static bool retri_mob_alive(pid_t pid, uintptr_t ent, const EspRuntimeOff &R, int *outHp,
+                            int *outHpMax) {
     if (!ent || !outHp) return false;
     *outHp = 0;
+    if (outHpMax) *outHpMax = 0;
     uint8_t dead = 0;
     if (mem_read(pid, ent + R.entityDeath, dead) && dead) return false;
     const int hp = read_entity_hp(pid, ent, R.hp);
     if (hp <= 0) return false;
-    if (R.hpMax) {
-        int hpMax = 0;
-        if (mem_read(pid, ent + R.hpMax, hpMax) && hpMax >= 100 && hp > hpMax * 2) return false;
-    }
+    int hpMax = 0;
+    if (R.hpMax) mem_read(pid, ent + R.hpMax, hpMax);
+    if (hpMax >= 100 && hp > hpMax) return false;
+    if (hpMax < 100) return false;
     float wx = 0, wy = 0, wz = 0;
     if (!esp_read_entity_world(pid, ent, wx, wy, wz)) return false;
     *outHp = hp;
+    if (outHpMax) *outHpMax = hpMax;
     return true;
+}
+
+/**
+ * A stuck tiny HP (litho sitting at 10 while you walk around it) is not a live bar.
+ * Cast only when current HP is inside the retri table, and a sub-5% reading has
+ * actually dropped since the last sample.
+ */
+static bool hp_ready_to_secure(uintptr_t ent, int hp, int hpMax, int retriDmg) {
+    if (hp <= 0 || hpMax < 100 || hp > hpMax) return false;
+    struct Sample {
+        int hp = 0;
+        bool seen = false;
+    };
+    static std::unordered_map<uintptr_t, Sample> prev;
+    auto &s = prev[ent];
+    const bool dropped = s.seen && hp < s.hp;
+    const bool frozenStub = hpMax >= 400 && hp * 20 < hpMax && !dropped;
+    s.hp = hp;
+    s.seen = true;
+    if (hp > retriDmg) return false;
+    return !frozenStub;
 }
 
 static void update_norm_from_pixels(float sw, float sh) {
@@ -182,8 +207,8 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
             uint8_t camp = 0;
             if (mem_read(frame.pid, ent + R.sameCamp, camp) && camp) continue;
         }
-        int hp = 0;
-        if (!retri_mob_alive(frame.pid, ent, R, &hp)) continue;
+        int hp = 0, hpMax = 0;
+        if (!retri_mob_alive(frame.pid, ent, R, &hp, &hpMax)) continue;
         float mx = 0, my = 0, mz = 0;
         if (!esp_read_entity_world(frame.pid, ent, mx, my, mz)) continue;
         const float dy = my - selfY;
@@ -196,7 +221,8 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
             dbgId = hid;
             dbgHp = hp;
         }
-        if (dist > maxDist || hp > retriDmg) continue;
+        if (!hp_ready_to_secure(ent, hp, hpMax, retriDmg)) continue;
+        if (dist > maxDist) continue;
         if (!outEnt || hp < outHp || (hp == outHp && dist < outDist)) {
             outDist = dist;
             outEnt = ent;
@@ -337,18 +363,13 @@ void esp_retri_process(const EspFrame &frame) {
             }
             st = esp_retri_il2_cast_summon(frame.pid, frame.localPlayerEnt, dx, dy, dz);
         }
-        const char *tag = "FAIL";
-        if (st == EspIl2Cast::Accepted) tag = "CAST";
-        else if (st == EspIl2Cast::Rejected) tag = "REJECT";
-        ui_log("[retri] %s id=%d hp=%d dist=%.1f (IL2 TryUseSkill 20020)", tag, execId, realHp,
-               execDist);
-        if (st == EspIl2Cast::Accepted) {
-            s_nextTryMs = now + 650;
-        } else if (st == EspIl2Cast::Rejected) {
-            s_nextTryMs = now + 180;
+        /* TryUseSkill still fires the spell when the boxed code is not 0.
+         * Logging that as REJECT/FAIL was a false failure. One line per send. */
+        if (st == EspIl2Cast::Failed) {
+            s_nextTryMs = now + 400;
         } else {
-            fire_retri_tap();
-            s_nextTryMs = now + 180;
+            ui_log("[retri] CAST id=%d hp=%d dist=%.1f", execId, realHp, execDist);
+            s_nextTryMs = now + 900;
         }
     } else {
         fire_retri_tap();
