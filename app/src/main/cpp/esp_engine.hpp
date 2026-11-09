@@ -23,6 +23,10 @@ struct EspTarget {
     int meters = 0;
     int hp = 0, hpMax = 0;
     int kind = 0; /* 0 player 1 monster */
+    float faceX = 0.f, faceZ = 0.f;
+    bool faceValid = false;
+    float faceScreenX = 0.f, faceScreenY = 0.f;
+    bool faceScreenValid = false;
     char label[192] = {};
     int cdSkill1 = 0, cdSkill2 = 0, cdSkill3 = 0, cdSpell = 0;
     bool cdValid = false;
@@ -72,7 +76,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut = nullptr);
 void esp_request_force_resolve();
 bool esp_is_resolved();
 /** Reader thread: skip expensive per-entity reads when overlay toggles off (reduces syscall load). */
-void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown, bool monsters);
+void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown, bool monsters, bool facing);
 EspStatus esp_tick(EspFrame &out);
 /** conRent IL2 W2S on reader thread (not GL) — fills screen* fields. */
 void esp_project_screens(EspFrame &frame, float screenW, float screenH);

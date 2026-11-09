@@ -70,7 +70,8 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
     const bool cdUnderEntity = anyCd && !feat.enemyCdSidePanel;
     /* Side-panel-only CD still needs per-entity pass if Box/Name/HP/Line/Dist are on; if all off, skip entity. */
     if (!anyBox && !anyName && !anyHp && !feat.line && !feat.distance && !cdUnderEntity
-        && !(anyCd && feat.enemyCdSidePanel && !monster)) {
+        && !(anyCd && feat.enemyCdSidePanel && !monster)
+        && !(feat.facing && !monster)) {
         return;
     }
     if (!t.screenValid) return;
@@ -100,6 +101,13 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
         draw->AddLine(anchor, root, IM_COL32(255, 255, 255, 180), 1.5f);
     }
     if (!onScreen) return;
+    if (feat.facing && !monster && t.faceScreenValid) {
+        const ImVec2 tip{t.faceScreenX, t.faceScreenY};
+        const ImVec2 from{root.x, root.y - 18.f};
+        draw->AddLine(from, tip, IM_COL32(0, 0, 0, 180), 3.4f);
+        draw->AddLine(from, tip, IM_COL32(255, 214, 64, 235), 2.f);
+        draw->AddCircleFilled(tip, 3.2f, IM_COL32(255, 214, 64, 235), 8);
+    }
 
     const float boxH = std::fabs(screenH / (monster ? kBoxScaleMonster : kBoxScalePlayer));
     const float boxW = boxH * (monster ? 0.58f : 0.52f);
@@ -319,7 +327,7 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     if (frame.status != EspStatus::Ready) return;
 
     const bool anyPlayer = feat.box || feat.line || feat.health || feat.name || feat.distance || feat.enemyCooldown
-                           || feat.proximityAlert12m;
+                           || feat.proximityAlert12m || feat.facing;
     const bool anyMon =
         feat.monsterBox || feat.monsterName || feat.monsterHealth;
     if (!anyPlayer && !anyMon) return;

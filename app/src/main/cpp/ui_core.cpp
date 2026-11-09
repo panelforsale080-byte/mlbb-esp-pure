@@ -208,7 +208,7 @@ static void menu_draw_enemy_esp_grid() {
         menu_checkbox_row3("Dist", &g_feat.distance, "Health", &g_feat.health, "Enemy CD",
                            &g_feat.enemyCooldown);
         menu_checkbox_row3("12m", &g_feat.proximityAlert12m, "CD panel", &g_feat.enemyCdSidePanel,
-                           nullptr, nullptr);
+                           "Facing", &g_feat.facing);
         ImGui::EndTable();
     }
     ImGui::PopStyleVar();
@@ -343,7 +343,7 @@ static void reader_loop() {
         } else if (pid > 0) {
             const bool wantMon = g_feat.monsterBox || g_feat.monsterName || g_feat.monsterHealth ||
                                  esp_retri_settings().enabled;
-            esp_tick_set_feature_flags(g_feat.name, g_feat.enemyCooldown, wantMon);
+            esp_tick_set_feature_flags(g_feat.name, g_feat.enemyCooldown, wantMon, g_feat.facing);
             if (g_needResolve.load()) {
                 if (g_espActive.load()) {
                     /* #147: vm_read tick only while ESP on; Resolve runs when ESP off */

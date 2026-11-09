@@ -25,6 +25,7 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     g_off.hp = rt.se_m_Hp;
     g_off.hpMax = rt.se_m_HpMax;
     g_off.level = rt.se_m_Level;
+    g_off.faceDir = rt.se_vecFaceDir;
     g_off.showKillWildTimes = rt.sp_m_KillWildTimes;
     g_off.showCooldownComp = rt.se_m_ShowCoolDownComp;
     g_off.heroName = rt.sp_m_HeroName;
@@ -58,6 +59,7 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
            (unsigned long long)g_off.showCdDic);
     ui_log("  [retri] ShowEntity.m_Level=0x%llx (EXTERNAL CalculateRetriDamage)",
            (unsigned long long)g_off.level);
+    ui_log("  [esp] ShowEntity._vecFaceDir=0x%llx", (unsigned long long)g_off.faceDir);
     ui_log("  [hero] m_ID=0x%llx SP.m_iOriginHeroId=0x%llx BM.m_RunBullets=0x%llx _RunBullets=0x%llx",
            (unsigned long long)g_off.entityId, (unsigned long long)g_off.heroOriginId,
            (unsigned long long)g_off.bmStaticRunBullets, (unsigned long long)g_off.bmStaticRunBulletsList);

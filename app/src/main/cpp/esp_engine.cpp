@@ -24,6 +24,7 @@
 static std::atomic<bool> g_tickHeroName{true};
 static std::atomic<bool> g_tickEnemyCd{true};
 static std::atomic<bool> g_tickMonsters{true};
+static std::atomic<bool> g_tickFacing{false};
 
 /* Reader tick index: stagger heavy per-entity reads (IL2 string + cooldown dict) so busy
  * fights do not run full cost for every entity every frame. */
@@ -32,10 +33,11 @@ static std::atomic<uint64_t> g_readerTickIndex{0};
 /** Stagger IL2 hero-name / cooldown dict walks — higher = less CPU, slightly staler CD/name. */
 static constexpr unsigned kHeavyReadInterval = 15;
 
-void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown, bool monsters) {
+void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown, bool monsters, bool facing) {
     g_tickHeroName.store(heroName);
     g_tickEnemyCd.store(enemyCooldown);
     g_tickMonsters.store(monsters);
+    g_tickFacing.store(facing);
 }
 
 static bool read_u32_pair(pid_t pid, uintptr_t offStart, uintptr_t offCool, uint32_t &startTime,
@@ -1030,6 +1032,17 @@ EspStatus esp_tick(EspFrame &out) {
         mem_read(g_pid, v + R.hp, t.hp);
         mem_read(g_pid, v + R.hpMax, t.hpMax);
         t.kind = kind;
+        if (kind == 0 && g_tickFacing.load() && R.faceDir && !(local && v == local)) {
+            float dir[3] = {};
+            if (mem_read(g_pid, v + R.faceDir, dir, sizeof(dir))) {
+                const float h = std::sqrt(dir[0] * dir[0] + dir[2] * dir[2]);
+                if (h > 0.05f) {
+                    t.faceX = dir[0] / h;
+                    t.faceZ = dir[2] / h;
+                    t.faceValid = true;
+                }
+            }
+        }
         if (labelOverride)
             std::snprintf(t.label, sizeof(t.label), "%s", labelOverride);
         else if (kind == 1)
@@ -1204,8 +1217,7 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
                 t.screenY = it->second.y;
                 t.screenValid = true;
                 live[t.ent] = it->second;
-                continue;
-            }
+            } else {
             const bool ok =
                 camSnap.validMatrixProj
                     ? esp_camera_proj_snap_w2s(camSnap, t.worldX, t.worldY, t.worldZ, sx, sy)
@@ -1215,15 +1227,28 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
                 t.screenY = sy;
                 t.screenValid = true;
                 live[t.ent] = {sx, sy, 0};
-                continue;
-            }
-            if (hadPrev && it->second.miss < kScreenHoldFrames) {
+            } else if (hadPrev && it->second.miss < kScreenHoldFrames) {
                 EntScreenHold st = it->second;
                 ++st.miss;
                 t.screenX = st.x;
                 t.screenY = st.y;
                 t.screenValid = true;
                 live[t.ent] = st;
+            }
+            }
+            if (t.faceValid && t.screenValid) {
+                const float tipX = t.worldX + t.faceX * 4.5f;
+                const float tipZ = t.worldZ + t.faceZ * 4.5f;
+                float fx = 0.f, fy = 0.f;
+                const bool tipOk =
+                    camSnap.validMatrixProj
+                        ? esp_camera_proj_snap_w2s(camSnap, tipX, t.worldY, tipZ, fx, fy)
+                        : esp_camera_world_to_screen(tipX, t.worldY, tipZ, fx, fy);
+                if (tipOk) {
+                    t.faceScreenX = fx;
+                    t.faceScreenY = fy;
+                    t.faceScreenValid = true;
+                }
             }
         }
     }

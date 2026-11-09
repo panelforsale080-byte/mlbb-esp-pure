@@ -278,6 +278,8 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
         out.runtime_fields.se_m_Hp = instance_field_offset(s, pid, il2, seKlass, "m_Hp");
         out.runtime_fields.se_m_HpMax = instance_field_offset(s, pid, il2, seKlass, "m_HpMax");
         out.runtime_fields.se_m_Level = instance_field_offset(s, pid, il2, seKlass, "m_Level");
+        out.runtime_fields.se_vecFaceDir =
+            instance_field_offset(s, pid, il2, seKlass, "_vecFaceDir");
         out.runtime_fields.se_m_ShowCoolDownComp =
             instance_field_offset(s, pid, il2, seKlass, "m_ShowCoolDownComp");
     }
