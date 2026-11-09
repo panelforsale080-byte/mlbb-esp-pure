@@ -374,15 +374,15 @@ static void reader_loop() {
                 lastStatus = f.status;
                 lastPid = pid;
             }
-            const int pub = g_frameLatest.load(std::memory_order_relaxed);
-            const int w = 1 - pub;
-            g_frameSlots[w] = std::move(f);
-            g_frameLatest.store(w, std::memory_order_release);
             if (esp_retri_settings().enabled) esp_retri_process(f);
             {
                 const EspHeroAutoSettings &haRun = esp_hero_auto_settings();
                 if (haRun.lingSword || haRun.gusionCombo) esp_hero_auto_process(f);
             }
+            const int pub = g_frameLatest.load(std::memory_order_relaxed);
+            const int w = 1 - pub;
+            g_frameSlots[w] = std::move(f);
+            g_frameLatest.store(w, std::memory_order_release);
         }
 
         const EspHeroAutoSettings &haSleep = esp_hero_auto_settings();
@@ -615,7 +615,7 @@ static void draw_ui() {
                     ImGui::Text("Live retri dmg: %d  (Lv %d)", rt.liveRetriDamage,
                                 rt.livePlayerLevel);
             } else {
-                ImGui::TextDisabled("Dmg = 750 + 150×Lv (Lv15 = 3000); live m_Level.");
+                ImGui::TextDisabled("Dmg = 520 + 80×Lv, +jungle bonus after 5 wild kills.");
             }
 
             ImGui::SeparatorText("Targets (pick jungle)");

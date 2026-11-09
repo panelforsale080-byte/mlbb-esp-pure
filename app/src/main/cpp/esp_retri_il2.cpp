@@ -25,8 +25,19 @@ void esp_retri_il2_bind(uintptr_t runtime_invoke, uintptr_t try_use_skill_mi) {
 
 bool esp_retri_il2_ready() { return g_rtInvoke && g_tryUseSkillMi; }
 
-bool esp_il2_try_use_skill(pid_t pid, uintptr_t showSelfPlayer, int32_t skillId, float dirX,
-                           float dirY, float dirZ, float posX, float posY, float posZ) {
+/** Boxed Il2Cpp enum: object header is 0x10, SPELL_CAST_RESULT.value__ follows. 0 = SUCCESS. */
+static bool read_boxed_spell_result(pid_t pid, uintptr_t boxed, int &code) {
+    if (!mem_ptr_ok(boxed)) return false;
+    int v = 0;
+    if (!mem_read(pid, boxed + 0x10, v)) return false;
+    code = v;
+    return true;
+}
+
+static bool invoke_try_use_skill(pid_t pid, uintptr_t showSelfPlayer, int32_t skillId, float dirX,
+                                 float dirY, float dirZ, float posX, float posY, float posZ,
+                                 EspIl2Cast *status) {
+    if (status) *status = EspIl2Cast::Failed;
     if (!esp_retri_il2_ready() || pid <= 0 || !mem_ptr_ok(showSelfPlayer)) return false;
 
     RemoteSession s{};
@@ -76,14 +87,28 @@ bool esp_il2_try_use_skill(pid_t pid, uintptr_t showSelfPlayer, int32_t skillId,
     mem_write(pid, paramArr, argPtrs, sizeof(argPtrs));
 
     uintptr_t ret = 0;
-    const bool ok =
+    const bool ran =
         remote_session_call(s, g_rtInvoke, {g_tryUseSkillMi, showSelfPlayer, paramArr, excSlot}, ret);
+    int code = -1;
+    const bool boxed = ran && read_boxed_spell_result(pid, ret, code);
     remote_session_end(s);
-    return ok;
+    if (status) {
+        if (!ran || !boxed) *status = EspIl2Cast::Failed;
+        else if (code == 0) *status = EspIl2Cast::Accepted;
+        else *status = EspIl2Cast::Rejected;
+    }
+    return ran;
 }
 
-bool esp_retri_il2_cast_summon(pid_t pid, uintptr_t showSelfPlayer, float dirX, float dirY,
-                               float dirZ) {
-    return esp_il2_try_use_skill(pid, showSelfPlayer, kRetriSkillId, dirX, dirY, dirZ, 0.f, 0.f,
-                                 0.f);
+bool esp_il2_try_use_skill(pid_t pid, uintptr_t showSelfPlayer, int32_t skillId, float dirX,
+                           float dirY, float dirZ, float posX, float posY, float posZ) {
+    return invoke_try_use_skill(pid, showSelfPlayer, skillId, dirX, dirY, dirZ, posX, posY, posZ,
+                                nullptr);
+}
+
+EspIl2Cast esp_retri_il2_cast_summon(pid_t pid, uintptr_t showSelfPlayer, float dirX, float dirY,
+                                     float dirZ) {
+    EspIl2Cast st = EspIl2Cast::Failed;
+    invoke_try_use_skill(pid, showSelfPlayer, kRetriSkillId, dirX, dirY, dirZ, 0.f, 0.f, 0.f, &st);
+    return st;
 }

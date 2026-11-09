@@ -20,12 +20,20 @@ static EspRetriSettings g_retri{};
 static std::atomic<int> g_dispW{0};
 static std::atomic<int> g_dispH{0};
 
-/** In-game punish table: 750 + 150*Lv (Lv1=900 … Lv15=3000). */
-static int calculate_retri_damage(int level) {
+/**
+ * Live punish: 520 + 80*Lv, plus 380 + (Lv-3)*40 once m_KillWildTimes > 4.
+ * The old 750+150*Lv table is higher than the spell actually deals, so the
+ * cast landed while the monster was still above real damage and lived.
+ */
+static int calculate_retri_damage(int level, int killWild) {
     int lv = level;
     if (lv < 1) lv = 1;
     if (lv > 15) lv = 15;
-    return 750 + (150 * lv);
+    int kw = killWild;
+    if (kw < 0 || kw > 40) kw = 0;
+    const int base = 520 + (80 * lv);
+    const int bonus = (kw > 4) ? (380 + (lv - 3) * 40) : 0;
+    return base + (bonus > 0 ? bonus : 0);
 }
 
 static int read_local_level(pid_t pid, uintptr_t localEnt, uintptr_t levelOff, int fallback) {
@@ -56,15 +64,15 @@ static int resolve_retri_damage(const EspFrame &frame, const EspRuntimeOff &R, i
                                 int &outKillWild, bool &outHaveKw) {
     outHaveKw = read_kill_wild_times(frame.pid, frame.localPlayerEnt, R, outKillWild);
     outLevel = read_local_level(frame.pid, frame.localPlayerEnt, R.level, g_retri.assumedLevel);
-    return calculate_retri_damage(outLevel);
+    return calculate_retri_damage(outLevel, outHaveKw ? outKillWild : 0);
 }
 
 static inline bool id_matches_external(int id, const EspRetriSettings &s) {
     if (s.targetLord && id == 2002) return true;
     if (s.targetTurtle && (id == 2003 || id == 2110)) return true;
     if (s.targetBlue && (id == 2005 || id == 2221)) return true;
-    if (s.targetLito && id == 2056) return true;
-    if (s.targetCrab && (id == 2223 || id == 2222)) return true;
+    if (s.targetLito && (id == 2056 || id == 2072)) return true;
+    if (s.targetCrab && (id == 2223 || id == 2222 || id == 2011 || id == 2013)) return true;
     if (s.targetRed && (id == 2004 || id == 2220)) return true;
     return false;
 }
@@ -84,11 +92,15 @@ static void fire_retri_tap() {
     ui_log("[retri] inject %s @ %d,%d", how, x, y);
 }
 
+/** m_Hp is a 32-bit field. An 8-byte read picks up the next field and looks like a huge HP. */
 static int read_entity_hp(pid_t pid, uintptr_t ent, uintptr_t hpOff) {
-    int64_t hp64 = 0;
-    if (mem_read(pid, ent + hpOff, hp64) && hp64 > 0 && hp64 < 10000000) return (int)hp64;
     int hp32 = 0;
-    if (mem_read(pid, ent + hpOff, hp32) && hp32 > 0) return hp32;
+    const bool ok32 = mem_read(pid, ent + hpOff, hp32) && hp32 > 0 && hp32 < 250000;
+    int64_t hp64 = 0;
+    const bool ok64 = mem_read(pid, ent + hpOff, hp64) && hp64 > 0 && hp64 < 250000;
+    if (ok32 && ok64 && (int)hp64 != hp32) return hp32;
+    if (ok32) return hp32;
+    if (ok64) return (int)hp64;
     return 0;
 }
 
@@ -102,7 +114,7 @@ static bool retri_mob_alive(pid_t pid, uintptr_t ent, const EspRuntimeOff &R, in
     if (hp <= 0) return false;
     if (R.hpMax) {
         int hpMax = 0;
-        if (mem_read(pid, ent + R.hpMax, hpMax) && hpMax > 0 && hp > hpMax) return false;
+        if (mem_read(pid, ent + R.hpMax, hpMax) && hpMax >= 100 && hp > hpMax * 2) return false;
     }
     float wx = 0, wy = 0, wz = 0;
     if (!esp_read_entity_world(pid, ent, wx, wy, wz)) return false;
@@ -115,14 +127,49 @@ static void update_norm_from_pixels(float sw, float sh) {
     if (sh > 1.f) g_retri.tapNormY = g_retri.tapY / sh;
 }
 
-/** EXTERNAL ProcessAutoRetribution: scan full monster list, not ESP target cap. */
-static bool find_closest_retri_target(const EspFrame &frame, const EspRuntimeOff &R, float selfX,
-                                      float selfY, float selfZ, uintptr_t &outEnt,
-                                      float &outDist, int &outHp, int &outId) {
+static bool self_pos_ok(float x, float y, float z) {
+    (void)y;
+    return std::isfinite(x) && std::isfinite(z) &&
+           !(std::fabs(x) < 0.01f && std::fabs(z) < 0.01f) && std::fabs(x) <= 10000.f &&
+           std::fabs(z) <= 10000.f;
+}
+
+/** Other battle spells. 0 / 20020 / unknown still attempts the cast. */
+static bool summon_is_other_spell(int sid) {
+    switch (sid) {
+    case 20030:
+    case 20040:
+    case 20050:
+    case 20060:
+    case 20070:
+    case 20080:
+    case 20100:
+    case 20140:
+    case 20150:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/**
+ * Pick a mob that retri can actually secure.
+ * The closest mob is often a full-HP buff; stopping on it skipped a lord/turtle
+ * a few meters farther that was already in execute range.
+ * Same-camp jungle is skipped so the spell is not spent on our own camp.
+ * Range is horizontal (XZ). Skill reach does not include height.
+ */
+static bool find_executable_retri_target(const EspFrame &frame, const EspRuntimeOff &R, float selfX,
+                                         float selfY, float selfZ, int retriDmg, float maxDist,
+                                         uintptr_t &outEnt, float &outDist, int &outHp, int &outId,
+                                         int &dbgId, int &dbgHp, float &dbgDist) {
     outEnt = 0;
     outDist = 1e9f;
     outHp = 0;
     outId = 0;
+    dbgId = 0;
+    dbgHp = 0;
+    dbgDist = 1e9f;
     if (!frame.bmInstance) return false;
 
     std::vector<std::pair<int, uintptr_t>> monsters;
@@ -134,15 +181,26 @@ static bool find_closest_retri_target(const EspFrame &frame, const EspRuntimeOff
         int hid = kv.first;
         if (!hid) mem_read(frame.pid, ent + R.entityId, hid);
         if (!id_matches_external(hid, g_retri)) continue;
+        if (R.sameCamp) {
+            uint8_t camp = 0;
+            if (mem_read(frame.pid, ent + R.sameCamp, camp) && camp) continue;
+        }
         int hp = 0;
         if (!retri_mob_alive(frame.pid, ent, R, &hp)) continue;
         float mx = 0, my = 0, mz = 0;
         if (!esp_read_entity_world(frame.pid, ent, mx, my, mz)) continue;
-        const float dx = mx - selfX;
         const float dy = my - selfY;
+        if (!std::isfinite(dy) || std::fabs(dy) > 25.f) continue;
+        const float dx = mx - selfX;
         const float dz = mz - selfZ;
-        const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist < outDist) {
+        const float dist = std::sqrt(dx * dx + dz * dz);
+        if (dist < dbgDist) {
+            dbgDist = dist;
+            dbgId = hid;
+            dbgHp = hp;
+        }
+        if (dist > maxDist || hp > retriDmg) continue;
+        if (!outEnt || hp < outHp || (hp == outHp && dist < outDist)) {
             outDist = dist;
             outEnt = ent;
             outHp = hp;
@@ -206,42 +264,70 @@ void esp_retri_process(const EspFrame &frame) {
     g_retri.liveKillWildTimes = haveKw ? killWild : -1;
     constexpr float kMaxDist = 8.0f;
 
-    uintptr_t closestEnt = 0;
-    float closestDist = 1e9f;
-    int closestHp = 0;
-    int closestId = 0;
-    find_closest_retri_target(frame, R, frame.selfX, frame.selfY, frame.selfZ, closestEnt,
-                              closestDist, closestHp, closestId);
+    float selfX = frame.selfX;
+    float selfY = frame.selfY;
+    float selfZ = frame.selfZ;
+    if (!self_pos_ok(selfX, selfY, selfZ) && frame.localPlayerEnt)
+        esp_read_entity_world(frame.pid, frame.localPlayerEnt, selfX, selfY, selfZ);
+
+    uintptr_t execEnt = 0;
+    float execDist = 1e9f;
+    int execHp = 0;
+    int execId = 0;
+    int dbgId = 0, dbgHp = 0;
+    float dbgDist = 1e9f;
+    if (self_pos_ok(selfX, selfY, selfZ)) {
+        find_executable_retri_target(frame, R, selfX, selfY, selfZ, retriDmg, kMaxDist, execEnt,
+                                     execDist, execHp, execId, dbgId, dbgHp, dbgDist);
+    }
 
     static uint64_t s_lastDbgMs = 0;
     if (now - s_lastDbgMs > 3000) {
         s_lastDbgMs = now;
-        if (closestEnt) {
-            ui_log("[retri] lvl=%d kw=%d dmg=%d cand id=%d hp=%d dist=%.2f (hp<=%d)",
-                   playerLevel, haveKw ? killWild : -1, retriDmg, closestId, closestHp,
-                   closestDist, retriDmg);
+        if (execEnt) {
+            ui_log("[retri] lvl=%d kw=%d dmg=%d EXEC id=%d hp=%d dist=%.2f",
+                   playerLevel, haveKw ? killWild : -1, retriDmg, execId, execHp, execDist);
+        } else if (dbgId) {
+            ui_log("[retri] lvl=%d kw=%d dmg=%d closest id=%d hp=%d dist=%.2f (not executable)",
+                   playerLevel, haveKw ? killWild : -1, retriDmg, dbgId, dbgHp, dbgDist);
         } else {
-            ui_log("[retri] lvl=%d kw=%d dmg=%d — no retri mob (Targets?)",
+            ui_log("[retri] lvl=%d kw=%d dmg=%d — no enemy retri mob",
                    playerLevel, haveKw ? killWild : -1, retriDmg);
         }
     }
 
-    if (!closestEnt || closestDist > kMaxDist) return;
-    if (closestHp <= 0 || closestHp > retriDmg) return;
+    if (!execEnt) return;
 
-    const int realHp = read_entity_hp(frame.pid, closestEnt, R.hp);
+    const int realHp = read_entity_hp(frame.pid, execEnt, R.hp);
     if (realHp <= 0 || realHp > retriDmg) return;
+
+    if (R.summonSkillId && frame.localPlayerEnt) {
+        int sid = 0;
+        if (mem_read(frame.pid, frame.localPlayerEnt + R.summonSkillId, sid) &&
+            summon_is_other_spell(sid)) {
+            static uint64_t s_lastSpellLog = 0;
+            if (now - s_lastSpellLog > 3000) {
+                s_lastSpellLog = now;
+                ui_log("[retri] summon id %d is not retribution — skip", sid);
+            }
+            return;
+        }
+    }
+
+    /* First cast is immediate. Later attempts wait so a ptrace retry cannot cancel the spell. */
+    static uint64_t s_nextTryMs = 0;
+    if (now < s_nextTryMs) return;
 
     if (s_castBusy.exchange(true, std::memory_order_acq_rel)) return;
     CastBusyGuard castGuard(s_castBusy);
 
-    bool castOk = false;
     if (g_retri.useIl2SummonCast && esp_retri_il2_ready() && frame.localPlayerEnt) {
         float mx = 0, my = 0, mz = 0;
-        if (esp_read_entity_world(frame.pid, closestEnt, mx, my, mz)) {
-            float dx = mx - frame.selfX;
-            float dy = my - frame.selfY;
-            float dz = mz - frame.selfZ;
+        EspIl2Cast st = EspIl2Cast::Failed;
+        if (esp_read_entity_world(frame.pid, execEnt, mx, my, mz)) {
+            float dx = mx - selfX;
+            float dy = my - selfY;
+            float dz = mz - selfZ;
             const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
             if (len > 1e-4f) {
                 dx /= len;
@@ -252,20 +338,25 @@ void esp_retri_process(const EspFrame &frame) {
                 dy = 0.f;
                 dz = 0.f;
             }
-            castOk = esp_retri_il2_cast_summon(frame.pid, frame.localPlayerEnt, dx, dy, dz);
+            st = esp_retri_il2_cast_summon(frame.pid, frame.localPlayerEnt, dx, dy, dz);
         }
-        static uint64_t s_lastCastLogMs = 0;
-        if (!castOk || now - s_lastCastLogMs > 200) {
-            s_lastCastLogMs = now;
-            ui_log("[retri] %s id=%d hp=%d dist=%.1f (IL2 TryUseSkill 20020)",
-                   castOk ? "CAST" : "CAST-FAIL", closestId, realHp, closestDist);
-        }
-        if (!castOk)
+        const char *tag = "FAIL";
+        if (st == EspIl2Cast::Accepted) tag = "CAST";
+        else if (st == EspIl2Cast::Rejected) tag = "REJECT";
+        ui_log("[retri] %s id=%d hp=%d dist=%.1f (IL2 TryUseSkill 20020)", tag, execId, realHp,
+               execDist);
+        if (st == EspIl2Cast::Accepted) {
+            s_nextTryMs = now + 650;
+        } else if (st == EspIl2Cast::Rejected) {
+            s_nextTryMs = now + 180;
+        } else {
             fire_retri_tap();
+            s_nextTryMs = now + 180;
+        }
     } else {
         fire_retri_tap();
-        castOk = true;
-        ui_log("[retri] TAP id=%d hp=%d dist=%.1f (shell / uinput)", closestId, realHp, closestDist);
+        s_nextTryMs = now + 650;
+        ui_log("[retri] TAP id=%d hp=%d dist=%.1f (shell / uinput)", execId, realHp, execDist);
     }
 }
 
