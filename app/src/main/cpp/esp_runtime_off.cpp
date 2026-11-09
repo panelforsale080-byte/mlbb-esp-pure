@@ -18,11 +18,7 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     g_off.vCachePosition = rt.se_vCachePosition;
     g_off.entityId = rt.se_m_ID;
     g_off.monsterConfig = rt.sm_m_Config;
-    g_off.monsterTransConfig = rt.sm_m_TransConfig;
     g_off.monsterTableId = rt.monster_m_ID;
-    g_off.monsterTransId = rt.monster_m_TransId;
-    g_off.monsterName = rt.monster_m_Name;
-    g_off.monsterPrefab = rt.monster_m_Prefabs;
     g_off.wildType = rt.sw_m_wildType;
     g_off.entityDeath = rt.se_m_bDeath;
     g_off.sameCamp = rt.se_m_bSameCampType;
@@ -101,9 +97,6 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     ui_log("  dicM=0x%llx ShowMonster.m_Config=0x%llx CData_Monster.m_ID=0x%llx",
            (unsigned long long)g_off.dicMonsterShow, (unsigned long long)g_off.monsterConfig,
            (unsigned long long)g_off.monsterTableId);
-    ui_log("  [dev] m_TransId=0x%llx m_MonsterName=0x%llx m_Prefabs=0x%llx m_TransConfig=0x%llx",
-           (unsigned long long)g_off.monsterTransId, (unsigned long long)g_off.monsterName,
-           (unsigned long long)g_off.monsterPrefab, (unsigned long long)g_off.monsterTransConfig);
     ui_log("  SE pos=0x%llx id=0x%llx death=0x%llx camp=0x%llx hp=0x%llx level=0x%llx",
            (unsigned long long)g_off.lastPosition, (unsigned long long)g_off.entityId,
            (unsigned long long)g_off.entityDeath, (unsigned long long)g_off.sameCamp,

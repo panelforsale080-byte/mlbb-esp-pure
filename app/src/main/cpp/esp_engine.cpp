@@ -1,4 +1,5 @@
 #include "esp_engine.hpp"
+#include "esp_monid.hpp"
 #include "esp_camera.hpp"
 #include "esp_retri_il2.hpp"
 #include "conrent_esp.hpp"
@@ -1321,6 +1322,7 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
         }
     }
     g_entScreen.swap(live);
+    if (esp_monid_world_on()) esp_monid_project(camSnap);
     esp_camera_frame_end();
 }
 

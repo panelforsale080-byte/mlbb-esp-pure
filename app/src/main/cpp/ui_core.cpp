@@ -5,6 +5,7 @@
 #include "esp_hero_auto.hpp"
 #include "esp_lobby.hpp"
 #include "esp_monid.hpp"
+#include "esp_camera.hpp"
 #include "proc.hpp"
 #include "ui_log.hpp"
 #include "clip_android.hpp"
@@ -351,7 +352,8 @@ static void reader_loop() {
                                        g_feat.playerInfo);
             esp_lobby_set_enabled(g_feat.lobby);
             if (g_feat.lobby) esp_lobby_tick(pid);
-            esp_monid_set_enabled(g_showMenu && g_menuPage == 2);
+            const bool wantDev = (g_showMenu && g_menuPage == 2) || esp_monid_world_on();
+            esp_monid_set_enabled(wantDev);
             if (g_needResolve.load()) {
                 if (g_espActive.load()) {
                     /* #147: vm_read tick only while ESP on; Resolve runs when ESP off */
@@ -364,7 +366,8 @@ static void reader_loop() {
             }
             EspFrame f;
             esp_tick(f);
-            if (g_showMenu && g_menuPage == 2) esp_monid_tick(f);
+            const bool wantDevDraw = (g_showMenu && g_menuPage == 2) || esp_monid_world_on();
+            if (wantDevDraw) esp_monid_tick(f);
             g_lastTargetCount.store(static_cast<int>(f.targets.size()), std::memory_order_relaxed);
             if (g_espActive.load() && f.status == EspStatus::Ready) {
                 float sw = (float)g_width;
@@ -372,6 +375,18 @@ static void reader_loop() {
                 if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
                 if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
                 esp_project_screens(f, sw, sh);
+            } else if (esp_monid_world_on() && f.status == EspStatus::Ready && f.pid > 0) {
+                float sw = (float)g_width;
+                float sh = (float)g_height;
+                if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
+                if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
+                if (sw > 1.f && sh > 1.f) {
+                    esp_camera_frame_begin(f.pid, sw, sh, true);
+                    EspCameraProjSnap camSnap{};
+                    esp_camera_acquire_proj_for_draw(f.pid, camSnap);
+                    esp_monid_project(camSnap);
+                    esp_camera_frame_end();
+                }
             }
             if (f.status != lastStatus || pid != lastPid) {
                 ui_log("[tick] %s | %s", status_name(f.status), f.hint);
@@ -494,6 +509,8 @@ static void draw_ui() {
     if (!hideEspOverlay && g_feat.lobby) {
         esp_lobby_draw(ImGui::GetBackgroundDrawList(), sw, sh);
     }
+    if (!hideEspOverlay && esp_monid_world_on())
+        esp_monid_draw_world(ImGui::GetBackgroundDrawList());
     if (!hideEspOverlay && g_espActive.load() && fr.status == EspStatus::Ready) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
         esp_draw_overlay(bg, sw, sh, fr, g_feat, g_showMenu);
