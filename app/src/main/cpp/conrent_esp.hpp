@@ -16,6 +16,9 @@ struct ConrentRuntimeOffsets {
     uintptr_t se_CachePosition = 0;
     uintptr_t se_vCachePosition = 0;
     uintptr_t se_m_ID = 0;
+    uintptr_t sm_m_Config = 0;          /* ShowMonster.m_Config */
+    uintptr_t monster_m_ID = 0;         /* CData_Monster_Element.m_ID */
+    uintptr_t sw_m_wildType = 0;        /* ShowWildMonster.m_wildType */
     uintptr_t se_m_bDeath = 0;
     uintptr_t se_m_bSameCampType = 0;
     uintptr_t se_m_Hp = 0;

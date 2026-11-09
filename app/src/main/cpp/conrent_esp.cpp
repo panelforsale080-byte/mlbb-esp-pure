@@ -260,6 +260,18 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
             out.runtime_fields.se_vCachePosition =
                 instance_field_offset(s, pid, il2, seKlass, "vCachePosition");
         out.runtime_fields.se_m_ID = instance_field_offset(s, pid, il2, seKlass, "m_ID");
+        uintptr_t smKlass = find_class_fast(s, pid, il2, images, "ShowMonster", false);
+        if (smKlass)
+            out.runtime_fields.sm_m_Config =
+                instance_field_offset(s, pid, il2, smKlass, "m_Config");
+        uintptr_t monKlass = find_class_fast(s, pid, il2, images, "CData_Monster_Element", false);
+        if (monKlass)
+            out.runtime_fields.monster_m_ID =
+                instance_field_offset(s, pid, il2, monKlass, "m_ID");
+        uintptr_t wildKlass = find_class_fast(s, pid, il2, images, "ShowWildMonster", false);
+        if (wildKlass)
+            out.runtime_fields.sw_m_wildType =
+                instance_field_offset(s, pid, il2, wildKlass, "m_wildType");
         out.runtime_fields.se_m_bDeath = instance_field_offset(s, pid, il2, seKlass, "m_bDeath");
         out.runtime_fields.se_m_bSameCampType =
             instance_field_offset(s, pid, il2, seKlass, "m_bSameCampType");

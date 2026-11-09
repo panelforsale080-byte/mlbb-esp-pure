@@ -175,7 +175,10 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
         int hid = kv.first;
         if (!hid) mem_read(frame.pid, ent + R.entityId, hid);
         if (!id_matches_external(hid, g_retri)) continue;
-        if (R.sameCamp) {
+        /* Buffs are camp-owned. Lord, turtle, crab, and litho are neutral and
+         * must still be targeted when m_bSameCampType is set. */
+        const bool campBuff = hid == 2004 || hid == 2220 || hid == 2005 || hid == 2221;
+        if (campBuff && R.sameCamp) {
             uint8_t camp = 0;
             if (mem_read(frame.pid, ent + R.sameCamp, camp) && camp) continue;
         }

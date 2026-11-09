@@ -17,6 +17,9 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     g_off.cachePosition = rt.se_CachePosition;
     g_off.vCachePosition = rt.se_vCachePosition;
     g_off.entityId = rt.se_m_ID;
+    g_off.monsterConfig = rt.sm_m_Config;
+    g_off.monsterTableId = rt.monster_m_ID;
+    g_off.wildType = rt.sw_m_wildType;
     g_off.entityDeath = rt.se_m_bDeath;
     g_off.sameCamp = rt.se_m_bSameCampType;
     g_off.hp = rt.se_m_Hp;

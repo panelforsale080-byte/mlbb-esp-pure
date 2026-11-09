@@ -140,10 +140,10 @@ static bool dict_entries(pid_t pid, uintptr_t dict,
     uintptr_t entries = 0;
     int count = 0;
     if (!mem_read(pid, dict + Il2::DictEntries, entries) || !entries) return false;
-    if (!mem_read(pid, dict + Il2::DictCount, count) || count <= 0 || count > 256)
+    if (!mem_read(pid, dict + Il2::DictCount, count) || count <= 0 || count > 1024)
         return false;
     int maxLength = 0;
-    if (!mem_read(pid, entries + Il2::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
+    if (!mem_read(pid, entries + Il2::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 4096)
         return false;
     const uintptr_t data = entries + Il2::ArrData;
     const size_t slotBytes = (size_t)maxLength * Il2::EntryStride;
@@ -336,7 +336,7 @@ static bool list_entities(pid_t pid, uintptr_t list, std::vector<uintptr_t> &out
     uintptr_t arr = 0;
     int size = 0;
     if (!mem_read(pid, list + Il2::ListItems, arr) || !arr || !mem_ptr_ok(arr)) return false;
-    if (!mem_read(pid, list + Il2::ListSize, size) || size <= 0 || size > 128) return false;
+    if (!mem_read(pid, list + Il2::ListSize, size) || size <= 0 || size > 512) return false;
     int maxLength = 0;
     if (!mem_read(pid, arr + Il2::ArrMaxLen, maxLength) || maxLength <= 0 || maxLength > 512)
         return false;
@@ -757,8 +757,20 @@ static bool find_bm(pid_t pid, const std::vector<MapsReg> &maps,
 static void refresh_instance(pid_t pid) {
     if (!g_bmStatics) return;
     uintptr_t inst = 0;
+    /* BattleManager.Instance is the first static. A new match replaces this pointer. */
     if (mem_read(pid, g_bmStatics + 0, inst) && mem_ptr_ok(inst))
         g_bmInstance = inst;
+}
+
+/** Reject a stale match-1 BattleManager once the static Instance has moved on. */
+static bool bm_container_live(pid_t pid, uintptr_t bm) {
+    if (!esp_runtime_off_ready() || !mem_ptr_ok(bm)) return false;
+    const EspRuntimeOff &R = esp_runtime_off();
+    uintptr_t local = 0, mdict = 0, mlist = 0;
+    if (R.localPlayerShow) mem_read(pid, bm + R.localPlayerShow, local);
+    if (R.dicMonsterShow) mem_read(pid, bm + R.dicMonsterShow, mdict);
+    if (R.listMonsterShow) mem_read(pid, bm + R.listMonsterShow, mlist);
+    return mem_ptr_ok(local) && (mem_ptr_ok(mdict) || mem_ptr_ok(mlist));
 }
 
 void esp_reset() {
@@ -947,7 +959,16 @@ EspStatus esp_tick(EspFrame &out) {
         return out.status;
     }
     refresh_instance(g_pid);
-    const uintptr_t bm = g_bmInstancePin ? g_bmInstancePin : g_bmInstance;
+    uintptr_t bm = 0;
+    if (g_bmInstance && bm_container_live(g_pid, g_bmInstance)) {
+        if (g_bmInstancePin && g_bmInstance != g_bmInstancePin)
+            ui_log("[bm] match instance 0x%llx -> 0x%llx",
+                   (unsigned long long)g_bmInstancePin, (unsigned long long)g_bmInstance);
+        g_bmInstancePin = g_bmInstance;
+        bm = g_bmInstance;
+    } else {
+        bm = g_bmInstancePin ? g_bmInstancePin : g_bmInstance;
+    }
     if (bm) g_bmInstance = bm;
     if (!bm) {
         out.status = EspStatus::NoInstance;
@@ -970,27 +991,12 @@ EspStatus esp_tick(EspFrame &out) {
     out.selfY = self.y;
     out.selfZ = self.z;
 
-    uintptr_t pDict = 0, mDict = 0;
+    uintptr_t pDict = 0;
     mem_read(g_pid, bm + R.dicPlayerShow, pDict);
     const bool wantMonsters = g_tickMonsters.load();
-    if (wantMonsters) mem_read(g_pid, bm + R.dicMonsterShow, mDict);
     std::vector<std::pair<int, uintptr_t>> players, monsters;
     dict_entries(g_pid, pDict, players);
-    if (wantMonsters && R.listMonsterShow) {
-        uintptr_t mList = 0;
-        if (mem_read(g_pid, bm + R.listMonsterShow, mList) && mList) {
-            std::vector<uintptr_t> listM;
-            if (list_entities(g_pid, mList, listM)) {
-                for (const uintptr_t ent : listM) {
-                    if (!ent) continue;
-                    int id = 0;
-                    mem_read(g_pid, ent + R.entityId, id);
-                    monsters.emplace_back(id, ent);
-                }
-            }
-        }
-    }
-    if (wantMonsters && monsters.empty()) dict_entries(g_pid, mDict, monsters);
+    if (wantMonsters) esp_monster_dict_entries(g_pid, bm, monsters);
     if (players.empty() && R.listPlayerShow) {
         uintptr_t pList = 0;
         mem_read(g_pid, bm + R.listPlayerShow, pList);
@@ -1006,7 +1012,10 @@ EspStatus esp_tick(EspFrame &out) {
         if (mem_read(g_pid, v + R.entityDeath, dead) && dead) return;
         if (mem_read(g_pid, v + R.sameCamp, camp) && camp) return;
         int id = key;
-        mem_read(g_pid, v + R.entityId, id);
+        if (!(kind == 1 && esp_monster_id(key))) {
+            int live = 0;
+            if (R.entityId && mem_read(g_pid, v + R.entityId, live)) id = live;
+        }
         if (kind == 1 && !esp_monster_id(id)) return;
         Vec3 pos{};
         if (!read_entity_pos(g_pid, v, pos)) return;
@@ -1071,9 +1080,12 @@ EspStatus esp_tick(EspFrame &out) {
     for (const auto &kv : players) push(kv.second, 0, nullptr, kv.first);
     for (const auto &kv : monsters) {
         int id = kv.first;
-        if (kv.second) mem_read(g_pid, kv.second + R.entityId, id);
+        if (!esp_monster_id(id) && kv.second && R.entityId) {
+            int live = 0;
+            if (mem_read(g_pid, kv.second + R.entityId, live)) id = live;
+        }
         if (!esp_monster_id(id)) continue;
-        push(kv.second, 1, esp_monster_label(id), kv.first);
+        push(kv.second, 1, esp_monster_label(id), id);
     }
 
     {
@@ -1104,6 +1116,8 @@ EspStatus esp_tick(EspFrame &out) {
     out.bmStatics = g_bmStatics;
     out.bmInstance = bm;
     out.playerDict = pDict;
+    uintptr_t mDict = 0;
+    if (R.dicMonsterShow) mem_read(g_pid, bm + R.dicMonsterShow, mDict);
     out.monsterDict = mDict;
     out.dictPlayers = (int)players.size();
     out.dictMonsters = (int)monsters.size();
@@ -1274,33 +1288,59 @@ bool esp_il2_better_list_ptrs(pid_t pid, uintptr_t listObj, std::vector<uintptr_
     return false;
 }
 
+/** Template id. Entity m_ID is often a guid on lord/turtle; the table id lives on m_Config. */
+static int read_monster_template_id(pid_t pid, uintptr_t ent, const EspRuntimeOff &R) {
+    int id = 0;
+    if (R.entityId) mem_read(pid, ent + R.entityId, id);
+    if (esp_monster_id(id)) return id;
+    if (R.monsterConfig && R.monsterTableId) {
+        uintptr_t cfg = 0;
+        int cid = 0;
+        if (mem_read(pid, ent + R.monsterConfig, cfg) && mem_ptr_ok(cfg) &&
+            mem_read(pid, cfg + R.monsterTableId, cid) && esp_monster_id(cid))
+            return cid;
+    }
+    if (R.wildType) {
+        int wt = 0;
+        if (mem_read(pid, ent + R.wildType, wt)) {
+            if (wt == 4) return 2002; /* WildType.LINGZHU */
+            if (wt == 3) return 2003; /* WildType.SHENGUI */
+        }
+    }
+    return id;
+}
+
 bool esp_monster_dict_entries(pid_t pid, uintptr_t bmInstance,
                               std::vector<std::pair<int, uintptr_t>> &out) {
     if (!esp_runtime_off_ready() || !bmInstance) return false;
     const EspRuntimeOff &R = esp_runtime_off();
     out.clear();
+    std::unordered_set<uintptr_t> seen;
 
-    auto fill_from_list = [&]() -> bool {
-        if (!R.listMonsterShow) return false;
-        uintptr_t mList = 0;
-        if (!mem_read(pid, bmInstance + R.listMonsterShow, mList) || !mList) return false;
-        std::vector<uintptr_t> listM;
-        if (!list_entities(pid, mList, listM)) return false;
-        for (const uintptr_t ent : listM) {
-            if (!ent) continue;
-            int id = 0;
-            mem_read(pid, ent + R.entityId, id);
-            out.emplace_back(id, ent);
-        }
-        return !out.empty();
+    auto add_ent = [&](uintptr_t ent) {
+        if (!ent || !mem_ptr_ok(ent) || !seen.insert(ent).second) return;
+        out.emplace_back(read_monster_template_id(pid, ent, R), ent);
     };
 
-    /* EXTERNAL ProcessAutoRetribution: m_ShowMonsters live list (skips dead / pre-respawn dict ghosts). */
-    if (fill_from_list()) return true;
-
-    uintptr_t mDict = 0;
-    if (mem_read(pid, bmInstance + R.dicMonsterShow, mDict) && mDict)
-        dict_entries(pid, mDict, out);
+    /* Show list has the buffs that stay resident. The dict still has lord/turtle
+     * after a new match replaces the list. Either source alone misses one of them. */
+    if (R.listMonsterShow) {
+        uintptr_t mList = 0;
+        if (mem_read(pid, bmInstance + R.listMonsterShow, mList) && mList) {
+            std::vector<uintptr_t> listM;
+            if (list_entities(pid, mList, listM)) {
+                for (const uintptr_t ent : listM) add_ent(ent);
+            }
+        }
+    }
+    if (R.dicMonsterShow) {
+        uintptr_t mDict = 0;
+        std::vector<std::pair<int, uintptr_t>> dictM;
+        if (mem_read(pid, bmInstance + R.dicMonsterShow, mDict) && mDict &&
+            dict_entries(pid, mDict, dictM)) {
+            for (const auto &kv : dictM) add_ent(kv.second);
+        }
+    }
     return !out.empty();
 }
 
