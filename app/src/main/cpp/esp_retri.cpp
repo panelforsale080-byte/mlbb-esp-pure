@@ -225,11 +225,28 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
     std::vector<std::pair<int, uintptr_t>> monsters;
     if (!esp_monster_dict_entries(frame.pid, frame.bmInstance, monsters)) return false;
 
+    struct Mob {
+        uintptr_t ent;
+        int id;
+        int hp;
+        int hpMax;
+        float x, y, z, dist;
+    };
+    std::vector<Mob> alive;
+    alive.reserve(monsters.size());
+
     for (const auto &kv : monsters) {
         const uintptr_t ent = kv.second;
         if (!ent) continue;
         int hid = kv.first;
-        if (!hid) mem_read(frame.pid, ent + R.entityId, hid);
+        if (!hid && R.entityId) mem_read(frame.pid, ent + R.entityId, hid);
+        if (R.monsterConfig && R.monsterTableId) {
+            uintptr_t cfg = 0;
+            int cid = 0;
+            if (mem_read(frame.pid, ent + R.monsterConfig, cfg) && mem_ptr_ok(cfg) &&
+                mem_read(frame.pid, cfg + R.monsterTableId, cid) && id_matches_external(cid, g_retri))
+                hid = cid;
+        }
         if (!id_matches_external(hid, g_retri)) continue;
         /* Buffs are camp-owned. Lord, turtle, crab, and litho are neutral and
          * must still be targeted when m_bSameCampType is set. */
@@ -252,13 +269,30 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
             dbgId = hid;
             dbgHp = hp;
         }
-        if (!hp_ready_to_secure(ent, hp, hpMax, retriDmg)) continue;
-        if (dist > maxDist) continue;
-        if (!outEnt || hp < outHp || (hp == outHp && dist < outDist)) {
-            outDist = dist;
-            outEnt = ent;
-            outHp = hp;
-            outId = hid;
+        alive.push_back({ent, hid, hp, hpMax, mx, my, mz, dist});
+    }
+
+    for (const Mob &m : alive) {
+        if (m.dist > maxDist) continue;
+        if (!hp_ready_to_secure(m.ent, m.hp, m.hpMax, retriDmg)) continue;
+        /* A low-HP copy sitting next to the real turtle/lord still has the same id.
+         * Skip it while the healthy body of that id is nearby. */
+        bool ghost = false;
+        for (const Mob &other : alive) {
+            if (other.ent == m.ent || other.id != m.id || other.hp <= retriDmg) continue;
+            const float ox = other.x - m.x;
+            const float oz = other.z - m.z;
+            if (ox * ox + oz * oz < 18.f * 18.f) {
+                ghost = true;
+                break;
+            }
+        }
+        if (ghost) continue;
+        if (!outEnt || m.hp < outHp || (m.hp == outHp && m.dist < outDist)) {
+            outDist = m.dist;
+            outEnt = m.ent;
+            outHp = m.hp;
+            outId = m.id;
         }
     }
     return outEnt != 0;
@@ -354,6 +388,20 @@ void esp_retri_process(const EspFrame &frame) {
 
     const int realHp = read_entity_hp(frame.pid, execEnt, R.hp);
     if (realHp <= 0 || realHp > retriDmg) return;
+    int confirmId = execId;
+    if (R.entityId) {
+        int live = 0;
+        if (mem_read(frame.pid, execEnt + R.entityId, live) && id_matches_external(live, g_retri))
+            confirmId = live;
+    }
+    if (R.monsterConfig && R.monsterTableId) {
+        uintptr_t cfg = 0;
+        int cid = 0;
+        if (mem_read(frame.pid, execEnt + R.monsterConfig, cfg) && mem_ptr_ok(cfg) &&
+            mem_read(frame.pid, cfg + R.monsterTableId, cid) && id_matches_external(cid, g_retri))
+            confirmId = cid;
+    }
+    if (confirmId != execId) return;
 
     if (R.summonSkillId && frame.localPlayerEnt) {
         int sid = 0;
@@ -399,8 +447,9 @@ void esp_retri_process(const EspFrame &frame) {
         if (st == EspIl2Cast::Failed) {
             s_nextTryMs = now + 80;
         } else {
+            /* One send. Repeating TryUseSkill every tick cancels hero skill animations. */
             ui_log("[retri] CAST id=%d hp=%d dist=%.1f", execId, realHp, execDist);
-            s_nextTryMs = now + 220;
+            s_nextTryMs = now + 2500;
         }
     } else {
         fire_retri_tap();
