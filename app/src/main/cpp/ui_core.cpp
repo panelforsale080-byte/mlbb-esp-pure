@@ -631,7 +631,7 @@ static void draw_ui() {
                 rt.targetRed = rt.targetBlue = rt.targetCrab = rt.targetLito = false;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Fiend + Serpent")) {
+            if (ImGui::Button("Buffs only")) {
                 rt.targetRed = rt.targetBlue = true;
                 rt.targetLord = rt.targetTurtle = rt.targetCrab = rt.targetLito = false;
             }
@@ -654,9 +654,9 @@ static void draw_ui() {
                 ImGui::Checkbox("Turtle", &rt.targetTurtle);
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::Checkbox("Fiend", &rt.targetRed);
+                ImGui::Checkbox("Buff Red", &rt.targetRed);
                 ImGui::TableNextColumn();
-                ImGui::Checkbox("Serpent", &rt.targetBlue);
+                ImGui::Checkbox("Buff Blue", &rt.targetBlue);
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Checkbox("Crab", &rt.targetCrab);

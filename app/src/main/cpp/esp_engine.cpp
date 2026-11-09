@@ -1308,13 +1308,12 @@ bool esp_read_dict_monster_names(pid_t pid, uintptr_t ent, char *tableName, char
     const uintptr_t nameOff = R.monsterName ? R.monsterName : 0x20;
     const uintptr_t prefabOff = R.monsterPrefab ? R.monsterPrefab : 0x30;
     const uintptr_t roleOff = R.roleName ? R.roleName : 0x460;
+    const uintptr_t cfgOff = R.monsterConfig ? R.monsterConfig : 0x8b8;
     bool any = false;
-    if (R.monsterConfig) {
-        uintptr_t cfg = 0;
-        if (mem_read(pid, ent + R.monsterConfig, cfg) && mem_ptr_ok(cfg)) {
-            if (read_str_at(pid, cfg, nameOff, tableName, outSz)) any = true;
-            if (read_str_at(pid, cfg, prefabOff, prefab, outSz)) any = true;
-        }
+    uintptr_t cfg = 0;
+    if (mem_read(pid, ent + cfgOff, cfg) && mem_ptr_ok(cfg)) {
+        if (read_str_at(pid, cfg, nameOff, tableName, outSz)) any = true;
+        if (read_str_at(pid, cfg, prefabOff, prefab, outSz)) any = true;
     }
     if (read_str_at(pid, ent, roleOff, roleName, outSz)) any = true;
     return any;
