@@ -280,25 +280,6 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
         out.runtime_fields.se_m_Level = instance_field_offset(s, pid, il2, seKlass, "m_Level");
         out.runtime_fields.se_vecFaceDir =
             instance_field_offset(s, pid, il2, seKlass, "_vecFaceDir");
-        out.runtime_fields.se_m_Mp =
-            instance_field_offset(s, pid, il2, seKlass, "<m_Mp>k__BackingField");
-        if (!out.runtime_fields.se_m_Mp)
-            out.runtime_fields.se_m_Mp = instance_field_offset(s, pid, il2, seKlass, "m_Mp");
-        out.runtime_fields.se_m_MpMax = instance_field_offset(s, pid, il2, seKlass, "_MpMax");
-        if (!out.runtime_fields.se_m_MpMax)
-            out.runtime_fields.se_m_MpMax = instance_field_offset(s, pid, il2, seKlass, "m_MpMax");
-        out.runtime_fields.se_m_CoolPer =
-            instance_field_offset(s, pid, il2, seKlass, "<m_CoolPer>k__BackingField");
-        if (!out.runtime_fields.se_m_CoolPer)
-            out.runtime_fields.se_m_CoolPer = instance_field_offset(s, pid, il2, seKlass, "m_CoolPer");
-        out.runtime_fields.se_m_MoveSpeed =
-            instance_field_offset(s, pid, il2, seKlass, "m_dMoveSpeed");
-        out.runtime_fields.se_m_AtkSpeed =
-            instance_field_offset(s, pid, il2, seKlass, "<m_AtkSpeed>k__BackingField");
-        if (!out.runtime_fields.se_m_AtkSpeed)
-            out.runtime_fields.se_m_AtkSpeed = instance_field_offset(s, pid, il2, seKlass, "m_AtkSpeed");
-        out.runtime_fields.se_m_GrassId =
-            instance_field_offset(s, pid, il2, seKlass, "m_iGrassId");
         out.runtime_fields.se_m_ShowCoolDownComp =
             instance_field_offset(s, pid, il2, seKlass, "m_ShowCoolDownComp");
     }
@@ -314,24 +295,6 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
             instance_field_offset(s, pid, il2, spKlass, "m_KillWildTimes");
         out.runtime_fields.sp_m_iOriginHeroId =
             instance_field_offset(s, pid, il2, spKlass, "m_iOriginHeroId");
-        out.runtime_fields.sp_iGold = instance_field_offset(s, pid, il2, spKlass, "_iGold");
-        if (!out.runtime_fields.sp_iGold)
-            out.runtime_fields.sp_iGold = instance_field_offset(s, pid, il2, spKlass, "m_Gold");
-        out.runtime_fields.sp_m_Exp = instance_field_offset(s, pid, il2, spKlass, "m_Exp");
-        out.runtime_fields.sp_m_NowUpExp = instance_field_offset(s, pid, il2, spKlass, "m_NowUpExp");
-        out.runtime_fields.sp_m_killNum = instance_field_offset(s, pid, il2, spKlass, "m_killNum");
-        out.runtime_fields.sp_m_deadNum = instance_field_offset(s, pid, il2, spKlass, "m_deadNum");
-        out.runtime_fields.sp_m_assistNum =
-            instance_field_offset(s, pid, il2, spKlass, "m_assistNum");
-        out.runtime_fields.sp_m_uiRankLevel =
-            instance_field_offset(s, pid, il2, spKlass, "m_uiRankLevel");
-        out.runtime_fields.sp_m_iOnHome = instance_field_offset(s, pid, il2, spKlass, "m_iOnHome");
-        out.runtime_fields.sp_m_bConnected =
-            instance_field_offset(s, pid, il2, spKlass, "m_bConnected");
-        out.runtime_fields.sp_m_KillBounty =
-            instance_field_offset(s, pid, il2, spKlass, "m_KillBounty");
-        out.runtime_fields.sp_continueKill =
-            instance_field_offset(s, pid, il2, spKlass, "continueKill");
     }
 
     uintptr_t bulKlass = find_class_fast(s, pid, il2, images, "Battle.Bullet", false);
@@ -386,50 +349,6 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
         out.runtime_fields.sbc_m_iFieldOfView =
             instance_field_offset(s, pid, il2, sbcKlass, "m_iFieldOfView");
     }
-
-    uintptr_t sdKlass = find_class_fast(s, pid, il2, images, "SystemData", false);
-    uintptr_t rdKlass = find_class_fast(s, pid, il2, images, "RoomData", false);
-    out.runtime_fields.sd_klass = sdKlass;
-    if (sdKlass)
-        out.runtime_fields.sd_roomPlayerInfo =
-            instance_field_offset(s, pid, il2, sdKlass, "m_RoomPlayerInfo");
-    if (rdKlass) {
-        out.runtime_fields.rd_name = instance_field_offset(s, pid, il2, rdKlass, "_sName");
-        if (!out.runtime_fields.rd_name)
-            out.runtime_fields.rd_name = instance_field_offset(s, pid, il2, rdKlass, "strName");
-        out.runtime_fields.rd_team = instance_field_offset(s, pid, il2, rdKlass, "_steamName");
-        out.runtime_fields.rd_uid = instance_field_offset(s, pid, il2, rdKlass, "lUid");
-        out.runtime_fields.rd_zone = instance_field_offset(s, pid, il2, rdKlass, "uiZoneId");
-        out.runtime_fields.rd_level = instance_field_offset(s, pid, il2, rdKlass, "uiRoleLevel");
-        out.runtime_fields.rd_rank = instance_field_offset(s, pid, il2, rdKlass, "uiRankLevel");
-        out.runtime_fields.rd_subRank = instance_field_offset(s, pid, il2, rdKlass, "iSubRankID");
-        out.runtime_fields.rd_myth = instance_field_offset(s, pid, il2, rdKlass, "iMythPoint");
-        out.runtime_fields.rd_histRank =
-            instance_field_offset(s, pid, il2, rdKlass, "iHistoryMaxBigRankId");
-        out.runtime_fields.rd_hero = instance_field_offset(s, pid, il2, rdKlass, "heroid");
-        out.runtime_fields.rd_skin = instance_field_offset(s, pid, il2, rdKlass, "heroskin");
-        out.runtime_fields.rd_spell = instance_field_offset(s, pid, il2, rdKlass, "summonSkillId");
-        out.runtime_fields.rd_rune = instance_field_offset(s, pid, il2, rdKlass, "runeId");
-        out.runtime_fields.rd_runeLv = instance_field_offset(s, pid, il2, rdKlass, "runeLv");
-        out.runtime_fields.rd_ban = instance_field_offset(s, pid, il2, rdKlass, "banHero");
-        out.runtime_fields.rd_road = instance_field_offset(s, pid, il2, rdKlass, "iRoad");
-        out.runtime_fields.rd_ping = instance_field_offset(s, pid, il2, rdKlass, "uiPlayerPing");
-        out.runtime_fields.rd_robot = instance_field_offset(s, pid, il2, rdKlass, "bRobot");
-        out.runtime_fields.rd_vp = instance_field_offset(s, pid, il2, rdKlass, "bVP");
-        out.runtime_fields.rd_fake = instance_field_offset(s, pid, il2, rdKlass, "bFakeRole");
-        out.runtime_fields.rd_leader = instance_field_offset(s, pid, il2, rdKlass, "bRoomLeader");
-        out.runtime_fields.rd_camp = instance_field_offset(s, pid, il2, rdKlass, "iCamp");
-        out.runtime_fields.rd_pos = instance_field_offset(s, pid, il2, rdKlass, "iPos");
-        out.runtime_fields.rd_heroUse = instance_field_offset(s, pid, il2, rdKlass, "iHeroUseCount");
-        out.runtime_fields.rd_star = instance_field_offset(s, pid, il2, rdKlass, "bStarVip");
-        out.runtime_fields.rd_room = instance_field_offset(s, pid, il2, rdKlass, "ulRoomID");
-        out.runtime_fields.rd_want = instance_field_offset(s, pid, il2, rdKlass, "vWantSelectHero");
-        out.runtime_fields.rd_country = instance_field_offset(s, pid, il2, rdKlass, "country");
-    }
-    ui_log("[lobby] SystemData=0x%llx m_RoomPlayerInfo=0x%llx RoomData name=0x%llx",
-           (unsigned long long)out.runtime_fields.sd_klass,
-           (unsigned long long)out.runtime_fields.sd_roomPlayerInfo,
-           (unsigned long long)out.runtime_fields.rd_name);
 
     ui_log("[resolve] camera runtime (IL2CPP fields, no lib Offsets.h):");
     ui_log("  GameMethod statics=0x%llx mainCamera(IL2)=0x%llx ShowBattleCamera statics=0x%llx",

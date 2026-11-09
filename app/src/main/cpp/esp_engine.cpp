@@ -1,5 +1,4 @@
 #include "esp_engine.hpp"
-#include "esp_monid.hpp"
 #include "esp_camera.hpp"
 #include "esp_retri_il2.hpp"
 #include "conrent_esp.hpp"
@@ -26,7 +25,6 @@ static std::atomic<bool> g_tickHeroName{true};
 static std::atomic<bool> g_tickEnemyCd{true};
 static std::atomic<bool> g_tickMonsters{true};
 static std::atomic<bool> g_tickFacing{false};
-static std::atomic<bool> g_tickPlayerInfo{false};
 
 /* Reader tick index: stagger heavy per-entity reads (IL2 string + cooldown dict) so busy
  * fights do not run full cost for every entity every frame. */
@@ -35,38 +33,11 @@ static std::atomic<uint64_t> g_readerTickIndex{0};
 /** Stagger IL2 hero-name / cooldown dict walks — higher = less CPU, slightly staler CD/name. */
 static constexpr unsigned kHeavyReadInterval = 15;
 
-void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown, bool monsters, bool facing,
-                                bool playerInfo) {
+void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown, bool monsters, bool facing) {
     g_tickHeroName.store(heroName);
     g_tickEnemyCd.store(enemyCooldown);
     g_tickMonsters.store(monsters);
     g_tickFacing.store(facing);
-    g_tickPlayerInfo.store(playerInfo);
-}
-
-static const char *spell_name(int id) {
-    switch (id) {
-    case 20150: return "Execute";
-    case 20020: return "Retri";
-    case 20030: return "Inspire";
-    case 20040: return "Sprint";
-    case 20050: return "Revitalize";
-    case 20060: return "Aegis";
-    case 20070: return "Petrify";
-    case 20080: return "Purify";
-    case 20140: return "Flameshot";
-    case 20100: return "Flicker";
-    case 20160: return "Arrival";
-    case 20190: return "Vengeance";
-    default: return nullptr;
-    }
-}
-
-static int read_i32_off(pid_t pid, uintptr_t ent, uintptr_t off) {
-    int v = 0;
-    if (!ent || !off) return 0;
-    mem_read(pid, ent + off, v);
-    return v;
 }
 
 static bool read_u32_pair(pid_t pid, uintptr_t offStart, uintptr_t offCool, uint32_t &startTime,
@@ -1061,46 +1032,6 @@ EspStatus esp_tick(EspFrame &out) {
         mem_read(g_pid, v + R.hp, t.hp);
         mem_read(g_pid, v + R.hpMax, t.hpMax);
         t.kind = kind;
-        if (kind == 0 && g_tickPlayerInfo.load() && !(local && v == local)) {
-            const int lv = read_i32_off(g_pid, v, R.level);
-            const int mp = read_i32_off(g_pid, v, R.mp);
-            const int mpMax = read_i32_off(g_pid, v, R.mpMax);
-            const int gold = read_i32_off(g_pid, v, R.gold);
-            const int exp = read_i32_off(g_pid, v, R.exp);
-            const int expNeed = read_i32_off(g_pid, v, R.expNeed);
-            const int kills = read_i32_off(g_pid, v, R.kills);
-            const int deaths = read_i32_off(g_pid, v, R.deaths);
-            const int assists = read_i32_off(g_pid, v, R.assists);
-            const int rank = read_i32_off(g_pid, v, R.rank);
-            const int wild = read_i32_off(g_pid, v, R.showKillWildTimes);
-            const int cdr = read_i32_off(g_pid, v, R.coolPer);
-            const int grass = read_i32_off(g_pid, v, R.grassId);
-            const int home = read_i32_off(g_pid, v, R.onHome);
-            const int bounty = read_i32_off(g_pid, v, R.killBounty);
-            const int streak = read_i32_off(g_pid, v, R.continueKill);
-            int spell = 0;
-            if (R.summonSkillId) mem_read(g_pid, v + R.summonSkillId, spell);
-            uint8_t linked = 1;
-            if (R.connected) mem_read(g_pid, v + R.connected, linked);
-            double move = 0;
-            if (R.moveSpeed) mem_read(g_pid, v + R.moveSpeed, move);
-            double atk = 0;
-            if (R.atkSpeed) mem_read(g_pid, v + R.atkSpeed, atk);
-            char spellBuf[24];
-            const char *sn = spell_name(spell);
-            if (sn) std::snprintf(spellBuf, sizeof(spellBuf), "%s", sn);
-            else std::snprintf(spellBuf, sizeof(spellBuf), "Spell %d", spell);
-            std::snprintf(t.info0, sizeof(t.info0), "Lv%d  HP %d/%d  MP %d/%d", lv, t.hp, t.hpMax, mp,
-                          mpMax);
-            std::snprintf(t.info1, sizeof(t.info1), "Gold %d  Exp %d/%d  KDA %d/%d/%d", gold, exp,
-                          expNeed, kills, deaths, assists);
-            std::snprintf(t.info2, sizeof(t.info2), "%s  Rank %d  Wild %d  CDR %d%%  MS %.0f  AS %.2f",
-                          spellBuf, rank, wild, cdr, move, atk);
-            std::snprintf(t.info3, sizeof(t.info3), "Bounty %d  Streak %d%s%s%s", bounty, streak,
-                          grass ? "  Bush" : "", home ? "  Recall" : "",
-                          (R.connected && !linked) ? "  DC" : "");
-            t.infoValid = true;
-        }
         if (kind == 0 && g_tickFacing.load() && R.faceDir && !(local && v == local)) {
             float dir[3] = {};
             if (mem_read(g_pid, v + R.faceDir, dir, sizeof(dir))) {
@@ -1322,7 +1253,6 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
         }
     }
     g_entScreen.swap(live);
-    if (esp_monid_world_on()) esp_monid_project(camSnap);
     esp_camera_frame_end();
 }
 

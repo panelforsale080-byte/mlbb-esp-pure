@@ -26,53 +26,6 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     g_off.hpMax = rt.se_m_HpMax;
     g_off.level = rt.se_m_Level;
     g_off.faceDir = rt.se_vecFaceDir;
-    g_off.mp = rt.se_m_Mp;
-    g_off.mpMax = rt.se_m_MpMax;
-    g_off.coolPer = rt.se_m_CoolPer;
-    g_off.moveSpeed = rt.se_m_MoveSpeed;
-    g_off.atkSpeed = rt.se_m_AtkSpeed;
-    g_off.grassId = rt.se_m_GrassId;
-    g_off.gold = rt.sp_iGold;
-    g_off.exp = rt.sp_m_Exp;
-    g_off.expNeed = rt.sp_m_NowUpExp;
-    g_off.kills = rt.sp_m_killNum;
-    g_off.deaths = rt.sp_m_deadNum;
-    g_off.assists = rt.sp_m_assistNum;
-    g_off.rank = rt.sp_m_uiRankLevel;
-    g_off.onHome = rt.sp_m_iOnHome;
-    g_off.connected = rt.sp_m_bConnected;
-    g_off.killBounty = rt.sp_m_KillBounty;
-    g_off.continueKill = rt.sp_continueKill;
-    g_off.systemDataKlass = rt.sd_klass;
-    g_off.roomDict = rt.sd_roomPlayerInfo;
-    g_off.rdName = rt.rd_name;
-    g_off.rdTeam = rt.rd_team;
-    g_off.rdUid = rt.rd_uid;
-    g_off.rdZone = rt.rd_zone;
-    g_off.rdLevel = rt.rd_level;
-    g_off.rdRank = rt.rd_rank;
-    g_off.rdSubRank = rt.rd_subRank;
-    g_off.rdMyth = rt.rd_myth;
-    g_off.rdHistRank = rt.rd_histRank;
-    g_off.rdHero = rt.rd_hero;
-    g_off.rdSkin = rt.rd_skin;
-    g_off.rdSpell = rt.rd_spell;
-    g_off.rdRune = rt.rd_rune;
-    g_off.rdRuneLv = rt.rd_runeLv;
-    g_off.rdBan = rt.rd_ban;
-    g_off.rdRoad = rt.rd_road;
-    g_off.rdPing = rt.rd_ping;
-    g_off.rdRobot = rt.rd_robot;
-    g_off.rdVp = rt.rd_vp;
-    g_off.rdFake = rt.rd_fake;
-    g_off.rdLeader = rt.rd_leader;
-    g_off.rdCamp = rt.rd_camp;
-    g_off.rdPos = rt.rd_pos;
-    g_off.rdHeroUse = rt.rd_heroUse;
-    g_off.rdStar = rt.rd_star;
-    g_off.rdRoom = rt.rd_room;
-    g_off.rdWant = rt.rd_want;
-    g_off.rdCountry = rt.rd_country;
     g_off.showKillWildTimes = rt.sp_m_KillWildTimes;
     g_off.showCooldownComp = rt.se_m_ShowCoolDownComp;
     g_off.heroName = rt.sp_m_HeroName;
@@ -107,10 +60,6 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     ui_log("  [retri] ShowEntity.m_Level=0x%llx (EXTERNAL CalculateRetriDamage)",
            (unsigned long long)g_off.level);
     ui_log("  [esp] ShowEntity._vecFaceDir=0x%llx", (unsigned long long)g_off.faceDir);
-    ui_log("  [info] mp=0x%llx gold=0x%llx kda=0x%llx rank=0x%llx spell=0x%llx",
-           (unsigned long long)g_off.mp, (unsigned long long)g_off.gold,
-           (unsigned long long)g_off.kills, (unsigned long long)g_off.rank,
-           (unsigned long long)g_off.summonSkillId);
     ui_log("  [hero] m_ID=0x%llx SP.m_iOriginHeroId=0x%llx BM.m_RunBullets=0x%llx _RunBullets=0x%llx",
            (unsigned long long)g_off.entityId, (unsigned long long)g_off.heroOriginId,
            (unsigned long long)g_off.bmStaticRunBullets, (unsigned long long)g_off.bmStaticRunBulletsList);

@@ -121,15 +121,9 @@ static int read_cfg_template(pid_t pid, uintptr_t ent, const EspRuntimeOff &R) {
     if (!ent || !R.monsterConfig || !R.monsterTableId) return 0;
     uintptr_t cfg = 0;
     int id = 0;
-    const bool haveCfg = mem_read(pid, ent + R.monsterConfig, cfg) && mem_ptr_ok(cfg) &&
-                         mem_read(pid, cfg + R.monsterTableId, id);
-    if (haveCfg && kind_from_template(id)) return id;
-    /* A real config id stays as-is. Buff, lord, crab, and litho never use the entity id.
-     * Match 2 can leave the turtle m_Config empty while ShowEntity.m_ID is still 2003/2110. */
-    if (haveCfg && id != 0) return 0;
-    int eid = 0;
-    if (!R.entityId || !mem_read(pid, ent + R.entityId, eid)) return 0;
-    return kind_from_template(eid) == kRetriTurtle ? eid : 0;
+    if (!mem_read(pid, ent + R.monsterConfig, cfg) || !mem_ptr_ok(cfg)) return 0;
+    if (!mem_read(pid, cfg + R.monsterTableId, id)) return 0;
+    return kind_from_template(id) ? id : 0;
 }
 
 static bool kind_enabled(int kind) {

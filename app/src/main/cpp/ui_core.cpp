@@ -3,9 +3,6 @@
 #include "esp_draw.hpp"
 #include "esp_retri.hpp"
 #include "esp_hero_auto.hpp"
-#include "esp_lobby.hpp"
-#include "esp_monid.hpp"
-#include "esp_camera.hpp"
 #include "proc.hpp"
 #include "ui_log.hpp"
 #include "clip_android.hpp"
@@ -69,7 +66,6 @@ static std::atomic<bool> g_needResolve{true};
 static bool g_autoFind = true;
 static bool g_fallbackPid = true;
 static bool g_showMenu = false;
-static int g_menuPage = 0;
 static bool g_antiCapture = false;
 static bool g_hideWhileRecording = false;
 static std::atomic<bool> g_recordingHide{false};
@@ -192,9 +188,9 @@ static void menu_checkbox_row3(const char *l0, bool *v0, const char *l1, bool *v
     ImGui::TableNextColumn();
     ImGui::Checkbox(l0, v0);
     ImGui::TableNextColumn();
-    if (l1 && v1 && l1[0]) ImGui::Checkbox(l1, v1);
+    ImGui::Checkbox(l1, v1);
     ImGui::TableNextColumn();
-    if (l2 && v2 && l2[0]) ImGui::Checkbox(l2, v2);
+    if (l2 && v2) ImGui::Checkbox(l2, v2);
 }
 
 static void menu_draw_enemy_esp_grid() {
@@ -213,7 +209,6 @@ static void menu_draw_enemy_esp_grid() {
                            &g_feat.enemyCooldown);
         menu_checkbox_row3("12m", &g_feat.proximityAlert12m, "CD panel", &g_feat.enemyCdSidePanel,
                            "Facing", &g_feat.facing);
-        menu_checkbox_row3("Info", &g_feat.playerInfo, "Lobby", &g_feat.lobby, "", nullptr);
         ImGui::EndTable();
     }
     ImGui::PopStyleVar();
@@ -348,12 +343,7 @@ static void reader_loop() {
         } else if (pid > 0) {
             const bool wantMon = g_feat.monsterBox || g_feat.monsterName || g_feat.monsterHealth ||
                                  esp_retri_settings().enabled;
-            esp_tick_set_feature_flags(g_feat.name, g_feat.enemyCooldown, wantMon, g_feat.facing,
-                                       g_feat.playerInfo);
-            esp_lobby_set_enabled(g_feat.lobby);
-            if (g_feat.lobby) esp_lobby_tick(pid);
-            const bool wantDev = (g_showMenu && g_menuPage == 2) || esp_monid_world_on();
-            esp_monid_set_enabled(wantDev);
+            esp_tick_set_feature_flags(g_feat.name, g_feat.enemyCooldown, wantMon, g_feat.facing);
             if (g_needResolve.load()) {
                 if (g_espActive.load()) {
                     /* #147: vm_read tick only while ESP on; Resolve runs when ESP off */
@@ -366,8 +356,6 @@ static void reader_loop() {
             }
             EspFrame f;
             esp_tick(f);
-            const bool wantDevDraw = (g_showMenu && g_menuPage == 2) || esp_monid_world_on();
-            if (wantDevDraw) esp_monid_tick(f);
             g_lastTargetCount.store(static_cast<int>(f.targets.size()), std::memory_order_relaxed);
             if (g_espActive.load() && f.status == EspStatus::Ready) {
                 float sw = (float)g_width;
@@ -375,18 +363,6 @@ static void reader_loop() {
                 if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
                 if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
                 esp_project_screens(f, sw, sh);
-            } else if (esp_monid_world_on() && f.status == EspStatus::Ready && f.pid > 0) {
-                float sw = (float)g_width;
-                float sh = (float)g_height;
-                if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
-                if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
-                if (sw > 1.f && sh > 1.f) {
-                    esp_camera_frame_begin(f.pid, sw, sh, true);
-                    EspCameraProjSnap camSnap{};
-                    esp_camera_acquire_proj_for_draw(f.pid, camSnap);
-                    esp_monid_project(camSnap);
-                    esp_camera_frame_end();
-                }
             }
             if (f.status != lastStatus || pid != lastPid) {
                 ui_log("[tick] %s | %s", status_name(f.status), f.hint);
@@ -431,6 +407,8 @@ static bool ui_wants_continuous_gl() {
     const EspHeroAutoSettings &h = esp_hero_auto_settings();
     return h.lingSword || h.gusionCombo;
 }
+
+static int g_menuPage = 0;
 
 /** Grey page button. Activates on touch-down so one tap switches the page. */
 static bool menu_page_button(const char *label, bool selected, float width) {
@@ -506,11 +484,6 @@ static void draw_ui() {
         }
     }
     const bool hideEspOverlay = g_hideWhileRecording;
-    if (!hideEspOverlay && g_feat.lobby) {
-        esp_lobby_draw(ImGui::GetBackgroundDrawList(), sw, sh);
-    }
-    if (!hideEspOverlay && esp_monid_world_on())
-        esp_monid_draw_world(ImGui::GetBackgroundDrawList());
     if (!hideEspOverlay && g_espActive.load() && fr.status == EspStatus::Ready) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
         esp_draw_overlay(bg, sw, sh, fr, g_feat, g_showMenu);
@@ -594,14 +567,11 @@ static void draw_ui() {
         }
 
         const float pageGap = ImGui::GetStyle().ItemSpacing.x;
-        const float pageW = (ImGui::GetContentRegionAvail().x - pageGap * 2.f) / 3.f;
+        const float pageW = (ImGui::GetContentRegionAvail().x - pageGap) * 0.5f;
         if (menu_page_button("Overlay", g_menuPage == 0, pageW)) g_menuPage = 0;
         ImGui::SameLine();
         if (menu_page_button("Music", g_menuPage == 1, pageW)) g_menuPage = 1;
-        ImGui::SameLine();
-        if (menu_page_button("Dev", g_menuPage == 2, pageW)) g_menuPage = 2;
         if (g_menuPage == 1) draw_music_panel();
-        if (g_menuPage == 2) esp_monid_draw();
         if (g_menuPage == 0) {
         ImGui::SeparatorText("ESP control");
         if (ImGui::Checkbox("Anti screenshot / record", &g_antiCapture))
