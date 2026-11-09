@@ -188,9 +188,9 @@ static void menu_checkbox_row3(const char *l0, bool *v0, const char *l1, bool *v
     ImGui::TableNextColumn();
     ImGui::Checkbox(l0, v0);
     ImGui::TableNextColumn();
-    ImGui::Checkbox(l1, v1);
+    if (l1 && v1 && l1[0]) ImGui::Checkbox(l1, v1);
     ImGui::TableNextColumn();
-    if (l2 && v2) ImGui::Checkbox(l2, v2);
+    if (l2 && v2 && l2[0]) ImGui::Checkbox(l2, v2);
 }
 
 static void menu_draw_enemy_esp_grid() {
@@ -209,6 +209,7 @@ static void menu_draw_enemy_esp_grid() {
                            &g_feat.enemyCooldown);
         menu_checkbox_row3("12m", &g_feat.proximityAlert12m, "CD panel", &g_feat.enemyCdSidePanel,
                            "Facing", &g_feat.facing);
+        menu_checkbox_row3("Info", &g_feat.playerInfo, "", nullptr, "", nullptr);
         ImGui::EndTable();
     }
     ImGui::PopStyleVar();
@@ -343,7 +344,8 @@ static void reader_loop() {
         } else if (pid > 0) {
             const bool wantMon = g_feat.monsterBox || g_feat.monsterName || g_feat.monsterHealth ||
                                  esp_retri_settings().enabled;
-            esp_tick_set_feature_flags(g_feat.name, g_feat.enemyCooldown, wantMon, g_feat.facing);
+            esp_tick_set_feature_flags(g_feat.name, g_feat.enemyCooldown, wantMon, g_feat.facing,
+                                       g_feat.playerInfo);
             if (g_needResolve.load()) {
                 if (g_espActive.load()) {
                     /* #147: vm_read tick only while ESP on; Resolve runs when ESP off */

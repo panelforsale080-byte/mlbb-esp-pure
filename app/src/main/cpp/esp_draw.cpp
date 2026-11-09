@@ -71,7 +71,8 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
     /* Side-panel-only CD still needs per-entity pass if Box/Name/HP/Line/Dist are on; if all off, skip entity. */
     if (!anyBox && !anyName && !anyHp && !feat.line && !feat.distance && !cdUnderEntity
         && !(anyCd && feat.enemyCdSidePanel && !monster)
-        && !(feat.facing && !monster)) {
+        && !(feat.facing && !monster)
+        && !(feat.playerInfo && !monster)) {
         return;
     }
     if (!t.screenValid) return;
@@ -160,6 +161,18 @@ static void draw_one(ImDrawList *draw, float screenW, float screenH, const EspFr
         ImVec2 ts = font ? font->CalcTextSizeA(dsz, FLT_MAX, 0.f, dist) : ImGui::CalcTextSize(dist);
         draw_text_shadow(draw, font, dsz, ImVec2(centerX - ts.x * 0.5f, textYBelowBar), IM_COL32(255, 255, 140, 255),
                          dist);
+        textYBelowBar += ts.y + 3.f;
+    }
+    if (feat.playerInfo && !monster && t.infoValid) {
+        const char *lines[] = {t.info0, t.info1, t.info2, t.info3};
+        const float isz = fontSize * 0.92f;
+        for (const char *line : lines) {
+            if (!line || !line[0]) continue;
+            ImVec2 ts = font ? font->CalcTextSizeA(isz, FLT_MAX, 0.f, line) : ImGui::CalcTextSize(line);
+            draw_text_shadow(draw, font, isz, ImVec2(centerX - ts.x * 0.5f, textYBelowBar),
+                             IM_COL32(190, 255, 190, 255), line);
+            textYBelowBar += ts.y + 2.f;
+        }
     }
 }
 
@@ -327,7 +340,7 @@ void esp_draw_overlay(ImDrawList *draw, float screenW, float screenH, const EspF
     if (frame.status != EspStatus::Ready) return;
 
     const bool anyPlayer = feat.box || feat.line || feat.health || feat.name || feat.distance || feat.enemyCooldown
-                           || feat.proximityAlert12m || feat.facing;
+                           || feat.proximityAlert12m || feat.facing || feat.playerInfo;
     const bool anyMon =
         feat.monsterBox || feat.monsterName || feat.monsterHealth;
     if (!anyPlayer && !anyMon) return;
