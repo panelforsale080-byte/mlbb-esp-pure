@@ -1322,8 +1322,18 @@ bool esp_monster_dict_entries(pid_t pid, uintptr_t bmInstance,
         out.emplace_back(read_monster_template_id(pid, ent, R), ent);
     };
 
-    /* Show list has the buffs that stay resident. The dict still has lord/turtle
-     * after a new match replaces the list. Either source alone misses one of them. */
+    /* m_dicMonsterShow is one current entry per monster. m_ShowMonsters also keeps
+     * the previous body, so the same template id shows up twice. */
+    if (R.dicMonsterShow) {
+        uintptr_t mDict = 0;
+        std::vector<std::pair<int, uintptr_t>> dictM;
+        if (mem_read(pid, bmInstance + R.dicMonsterShow, mDict) && mDict &&
+            dict_entries(pid, mDict, dictM)) {
+            for (const auto &kv : dictM) add_ent(kv.second);
+        }
+    }
+    if (!out.empty()) return true;
+
     if (R.listMonsterShow) {
         uintptr_t mList = 0;
         if (mem_read(pid, bmInstance + R.listMonsterShow, mList) && mList) {
@@ -1331,14 +1341,6 @@ bool esp_monster_dict_entries(pid_t pid, uintptr_t bmInstance,
             if (list_entities(pid, mList, listM)) {
                 for (const uintptr_t ent : listM) add_ent(ent);
             }
-        }
-    }
-    if (R.dicMonsterShow) {
-        uintptr_t mDict = 0;
-        std::vector<std::pair<int, uintptr_t>> dictM;
-        if (mem_read(pid, bmInstance + R.dicMonsterShow, mDict) && mDict &&
-            dict_entries(pid, mDict, dictM)) {
-            for (const auto &kv : dictM) add_ent(kv.second);
         }
     }
     return !out.empty();

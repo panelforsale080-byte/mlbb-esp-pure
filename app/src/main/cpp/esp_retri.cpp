@@ -261,8 +261,13 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
         /* A low-HP copy sitting next to the real turtle/lord still has the same id.
          * Skip it while the healthy body of that id is nearby. */
         bool ghost = false;
+        const bool uniqueBoss = m.id == 2002 || m.id == 2003 || m.id == 2110;
         for (const Mob &other : alive) {
-            if (other.ent == m.ent || other.id != m.id || other.hp <= retriDmg) continue;
+            if (other.ent == m.ent || other.id != m.id || other.hp <= m.hp) continue;
+            if (uniqueBoss) {
+                ghost = true;
+                break;
+            }
             const float ox = other.x - m.x;
             const float oz = other.z - m.z;
             if (ox * ox + oz * oz < 18.f * 18.f) {
