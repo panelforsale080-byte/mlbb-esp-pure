@@ -1288,6 +1288,38 @@ bool esp_il2_better_list_ptrs(pid_t pid, uintptr_t listObj, std::vector<uintptr_
     return false;
 }
 
+static bool read_str_at(pid_t pid, uintptr_t base, uintptr_t off, char *out, size_t outSz) {
+    if (!out || outSz == 0) return false;
+    out[0] = '\0';
+    if (!base || !off) return false;
+    uintptr_t strObj = 0;
+    if (!mem_read(pid, base + off, strObj) || !mem_ptr_ok(strObj)) return false;
+    return read_il2_managed_string(pid, strObj, out, outSz);
+}
+
+bool esp_read_dict_monster_names(pid_t pid, uintptr_t ent, char *tableName, char *roleName,
+                                 char *prefab, size_t outSz) {
+    if (tableName && outSz) tableName[0] = '\0';
+    if (roleName && outSz) roleName[0] = '\0';
+    if (prefab && outSz) prefab[0] = '\0';
+    if (!ent || !esp_runtime_off_ready()) return false;
+    const EspRuntimeOff &R = esp_runtime_off();
+    /* Resolved offsets win. Dump layout is only a fallback before the next Resolve. */
+    const uintptr_t nameOff = R.monsterName ? R.monsterName : 0x20;
+    const uintptr_t prefabOff = R.monsterPrefab ? R.monsterPrefab : 0x30;
+    const uintptr_t roleOff = R.roleName ? R.roleName : 0x460;
+    bool any = false;
+    if (R.monsterConfig) {
+        uintptr_t cfg = 0;
+        if (mem_read(pid, ent + R.monsterConfig, cfg) && mem_ptr_ok(cfg)) {
+            if (read_str_at(pid, cfg, nameOff, tableName, outSz)) any = true;
+            if (read_str_at(pid, cfg, prefabOff, prefab, outSz)) any = true;
+        }
+    }
+    if (read_str_at(pid, ent, roleOff, roleName, outSz)) any = true;
+    return any;
+}
+
 /** Template id. Entity m_ID is often a guid on lord/turtle; the table id lives on m_Config. */
 static int read_monster_template_id(pid_t pid, uintptr_t ent, const EspRuntimeOff &R) {
     int id = 0;

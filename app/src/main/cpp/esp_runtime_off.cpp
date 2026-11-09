@@ -19,6 +19,9 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     g_off.entityId = rt.se_m_ID;
     g_off.monsterConfig = rt.sm_m_Config;
     g_off.monsterTableId = rt.monster_m_ID;
+    g_off.monsterName = rt.monster_m_MonsterName;
+    g_off.monsterPrefab = rt.monster_m_Prefabs;
+    g_off.roleName = rt.se_m_RoleName;
     g_off.wildType = rt.sw_m_wildType;
     g_off.entityDeath = rt.se_m_bDeath;
     g_off.sameCamp = rt.se_m_bSameCampType;

@@ -16,6 +16,9 @@ struct EspRuntimeOff {
     uintptr_t entityId = 0;
     uintptr_t monsterConfig = 0;
     uintptr_t monsterTableId = 0;
+    uintptr_t monsterName = 0;
+    uintptr_t monsterPrefab = 0;
+    uintptr_t roleName = 0;
     uintptr_t wildType = 0;
     uintptr_t entityDeath = 0;
     uintptr_t sameCamp = 0;
