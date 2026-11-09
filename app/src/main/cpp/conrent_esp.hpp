@@ -21,6 +21,7 @@ struct ConrentRuntimeOffsets {
     uintptr_t sw_m_wildType = 0;        /* ShowWildMonster.m_wildType */
     uintptr_t se_m_bDeath = 0;
     uintptr_t se_m_bSameCampType = 0;
+    uintptr_t se_m_EntityCampType = 0;
     uintptr_t se_m_Hp = 0;
     uintptr_t se_m_HpMax = 0;
     uintptr_t se_m_Level = 0;

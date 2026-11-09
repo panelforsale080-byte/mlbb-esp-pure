@@ -6,6 +6,7 @@
 #include "remote_call.hpp"
 #include "ui_log.hpp"
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -40,6 +41,8 @@ struct ResolveImages {
 
 static pid_t g_classPid = 0;
 static std::unordered_map<std::string, uintptr_t> g_classCache;
+static std::unordered_map<std::string, std::vector<uintptr_t>> g_classAll;
+static bool g_classIndexed = false;
 
 static void build_resolve_images(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
                                  uintptr_t domain, size_t asmCount, uintptr_t assembliesArray,
@@ -100,37 +103,52 @@ static uintptr_t class_from_name_image(RemoteSession &s, pid_t pid, RemoteIl2Cpp
     return mem_ptr_ok(klass) ? klass : 0;
 }
 
-static bool klass_name_matches(pid_t pid, uintptr_t klass, const std::string &wantCls) {
+static bool klass_short_name(pid_t pid, uintptr_t klass, std::string &out) {
+    out.clear();
     if (!klass) return false;
     for (uintptr_t nameOff : {0x10u, 0x18u, 0x08u}) {
         uintptr_t nameP = 0;
-        if (!mem_read(pid, klass + nameOff, nameP) || !nameP) continue;
+        if (!mem_read(pid, klass + nameOff, nameP) || !mem_ptr_ok(nameP)) continue;
         char buf[96] = {};
         if (!mem_read(pid, nameP, buf, sizeof(buf) - 1)) continue;
-        if (wantCls == buf) return true;
+        buf[sizeof(buf) - 1] = '\0';
+        if (!buf[0] || !std::isalpha(static_cast<unsigned char>(buf[0]))) continue;
         const char *dot = std::strrchr(buf, '.');
-        if (dot && wantCls == (dot + 1)) return true;
+        const char *shortName = dot ? dot + 1 : buf;
+        if (!shortName[0]) continue;
+        out = shortName;
+        return true;
     }
     return false;
 }
 
-static uintptr_t find_class_scan_images(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
-                                        const ResolveImages &img, const std::string &wantCls) {
-    if (!il2.sym_image_get_class || !il2.sym_image_get_class_count) return 0;
+/** One walk of every image. Later FindClass calls are map lookups. */
+static void index_all_classes(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
+                              const ResolveImages &img) {
+    if (g_classIndexed) return;
+    g_classAll.clear();
+    if (!il2.sym_image_get_class || !il2.sym_image_get_class_count) {
+        g_classIndexed = true;
+        return;
+    }
+    int indexed = 0;
     for (uintptr_t image : img.all) {
         uintptr_t count = 0;
         if (!remote_session_call(s, il2.sym_image_get_class_count, {image}, count)) continue;
         const size_t n = (size_t)count;
-        if (n == 0 || n > 12000) continue;
-        const size_t limit = std::min(n, (size_t)6000);
-        for (size_t i = 0; i < limit; ++i) {
+        if (n == 0 || n > 80000) continue;
+        for (size_t i = 0; i < n; ++i) {
             uintptr_t klass = 0;
             if (!remote_session_call(s, il2.sym_image_get_class, {image, i}, klass) || !klass)
                 continue;
-            if (klass_name_matches(pid, klass, wantCls)) return klass;
+            std::string name;
+            if (!klass_short_name(pid, klass, name)) continue;
+            g_classAll[name].push_back(klass);
+            ++indexed;
         }
     }
-    return 0;
+    g_classIndexed = true;
+    ui_log("[resolve] class index %d names=%zu", indexed, g_classAll.size());
 }
 
 static uintptr_t find_class_fast(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
@@ -143,20 +161,14 @@ static uintptr_t find_class_fast(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &
     std::string ns, cls;
     split_class_name(fullName, ns, cls);
 
+    index_all_classes(s, pid, il2, img);
     uintptr_t klass = 0;
-    if (preferUnityImage && img.unityCore)
+    const auto it = g_classAll.find(cls);
+    if (it != g_classAll.end() && !it->second.empty()) klass = it->second.front();
+    if (!klass && preferUnityImage && img.unityCore)
         klass = class_from_name_image(s, pid, il2, img.unityCore, ns, cls);
     if (!klass && img.assemblyCSharp)
         klass = class_from_name_image(s, pid, il2, img.assemblyCSharp, ns, cls);
-    if (!klass && !preferUnityImage && img.unityCore)
-        klass = class_from_name_image(s, pid, il2, img.unityCore, ns, cls);
-    if (!klass) {
-        for (uintptr_t image : img.all) {
-            klass = class_from_name_image(s, pid, il2, image, ns, cls);
-            if (klass) break;
-        }
-    }
-    if (!klass) klass = find_class_scan_images(s, pid, il2, img, cls);
     if (klass) g_classCache[key] = klass;
     return klass;
 }
@@ -211,6 +223,22 @@ static uintptr_t instance_field_offset(RemoteSession &s, pid_t pid, RemoteIl2Cpp
         if (mem_read(pid, field + fo, o) && o >= 0x08 && o < 0x2000) return o;
     }
     return 0;
+}
+
+/** Prefer the class that actually has the field. class_from_name can hit an empty duplicate. */
+static uintptr_t find_class_with_field(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
+                                       const ResolveImages &img, const char *className,
+                                       const char *fieldName) {
+    index_all_classes(s, pid, il2, img);
+    std::string ns, cls;
+    split_class_name(className, ns, cls);
+    const auto it = g_classAll.find(cls);
+    if (it != g_classAll.end()) {
+        for (uintptr_t klass : it->second) {
+            if (instance_field_offset(s, pid, il2, klass, fieldName)) return klass;
+        }
+    }
+    return find_class_fast(s, pid, il2, img, className, false);
 }
 
 static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
@@ -275,6 +303,8 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
         out.runtime_fields.se_m_bDeath = instance_field_offset(s, pid, il2, seKlass, "m_bDeath");
         out.runtime_fields.se_m_bSameCampType =
             instance_field_offset(s, pid, il2, seKlass, "m_bSameCampType");
+        out.runtime_fields.se_m_EntityCampType =
+            instance_field_offset(s, pid, il2, seKlass, "m_EntityCampType");
         out.runtime_fields.se_m_Hp = instance_field_offset(s, pid, il2, seKlass, "m_Hp");
         out.runtime_fields.se_m_HpMax = instance_field_offset(s, pid, il2, seKlass, "m_HpMax");
         out.runtime_fields.se_m_Level = instance_field_offset(s, pid, il2, seKlass, "m_Level");
@@ -347,8 +377,7 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
             instance_field_offset(s, pid, il2, bulKlass, "bulletForward");
     }
 
-    /* dump.cs: Namespace Battle — unqualified name misses class_from_name and falls back to
-     * find_class_scan_images (slow: up to 6000 classes/image). */
+    /* Namespace Battle. The class index already has the short name. */
     uintptr_t sccKlass = find_class_fast(s, pid, il2, images, "Battle.ShowCoolDownComp", false);
     if (!sccKlass)
         sccKlass = find_class_fast(s, pid, il2, images, "ShowCoolDownComp", false);
@@ -387,8 +416,9 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
             instance_field_offset(s, pid, il2, sbcKlass, "m_iFieldOfView");
     }
 
-    uintptr_t sdKlass = find_class_fast(s, pid, il2, images, "SystemData", false);
-    uintptr_t rdKlass = find_class_fast(s, pid, il2, images, "RoomData", false);
+    uintptr_t sdKlass =
+        find_class_with_field(s, pid, il2, images, "SystemData", "m_RoomPlayerInfo");
+    uintptr_t rdKlass = find_class_with_field(s, pid, il2, images, "RoomData", "_sName");
     out.runtime_fields.sd_klass = sdKlass;
     if (sdKlass)
         out.runtime_fields.sd_roomPlayerInfo =
@@ -503,6 +533,8 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
                                     RemoteIl2CppInfo &il2, ConrentResolve &out) {
     out = ConrentResolve{};
     g_classCache.clear();
+    g_classAll.clear();
+    g_classIndexed = false;
     g_classPid = pid;
     std::snprintf(out.method, sizeof(out.method), "conRentV1 fast ptrace IL2CPP");
 
