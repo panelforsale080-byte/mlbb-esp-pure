@@ -10,6 +10,7 @@ add_library(MlbbEsp SHARED
     mem.cpp
     esp_engine.cpp
     esp_draw.cpp
+    esp_lobby.cpp
     esp_retri.cpp
     esp_retri_il2.cpp
     esp_hero_auto.cpp

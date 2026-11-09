@@ -13,6 +13,7 @@ struct EspFeatures {
     bool proximityAlert12m = false;
     bool facing = false;
     bool playerInfo = false;
+    bool lobby = false;
     bool monsterBox = false;
     bool monsterName = false;
     bool monsterHealth = false;

@@ -387,6 +387,50 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
             instance_field_offset(s, pid, il2, sbcKlass, "m_iFieldOfView");
     }
 
+    uintptr_t sdKlass = find_class_fast(s, pid, il2, images, "SystemData", false);
+    uintptr_t rdKlass = find_class_fast(s, pid, il2, images, "RoomData", false);
+    out.runtime_fields.sd_klass = sdKlass;
+    if (sdKlass)
+        out.runtime_fields.sd_roomPlayerInfo =
+            instance_field_offset(s, pid, il2, sdKlass, "m_RoomPlayerInfo");
+    if (rdKlass) {
+        out.runtime_fields.rd_name = instance_field_offset(s, pid, il2, rdKlass, "_sName");
+        if (!out.runtime_fields.rd_name)
+            out.runtime_fields.rd_name = instance_field_offset(s, pid, il2, rdKlass, "strName");
+        out.runtime_fields.rd_team = instance_field_offset(s, pid, il2, rdKlass, "_steamName");
+        out.runtime_fields.rd_uid = instance_field_offset(s, pid, il2, rdKlass, "lUid");
+        out.runtime_fields.rd_zone = instance_field_offset(s, pid, il2, rdKlass, "uiZoneId");
+        out.runtime_fields.rd_level = instance_field_offset(s, pid, il2, rdKlass, "uiRoleLevel");
+        out.runtime_fields.rd_rank = instance_field_offset(s, pid, il2, rdKlass, "uiRankLevel");
+        out.runtime_fields.rd_subRank = instance_field_offset(s, pid, il2, rdKlass, "iSubRankID");
+        out.runtime_fields.rd_myth = instance_field_offset(s, pid, il2, rdKlass, "iMythPoint");
+        out.runtime_fields.rd_histRank =
+            instance_field_offset(s, pid, il2, rdKlass, "iHistoryMaxBigRankId");
+        out.runtime_fields.rd_hero = instance_field_offset(s, pid, il2, rdKlass, "heroid");
+        out.runtime_fields.rd_skin = instance_field_offset(s, pid, il2, rdKlass, "heroskin");
+        out.runtime_fields.rd_spell = instance_field_offset(s, pid, il2, rdKlass, "summonSkillId");
+        out.runtime_fields.rd_rune = instance_field_offset(s, pid, il2, rdKlass, "runeId");
+        out.runtime_fields.rd_runeLv = instance_field_offset(s, pid, il2, rdKlass, "runeLv");
+        out.runtime_fields.rd_ban = instance_field_offset(s, pid, il2, rdKlass, "banHero");
+        out.runtime_fields.rd_road = instance_field_offset(s, pid, il2, rdKlass, "iRoad");
+        out.runtime_fields.rd_ping = instance_field_offset(s, pid, il2, rdKlass, "uiPlayerPing");
+        out.runtime_fields.rd_robot = instance_field_offset(s, pid, il2, rdKlass, "bRobot");
+        out.runtime_fields.rd_vp = instance_field_offset(s, pid, il2, rdKlass, "bVP");
+        out.runtime_fields.rd_fake = instance_field_offset(s, pid, il2, rdKlass, "bFakeRole");
+        out.runtime_fields.rd_leader = instance_field_offset(s, pid, il2, rdKlass, "bRoomLeader");
+        out.runtime_fields.rd_camp = instance_field_offset(s, pid, il2, rdKlass, "iCamp");
+        out.runtime_fields.rd_pos = instance_field_offset(s, pid, il2, rdKlass, "iPos");
+        out.runtime_fields.rd_heroUse = instance_field_offset(s, pid, il2, rdKlass, "iHeroUseCount");
+        out.runtime_fields.rd_star = instance_field_offset(s, pid, il2, rdKlass, "bStarVip");
+        out.runtime_fields.rd_room = instance_field_offset(s, pid, il2, rdKlass, "ulRoomID");
+        out.runtime_fields.rd_want = instance_field_offset(s, pid, il2, rdKlass, "vWantSelectHero");
+        out.runtime_fields.rd_country = instance_field_offset(s, pid, il2, rdKlass, "country");
+    }
+    ui_log("[lobby] SystemData=0x%llx m_RoomPlayerInfo=0x%llx RoomData name=0x%llx",
+           (unsigned long long)out.runtime_fields.sd_klass,
+           (unsigned long long)out.runtime_fields.sd_roomPlayerInfo,
+           (unsigned long long)out.runtime_fields.rd_name);
+
     ui_log("[resolve] camera runtime (IL2CPP fields, no lib Offsets.h):");
     ui_log("  GameMethod statics=0x%llx mainCamera(IL2)=0x%llx ShowBattleCamera statics=0x%llx",
            (unsigned long long)out.game_method_statics,

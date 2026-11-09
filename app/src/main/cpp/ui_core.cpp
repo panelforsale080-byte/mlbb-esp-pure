@@ -3,6 +3,7 @@
 #include "esp_draw.hpp"
 #include "esp_retri.hpp"
 #include "esp_hero_auto.hpp"
+#include "esp_lobby.hpp"
 #include "proc.hpp"
 #include "ui_log.hpp"
 #include "clip_android.hpp"
@@ -209,7 +210,7 @@ static void menu_draw_enemy_esp_grid() {
                            &g_feat.enemyCooldown);
         menu_checkbox_row3("12m", &g_feat.proximityAlert12m, "CD panel", &g_feat.enemyCdSidePanel,
                            "Facing", &g_feat.facing);
-        menu_checkbox_row3("Info", &g_feat.playerInfo, "", nullptr, "", nullptr);
+        menu_checkbox_row3("Info", &g_feat.playerInfo, "Lobby", &g_feat.lobby, "", nullptr);
         ImGui::EndTable();
     }
     ImGui::PopStyleVar();
@@ -346,6 +347,8 @@ static void reader_loop() {
                                  esp_retri_settings().enabled;
             esp_tick_set_feature_flags(g_feat.name, g_feat.enemyCooldown, wantMon, g_feat.facing,
                                        g_feat.playerInfo);
+            esp_lobby_set_enabled(g_feat.lobby);
+            if (g_feat.lobby) esp_lobby_tick(pid);
             if (g_needResolve.load()) {
                 if (g_espActive.load()) {
                     /* #147: vm_read tick only while ESP on; Resolve runs when ESP off */
@@ -486,6 +489,9 @@ static void draw_ui() {
         }
     }
     const bool hideEspOverlay = g_hideWhileRecording;
+    if (!hideEspOverlay && g_feat.lobby) {
+        esp_lobby_draw(ImGui::GetBackgroundDrawList(), sw, sh);
+    }
     if (!hideEspOverlay && g_espActive.load() && fr.status == EspStatus::Ready) {
         ImDrawList *bg = ImGui::GetBackgroundDrawList();
         esp_draw_overlay(bg, sw, sh, fr, g_feat, g_showMenu);
