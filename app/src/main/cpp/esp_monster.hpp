@@ -2,7 +2,7 @@
 
 inline bool esp_monster_id(int id) {
     static const int k[] = {2002, 2003, 2004, 2005, 2006, 2008, 2009, 2011, 2012, 2013,
-                            2056, 2059, 2072, 2110, 2220, 2221, 2222, 2223};
+                            2056, 2059, 2072, 2110, 2192, 2220, 2221, 2222, 2223};
     for (int m : k)
         if (m == id) return true;
     return false;
@@ -12,7 +12,8 @@ inline const char *esp_monster_label(int id) {
     switch (id) {
     case 2002: return "Lord";
     case 2003:
-    case 2110: return "Turtle";
+    case 2110:
+    case 2192: return "Turtle";
     case 2004:
     case 2220: return "Fiend";
     case 2005:

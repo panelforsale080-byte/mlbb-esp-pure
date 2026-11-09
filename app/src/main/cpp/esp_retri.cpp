@@ -102,7 +102,8 @@ static int kind_from_template(int id) {
     switch (id) {
     case 2002: return kRetriLord;
     case 2003:
-    case 2110: return kRetriTurtle;
+    case 2110:
+    case 2192: return kRetriTurtle;
     case 2004:
     case 2220: return kRetriRed;
     case 2005:
