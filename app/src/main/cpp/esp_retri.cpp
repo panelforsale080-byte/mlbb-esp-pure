@@ -12,7 +12,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -151,25 +150,9 @@ static bool retri_mob_alive(pid_t pid, uintptr_t ent, const EspRuntimeOff &R, in
     return true;
 }
 
-/**
- * A stuck tiny HP (litho sitting at 10 while you walk around it) is not a live bar.
- * Cast only when current HP is inside the retri table, and a sub-5% reading has
- * actually dropped since the last sample.
- */
-static bool hp_ready_to_secure(uintptr_t ent, int hp, int hpMax, int retriDmg) {
-    if (hp <= 0 || hpMax < 100 || hp > hpMax) return false;
-    struct Sample {
-        int hp = 0;
-        bool seen = false;
-    };
-    static std::unordered_map<uintptr_t, Sample> prev;
-    auto &s = prev[ent];
-    const bool dropped = s.seen && hp < s.hp;
-    const bool frozenStub = hp < 50 && hpMax >= 400 && !dropped;
-    s.hp = hp;
-    s.seen = true;
-    if (hp > retriDmg) return false;
-    return !frozenStub;
+/** Current bar only. No previous-sample wait. */
+static bool hp_ready_to_secure(uintptr_t, int hp, int hpMax, int retriDmg) {
+    return hp > 0 && hpMax >= 100 && hp <= hpMax && hp <= retriDmg;
 }
 
 static void update_norm_from_pixels(float sw, float sh) {
@@ -447,9 +430,8 @@ void esp_retri_process(const EspFrame &frame) {
         if (st == EspIl2Cast::Failed) {
             s_nextTryMs = now + 80;
         } else {
-            /* One send. Repeating TryUseSkill every tick cancels hero skill animations. */
             ui_log("[retri] CAST id=%d hp=%d dist=%.1f", execId, realHp, execDist);
-            s_nextTryMs = now + 2500;
+            s_nextTryMs = now + 220;
         }
     } else {
         fire_retri_tap();
