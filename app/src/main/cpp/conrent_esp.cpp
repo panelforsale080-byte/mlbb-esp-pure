@@ -265,16 +265,9 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
             out.runtime_fields.sm_m_Config =
                 instance_field_offset(s, pid, il2, smKlass, "m_Config");
         uintptr_t monKlass = find_class_fast(s, pid, il2, images, "CData_Monster_Element", false);
-        if (monKlass) {
+        if (monKlass)
             out.runtime_fields.monster_m_ID =
                 instance_field_offset(s, pid, il2, monKlass, "m_ID");
-            out.runtime_fields.monster_m_MonsterName =
-                instance_field_offset(s, pid, il2, monKlass, "m_MonsterName");
-            out.runtime_fields.monster_m_Prefabs =
-                instance_field_offset(s, pid, il2, monKlass, "m_Prefabs");
-        }
-        out.runtime_fields.se_m_RoleName =
-            instance_field_offset(s, pid, il2, seKlass, "m_RoleName");
         uintptr_t wildKlass = find_class_fast(s, pid, il2, images, "ShowWildMonster", false);
         if (wildKlass)
             out.runtime_fields.sw_m_wildType =

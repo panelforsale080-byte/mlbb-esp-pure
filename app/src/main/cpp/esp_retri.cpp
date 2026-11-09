@@ -12,8 +12,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
-#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -97,42 +95,18 @@ static int resolve_retri_damage(const EspFrame &frame, const EspRuntimeOff &R, i
 static uint64_t steady_ms();
 
 enum RetriKind { kRetriNone = 0, kRetriLord = 1, kRetriTurtle = 2, kRetriRed = 3,
-                 kRetriBlue = 4, kRetriCrab = 5, kRetriLitho = 6, kRetriBuff = 7 };
+                 kRetriBlue = 4, kRetriCrab = 5, kRetriLitho = 6 };
 
-static bool ascii_has(const char *s, const char *needle) {
-    if (!s || !needle || !needle[0]) return false;
-    const size_t nlen = std::strlen(needle);
-    for (const char *p = s; *p; ++p) {
-        size_t i = 0;
-        for (; i < nlen; ++i) {
-            unsigned char a = (unsigned char)p[i];
-            if (!a) return false;
-            unsigned char b = (unsigned char)needle[i];
-            if (a >= 'A' && a <= 'Z') a = (unsigned char)(a - 'A' + 'a');
-            if (b >= 'A' && b <= 'Z') b = (unsigned char)(b - 'A' + 'a');
-            if (a != b) break;
-        }
-        if (i == nlen) return true;
-    }
-    return false;
-}
-
-static bool text_has(const char *s, const char *needle) {
-    if (!s || !s[0] || !needle) return false;
-    if (std::strstr(s, needle)) return true;
-    return ascii_has(s, needle);
-}
-
-/** Name ids used as the retri filter. Prefab paths are not these names. */
+/** m_dicMonsterShow value → ShowMonster.m_Config → CData_Monster_Element.m_ID. */
 static int kind_from_template(int id) {
     switch (id) {
     case 2002: return kRetriLord;
     case 2003:
     case 2110: return kRetriTurtle;
     case 2004:
-    case 2220: return kRetriRed; /* Fiend */
+    case 2220: return kRetriRed;
     case 2005:
-    case 2221: return kRetriBlue; /* Serpent */
+    case 2221: return kRetriBlue;
     case 2056:
     case 2072: return kRetriLitho;
     case 2011:
@@ -143,34 +117,13 @@ static int kind_from_template(int id) {
     }
 }
 
-static int read_cfg_template(pid_t pid, uintptr_t ent) {
-    const EspRuntimeOff &R = esp_runtime_off();
-    const uintptr_t cfgOff = R.monsterConfig ? R.monsterConfig : 0x8b8;
-    const uintptr_t idOff = R.monsterTableId ? R.monsterTableId : 0x14;
+static int read_cfg_template(pid_t pid, uintptr_t ent, const EspRuntimeOff &R) {
+    if (!ent || !R.monsterConfig || !R.monsterTableId) return 0;
     uintptr_t cfg = 0;
     int id = 0;
-    if (!mem_read(pid, ent + cfgOff, cfg) || !mem_ptr_ok(cfg)) return 0;
-    if (!mem_read(pid, cfg + idOff, id)) return 0;
+    if (!mem_read(pid, ent + R.monsterConfig, cfg) || !mem_ptr_ok(cfg)) return 0;
+    if (!mem_read(pid, cfg + R.monsterTableId, id)) return 0;
     return kind_from_template(id) ? id : 0;
-}
-
-/** Display name only. A prefab like mon_PatrolTurtle_new is not the filter. */
-static int kind_from_display_name(const char *table, const char *role) {
-    if (text_has(table, "soldier") || text_has(role, "soldier") || text_has(table, "minion") ||
-        text_has(role, "minion") || text_has(table, "tower") || text_has(role, "tower"))
-        return kRetriNone;
-    if (text_has(table, "litho") || text_has(role, "litho")) return kRetriLitho;
-    if (text_has(table, "turtle") || text_has(role, "turtle")) return kRetriTurtle;
-    if (text_has(table, "lord") || text_has(role, "lord")) return kRetriLord;
-    if (text_has(table, "crab") || text_has(role, "crab")) return kRetriCrab;
-    if (text_has(table, "fiend") || text_has(role, "fiend")) return kRetriRed;
-    if (text_has(table, "serpent") || text_has(role, "serpent")) return kRetriBlue;
-    if (text_has(table, "buff") || text_has(role, "buff")) {
-        if (text_has(table, "blue") || text_has(role, "blue")) return kRetriBlue;
-        if (text_has(table, "red") || text_has(role, "red")) return kRetriRed;
-        return kRetriBuff;
-    }
-    return kRetriNone;
 }
 
 static bool kind_enabled(int kind) {
@@ -179,7 +132,6 @@ static bool kind_enabled(int kind) {
     case kRetriTurtle: return g_retri.targetTurtle;
     case kRetriRed: return g_retri.targetRed;
     case kRetriBlue: return g_retri.targetBlue;
-    case kRetriBuff: return g_retri.targetRed || g_retri.targetBlue;
     case kRetriCrab: return g_retri.targetCrab;
     case kRetriLitho: return g_retri.targetLito;
     default: return false;
@@ -192,72 +144,10 @@ static const char *kind_label(int kind) {
     case kRetriTurtle: return "Turtle";
     case kRetriRed: return "Buff Red";
     case kRetriBlue: return "Buff Blue";
-    case kRetriBuff: return "Buff";
     case kRetriCrab: return "Crab";
     case kRetriLitho: return "Litho";
     default: return "?";
     }
-}
-
-struct NameCacheEntry {
-    int kind = 0;
-    int cfg = 0;
-    uint64_t atMs = 0;
-    char raw[48] = {};
-};
-static uintptr_t g_nameCacheBm = 0;
-static std::unordered_map<uintptr_t, NameCacheEntry> g_nameCache;
-
-static int kind_of_entity(pid_t pid, uintptr_t bm, uintptr_t ent, bool fresh, char *saw,
-                          size_t sawSz) {
-    if (bm != g_nameCacheBm) {
-        g_nameCache.clear();
-        g_nameCacheBm = bm;
-    }
-    const uint64_t now = steady_ms();
-    if (!fresh) {
-        const auto it = g_nameCache.find(ent);
-        if (it != g_nameCache.end()) {
-            if (it->second.kind != kRetriNone) return it->second.kind;
-            if (now - it->second.atMs < 500) return kRetriNone;
-        }
-    }
-    char table[96], role[96], prefab[96];
-    table[0] = role[0] = prefab[0] = '\0';
-    const bool haveNames =
-        esp_read_dict_monster_names(pid, ent, table, role, prefab, sizeof(table));
-    if (saw && sawSz && !saw[0]) {
-        const char *raw = table[0] ? table : (role[0] ? role : prefab);
-        if (raw && raw[0]) std::snprintf(saw, sawSz, "%s", raw);
-    }
-    /* EXTERNAL filters by the real monster id (2002 Lord, 2003 Turtle).
-     * A second body with no config id was labeled Lord/Turtle and blocked the cast. */
-    const int cfg = read_cfg_template(pid, ent);
-    int kind = kind_from_template(cfg);
-    if (!kind && haveNames) {
-        const int named = kind_from_display_name(table, role);
-        if (named != kRetriLord && named != kRetriTurtle) kind = named;
-    }
-    if (!kind && !haveNames && !cfg) return kRetriNone;
-    if (g_nameCache.size() > 256) g_nameCache.clear();
-    NameCacheEntry e;
-    e.kind = kind;
-    e.cfg = cfg;
-    e.atMs = now;
-    std::snprintf(e.raw, sizeof(e.raw), "%s", kind ? kind_label(kind) : (table[0] ? table : role));
-    g_nameCache[ent] = e;
-    return kind;
-}
-
-/** Own red/blue only. Enemy buff camp stays targetable. Neutral is not allied. */
-static bool allied_monster_camp(pid_t pid, uintptr_t local, uintptr_t ent) {
-    int selfCamp = 0, mobCamp = 0;
-    if (!local || !ent) return false;
-    if (!mem_read(pid, local + 0xd0, selfCamp)) return false;
-    if (!mem_read(pid, ent + 0xd0, mobCamp)) return false;
-    if (selfCamp == 1 && mobCamp == 3) return true;
-    if (selfCamp == 2 && mobCamp == 4) return true;
-    return false;
 }
 
 static uint64_t steady_ms() {
@@ -353,8 +243,7 @@ static bool summon_is_other_spell(int sid) {
 static bool find_executable_retri_target(const EspFrame &frame, const EspRuntimeOff &R, float selfX,
                                          float selfY, float selfZ, int retriDmg, float maxDist,
                                          uintptr_t &outEnt, float &outDist, int &outHp, int &outKind,
-                                         int &dbgKind, int &dbgHp, float &dbgDist, char *dbgRaw,
-                                         size_t dbgRawSz, char *sawName, size_t sawSz) {
+                                         int &dbgKind, int &dbgHp, float &dbgDist, int &dbgCfg) {
     outEnt = 0;
     outDist = 1e9f;
     outHp = 0;
@@ -362,9 +251,9 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
     dbgKind = 0;
     dbgHp = 0;
     dbgDist = 1e9f;
-    if (dbgRaw && dbgRawSz) dbgRaw[0] = '\0';
-    if (sawName && sawSz) sawName[0] = '\0';
-    if (!frame.bmInstance) return false;
+    dbgCfg = 0;
+    if (!frame.bmInstance || !R.dicMonsterShow || !R.monsterConfig || !R.monsterTableId)
+        return false;
 
     std::vector<std::pair<int, uintptr_t>> monsters;
     if (!esp_monster_dict_entries(frame.pid, frame.bmInstance, monsters)) return false;
@@ -372,6 +261,7 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
     struct Mob {
         uintptr_t ent;
         int kind;
+        int cfg;
         int hp;
         int hpMax;
         float x, y, z, dist;
@@ -382,11 +272,13 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
     for (const auto &kv : monsters) {
         const uintptr_t ent = kv.second;
         if (!ent) continue;
-        const int kind = kind_of_entity(frame.pid, frame.bmInstance, ent, false, sawName, sawSz);
+        const int cfg = read_cfg_template(frame.pid, ent, R);
+        const int kind = kind_from_template(cfg);
         if (!kind_enabled(kind)) continue;
-        /* Skip only our own buff camp. Enemy Fiend/Serpent stay targetable. */
-        const bool campBuff = kind == kRetriRed || kind == kRetriBlue || kind == kRetriBuff;
-        if (campBuff && allied_monster_camp(frame.pid, frame.localPlayerEnt, ent)) continue;
+        if ((kind == kRetriRed || kind == kRetriBlue) && R.sameCamp) {
+            uint8_t camp = 0;
+            if (mem_read(frame.pid, ent + R.sameCamp, camp) && camp) continue;
+        }
         int hp = 0, hpMax = 0;
         if (!retri_mob_alive(frame.pid, ent, R, &hp, &hpMax)) continue;
         float mx = 0, my = 0, mz = 0;
@@ -400,13 +292,9 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
             dbgDist = dist;
             dbgKind = kind;
             dbgHp = hp;
-            if (dbgRaw && dbgRawSz) {
-                const auto it = g_nameCache.find(ent);
-                if (it != g_nameCache.end())
-                    std::snprintf(dbgRaw, dbgRawSz, "%s cfg=%d", it->second.raw, it->second.cfg);
-            }
+            dbgCfg = cfg;
         }
-        alive.push_back({ent, kind, hp, hpMax, mx, my, mz, dist});
+        alive.push_back({ent, kind, cfg, hp, hpMax, mx, my, mz, dist});
     }
 
     for (const Mob &m : alive) {
@@ -486,16 +374,11 @@ void esp_retri_process(const EspFrame &frame) {
     float execDist = 1e9f;
     int execHp = 0;
     int execKind = 0;
-    int dbgKind = 0, dbgHp = 0;
+    int dbgKind = 0, dbgHp = 0, dbgCfg = 0;
     float dbgDist = 1e9f;
-    char sawName[96];
-    char dbgRaw[48];
-    sawName[0] = '\0';
-    dbgRaw[0] = '\0';
     if (self_pos_ok(selfX, selfY, selfZ)) {
         find_executable_retri_target(frame, R, selfX, selfY, selfZ, retriDmg, kMaxDist, execEnt,
-                                     execDist, execHp, execKind, dbgKind, dbgHp, dbgDist, dbgRaw,
-                                     sizeof(dbgRaw), sawName, sizeof(sawName));
+                                     execDist, execHp, execKind, dbgKind, dbgHp, dbgDist, dbgCfg);
     }
 
     static uint64_t s_lastDbgMs = 0;
@@ -508,14 +391,11 @@ void esp_retri_process(const EspFrame &frame) {
         } else if (dbgKind) {
             const char *why = dbgDist > kMaxDist ? "out of range" :
                               (dbgHp > retriDmg ? "hp above damage" : "not executable");
-            ui_log("[retri] lvl=%d kw=%d dmg=%d closest %s name=\"%s\" hp=%d dist=%.2f (%s)",
-                   playerLevel, haveKw ? killWild : -1, retriDmg, kind_label(dbgKind), dbgRaw,
+            ui_log("[retri] lvl=%d kw=%d dmg=%d closest %s cfg=%d hp=%d dist=%.2f (%s)",
+                   playerLevel, haveKw ? killWild : -1, retriDmg, kind_label(dbgKind), dbgCfg,
                    dbgHp, dbgDist, why);
-        } else if (sawName[0]) {
-            ui_log("[retri] lvl=%d kw=%d dmg=%d — no named retri mob (saw %s)",
-                   playerLevel, haveKw ? killWild : -1, retriDmg, sawName);
         } else {
-            ui_log("[retri] lvl=%d kw=%d dmg=%d — no named retri mob",
+            ui_log("[retri] lvl=%d kw=%d dmg=%d — no m_dicMonsterShow target",
                    playerLevel, haveKw ? killWild : -1, retriDmg);
         }
     }
@@ -524,9 +404,8 @@ void esp_retri_process(const EspFrame &frame) {
 
     const int realHp = read_entity_hp(frame.pid, execEnt, R.hp);
     if (realHp <= 0 || realHp > retriDmg) return;
-    const int liveKind =
-        kind_of_entity(frame.pid, frame.bmInstance, execEnt, true, nullptr, 0);
-    if (liveKind != kRetriNone && liveKind != execKind) return;
+    const int liveCfg = read_cfg_template(frame.pid, execEnt, R);
+    if (kind_from_template(liveCfg) != execKind) return;
 
     if (R.summonSkillId && frame.localPlayerEnt) {
         int sid = 0;

@@ -81,9 +81,6 @@ const EspResolveReport &esp_last_resolve_report();
 bool esp_monster_dict_entries(pid_t pid, uintptr_t bmInstance,
                               std::vector<std::pair<int, uintptr_t>> &out);
 bool esp_read_entity_world(pid_t pid, uintptr_t ent, float &x, float &y, float &z);
-/** Names on the m_dicMonsterShow value: table name, role name, prefab. */
-bool esp_read_dict_monster_names(pid_t pid, uintptr_t ent, char *tableName, char *roleName,
-                                 char *prefab, size_t outSz);
 bool esp_il2_managed_list(pid_t pid, uintptr_t listObj, std::vector<uintptr_t> &out);
 uintptr_t esp_bm_static_fields_ptr(pid_t pid, uintptr_t bmKlass);
 bool esp_il2_array_obj_ptrs(pid_t pid, uintptr_t arrObj, std::vector<uintptr_t> &out,
