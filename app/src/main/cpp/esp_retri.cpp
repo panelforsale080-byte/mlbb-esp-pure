@@ -97,7 +97,7 @@ static int resolve_retri_damage(const EspFrame &frame, const EspRuntimeOff &R, i
 static uint64_t steady_ms();
 
 enum RetriKind { kRetriNone = 0, kRetriLord = 1, kRetriTurtle = 2, kRetriRed = 3,
-                 kRetriBlue = 4, kRetriCrab = 5, kRetriLitho = 6, kRetriBuff = 7 };
+                 kRetriBlue = 4, kRetriCrab = 5, kRetriLitho = 6 };
 
 static bool ascii_has(const char *s, const char *needle) {
     if (!s || !needle || !needle[0]) return false;
@@ -133,8 +133,7 @@ static int kind_from_names(const char *table, const char *role, const char *pref
         any_has(table, role, prefab, "creep") || any_has(table, role, prefab, "lancer") ||
         any_has(table, role, prefab, "tower"))
         return kRetriNone;
-    if (any_has(table, role, prefab, "litho") || any_has(table, role, prefab, "lito") ||
-        any_has(table, role, prefab, "wander"))
+    if (any_has(table, role, prefab, "litho"))
         return kRetriLitho;
     if (any_has(table, role, prefab, "turtle") || any_has(table, role, prefab, "shengui") ||
         any_has(table, role, prefab, "神龟"))
@@ -144,15 +143,10 @@ static int kind_from_names(const char *table, const char *role, const char *pref
         return kRetriLord;
     if (any_has(table, role, prefab, "crab") || any_has(table, role, prefab, "蟹"))
         return kRetriCrab;
-    if (any_has(table, role, prefab, "fiend") || any_has(table, role, prefab, "orange") ||
-        any_has(table, role, prefab, "redbuff") || any_has(table, role, prefab, "red buff") ||
-        any_has(table, role, prefab, "red_buff"))
+    if (any_has(table, role, prefab, "fiend"))
         return kRetriRed;
-    if (any_has(table, role, prefab, "serpent") || any_has(table, role, prefab, "purple") ||
-        any_has(table, role, prefab, "bluebuff") || any_has(table, role, prefab, "blue buff") ||
-        any_has(table, role, prefab, "blue_buff"))
+    if (any_has(table, role, prefab, "serpent"))
         return kRetriBlue;
-    if (any_has(table, role, prefab, "buff")) return kRetriBuff;
     return kRetriNone;
 }
 
@@ -162,7 +156,6 @@ static bool kind_enabled(int kind) {
     case kRetriTurtle: return g_retri.targetTurtle;
     case kRetriRed: return g_retri.targetRed;
     case kRetriBlue: return g_retri.targetBlue;
-    case kRetriBuff: return g_retri.targetRed || g_retri.targetBlue;
     case kRetriCrab: return g_retri.targetCrab;
     case kRetriLitho: return g_retri.targetLito;
     default: return false;
@@ -173,9 +166,8 @@ static const char *kind_label(int kind) {
     switch (kind) {
     case kRetriLord: return "Lord";
     case kRetriTurtle: return "Turtle";
-    case kRetriRed: return "Red";
-    case kRetriBlue: return "Blue";
-    case kRetriBuff: return "Buff";
+    case kRetriRed: return "Fiend";
+    case kRetriBlue: return "Serpent";
     case kRetriCrab: return "Crab";
     case kRetriLitho: return "Litho";
     default: return "?";
@@ -340,7 +332,7 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
         const int kind = kind_of_entity(frame.pid, frame.bmInstance, ent, false, sawName, sawSz);
         if (!kind_enabled(kind)) continue;
         /* Buffs are camp-owned. Lord, turtle, crab, and litho stay targetable. */
-        const bool campBuff = kind == kRetriRed || kind == kRetriBlue || kind == kRetriBuff;
+        const bool campBuff = kind == kRetriRed || kind == kRetriBlue;
         if (campBuff && R.sameCamp) {
             uint8_t camp = 0;
             if (mem_read(frame.pid, ent + R.sameCamp, camp) && camp) continue;

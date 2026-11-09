@@ -631,11 +631,11 @@ static void draw_ui() {
                 rt.targetRed = rt.targetBlue = rt.targetCrab = rt.targetLito = false;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Buffs only")) {
+            if (ImGui::Button("Fiend + Serpent")) {
                 rt.targetRed = rt.targetBlue = true;
                 rt.targetLord = rt.targetTurtle = rt.targetCrab = rt.targetLito = false;
             }
-            if (ImGui::Button("Crab + Lito")) {
+            if (ImGui::Button("Crab + Litho")) {
                 rt.targetCrab = rt.targetLito = true;
                 rt.targetLord = rt.targetTurtle = rt.targetRed = rt.targetBlue = false;
             }
@@ -649,19 +649,19 @@ static void draw_ui() {
                     ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_PadOuterX)) {
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::Checkbox("Lord (2002)", &rt.targetLord);
+                ImGui::Checkbox("Lord", &rt.targetLord);
                 ImGui::TableNextColumn();
-                ImGui::Checkbox("Turtle (2003)", &rt.targetTurtle);
+                ImGui::Checkbox("Turtle", &rt.targetTurtle);
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::Checkbox("Buff Red (2004)", &rt.targetRed);
+                ImGui::Checkbox("Fiend", &rt.targetRed);
                 ImGui::TableNextColumn();
-                ImGui::Checkbox("Buff Blue (2005)", &rt.targetBlue);
+                ImGui::Checkbox("Serpent", &rt.targetBlue);
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::Checkbox("Crab (2222/2223)", &rt.targetCrab);
+                ImGui::Checkbox("Crab", &rt.targetCrab);
                 ImGui::TableNextColumn();
-                ImGui::Checkbox("Lito (2056)", &rt.targetLito);
+                ImGui::Checkbox("Litho", &rt.targetLito);
                 ImGui::EndTable();
             }
 
