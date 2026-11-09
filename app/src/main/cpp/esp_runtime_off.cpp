@@ -22,7 +22,6 @@ void esp_runtime_off_apply(const ConrentResolve &cr) {
     g_off.wildType = rt.sw_m_wildType;
     g_off.entityDeath = rt.se_m_bDeath;
     g_off.sameCamp = rt.se_m_bSameCampType;
-    g_off.campType = rt.se_m_EntityCampType;
     g_off.hp = rt.se_m_Hp;
     g_off.hpMax = rt.se_m_HpMax;
     g_off.level = rt.se_m_Level;

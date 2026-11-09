@@ -118,33 +118,12 @@ static int kind_from_template(int id) {
 }
 
 static int read_cfg_template(pid_t pid, uintptr_t ent, const EspRuntimeOff &R) {
-    if (!ent) return 0;
+    if (!ent || !R.monsterConfig || !R.monsterTableId) return 0;
     uintptr_t cfg = 0;
     int id = 0;
-    const bool haveCfg = R.monsterConfig && R.monsterTableId &&
-                         mem_read(pid, ent + R.monsterConfig, cfg) && mem_ptr_ok(cfg) &&
-                         mem_read(pid, cfg + R.monsterTableId, id);
-    if (haveCfg && kind_from_template(id)) return id;
-    /* Config id wins when it names a different monster. Match 2 sometimes leaves
-     * turtle/buff m_Config empty while ShowEntity.m_ID is still the real id. */
-    if (haveCfg && id != 0) return 0;
-    int eid = 0;
-    if (R.entityId) mem_read(pid, ent + R.entityId, eid);
-    return kind_from_template(eid) ? eid : 0;
-}
-
-/** Our red/blue buff. Neutral turtle/lord/crab are not camp-owned. */
-static bool buff_is_ours(pid_t pid, uintptr_t local, uintptr_t ent, const EspRuntimeOff &R) {
-    if (R.campType && local && ent) {
-        int selfC = 0, monC = 0;
-        if (mem_read(pid, local + R.campType, selfC) && mem_read(pid, ent + R.campType, monC)) {
-            if (selfC == 1 && (monC == 1 || monC == 3)) return true;
-            if (selfC == 2 && (monC == 2 || monC == 4)) return true;
-            return false;
-        }
-    }
-    uint8_t camp = 0;
-    return R.sameCamp && mem_read(pid, ent + R.sameCamp, camp) && camp;
+    if (!mem_read(pid, ent + R.monsterConfig, cfg) || !mem_ptr_ok(cfg)) return 0;
+    if (!mem_read(pid, cfg + R.monsterTableId, id)) return 0;
+    return kind_from_template(id) ? id : 0;
 }
 
 static bool kind_enabled(int kind) {
@@ -296,9 +275,10 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
         const int cfg = read_cfg_template(frame.pid, ent, R);
         const int kind = kind_from_template(cfg);
         if (!kind_enabled(kind)) continue;
-        if ((kind == kRetriRed || kind == kRetriBlue) &&
-            buff_is_ours(frame.pid, frame.localPlayerEnt, ent, R))
-            continue;
+        if ((kind == kRetriRed || kind == kRetriBlue) && R.sameCamp) {
+            uint8_t camp = 0;
+            if (mem_read(frame.pid, ent + R.sameCamp, camp) && camp) continue;
+        }
         int hp = 0, hpMax = 0;
         if (!retri_mob_alive(frame.pid, ent, R, &hp, &hpMax)) continue;
         float mx = 0, my = 0, mz = 0;

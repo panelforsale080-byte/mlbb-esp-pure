@@ -19,7 +19,6 @@ struct EspRuntimeOff {
     uintptr_t wildType = 0;
     uintptr_t entityDeath = 0;
     uintptr_t sameCamp = 0;
-    uintptr_t campType = 0;
     uintptr_t hp = 0;
     uintptr_t hpMax = 0;
     uintptr_t level = 0;
