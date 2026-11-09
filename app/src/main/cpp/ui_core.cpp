@@ -388,9 +388,11 @@ static void reader_loop() {
         const EspHeroAutoSettings &haSleep = esp_hero_auto_settings();
         const bool heroFast = haSleep.lingSword || haSleep.gusionCombo;
         const bool retriOn = esp_retri_settings().enabled;
-        if (g_espActive.load()) {
+        if (retriOn) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } else if (g_espActive.load()) {
             performance_random_sleep(7, 15);
-        } else if (pid > 0 && (retriOn || heroFast)) {
+        } else if (pid > 0 && heroFast) {
             performance_random_sleep(8, 12);
         } else if (g_showMenu)
             std::this_thread::sleep_for(std::chrono::milliseconds(16));

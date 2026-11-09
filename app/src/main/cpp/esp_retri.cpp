@@ -36,6 +36,35 @@ static int read_local_level(pid_t pid, uintptr_t localEnt, uintptr_t levelOff, i
     return fallback;
 }
 
+/** One bad m_Level sample (15 → 1) was shrinking retri damage and missing the secure. */
+static int stable_hero_level(uintptr_t ent, int readLv) {
+    static uintptr_t seen = 0;
+    static int held = 0;
+    static int pending = 0;
+    static int pendingHits = 0;
+    if (!ent) return readLv;
+    if (ent != seen) {
+        seen = ent;
+        held = readLv;
+        pending = 0;
+        pendingHits = 0;
+        return held;
+    }
+    if (readLv == held || readLv == held + 1) {
+        held = readLv;
+        pending = 0;
+        pendingHits = 0;
+        return held;
+    }
+    if (readLv == pending) {
+        if (++pendingHits >= 3) held = readLv;
+    } else {
+        pending = readLv;
+        pendingHits = 1;
+    }
+    return held;
+}
+
 static bool read_int_field(pid_t pid, uintptr_t base, uintptr_t off, int &out) {
     if (!base || !off) return false;
     int v = 0;
@@ -56,7 +85,9 @@ static bool read_kill_wild_times(pid_t pid, uintptr_t localEnt, const EspRuntime
 static int resolve_retri_damage(const EspFrame &frame, const EspRuntimeOff &R, int &outLevel,
                                 int &outKillWild, bool &outHaveKw) {
     outHaveKw = read_kill_wild_times(frame.pid, frame.localPlayerEnt, R, outKillWild);
-    outLevel = read_local_level(frame.pid, frame.localPlayerEnt, R.level, g_retri.assumedLevel);
+    outLevel = stable_hero_level(
+        frame.localPlayerEnt,
+        read_local_level(frame.pid, frame.localPlayerEnt, R.level, g_retri.assumedLevel));
     if (outLevel < 1) outLevel = 1;
     if (outLevel > 15) outLevel = 15;
     return calculate_retri_damage(outLevel);
@@ -134,7 +165,7 @@ static bool hp_ready_to_secure(uintptr_t ent, int hp, int hpMax, int retriDmg) {
     static std::unordered_map<uintptr_t, Sample> prev;
     auto &s = prev[ent];
     const bool dropped = s.seen && hp < s.hp;
-    const bool frozenStub = hpMax >= 400 && hp * 20 < hpMax && !dropped;
+    const bool frozenStub = hp < 50 && hpMax >= 400 && !dropped;
     s.hp = hp;
     s.seen = true;
     if (hp > retriDmg) return false;
@@ -366,10 +397,10 @@ void esp_retri_process(const EspFrame &frame) {
         /* TryUseSkill still fires the spell when the boxed code is not 0.
          * Logging that as REJECT/FAIL was a false failure. One line per send. */
         if (st == EspIl2Cast::Failed) {
-            s_nextTryMs = now + 400;
+            s_nextTryMs = now + 80;
         } else {
             ui_log("[retri] CAST id=%d hp=%d dist=%.1f", execId, realHp, execDist);
-            s_nextTryMs = now + 900;
+            s_nextTryMs = now + 220;
         }
     } else {
         fire_retri_tap();
