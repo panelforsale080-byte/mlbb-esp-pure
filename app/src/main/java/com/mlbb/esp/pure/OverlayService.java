@@ -465,6 +465,7 @@ public class OverlayService extends Service {
         pendingCmd = null;
         if (CMD_START_ESP.equals(c)) {
             NativeBridge.nativeStartEsp();
+            if (glView != null) glView.requestRender();
         } else if (CMD_STOP_ESP.equals(c)) {
             NativeBridge.nativeStopEsp();
         }

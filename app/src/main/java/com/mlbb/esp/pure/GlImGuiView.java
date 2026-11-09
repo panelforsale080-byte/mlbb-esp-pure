@@ -13,6 +13,14 @@ import javax.microedition.khronos.opengles.GL10;
 public class GlImGuiView extends GLSurfaceView implements GLSurfaceView.Renderer {
     private static final String TAG = "GlImGuiView";
     private volatile boolean surfaceReady = false;
+    private boolean frameQueued = false;
+    private final Runnable drawAgain = new Runnable() {
+        @Override
+        public void run() {
+            frameQueued = false;
+            if (surfaceReady) requestRender();
+        }
+    };
 
     public GlImGuiView(Context context) {
         super(context);
@@ -75,7 +83,7 @@ public class GlImGuiView extends GLSurfaceView implements GLSurfaceView.Renderer
         try {
             NativeBridge.nativeGlSurfaceChanged(width, height);
             surfaceReady = true;
-            setRenderMode(RENDERMODE_CONTINUOUSLY);
+            setRenderMode(RENDERMODE_WHEN_DIRTY);
             requestRender();
             if (readyListener != null) readyListener.onGlReady(this);
         } catch (Throwable t) {
@@ -89,10 +97,18 @@ public class GlImGuiView extends GLSurfaceView implements GLSurfaceView.Renderer
         if (!surfaceReady) return;
         try {
             NativeBridge.nativeGlDrawFrame();
+            scheduleNextFrame();
         } catch (Throwable t) {
             Log.e(TAG, "drawFrame", t);
             surfaceReady = false;
         }
+    }
+
+    private void scheduleNextFrame() {
+        if (frameQueued || !surfaceReady) return;
+        if (!NativeBridge.nativeNeedsContinuousGl()) return;
+        frameQueued = true;
+        postDelayed(drawAgain, 16);
     }
 
     @Override

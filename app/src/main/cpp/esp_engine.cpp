@@ -25,6 +25,7 @@ static std::atomic<bool> g_tickHeroName{true};
 static std::atomic<bool> g_tickEnemyCd{true};
 static std::atomic<bool> g_tickMonsters{true};
 static std::atomic<bool> g_tickFacing{false};
+static std::atomic<bool> g_tickBuildTargets{true};
 
 /* Reader tick index: stagger heavy per-entity reads (IL2 string + cooldown dict) so busy
  * fights do not run full cost for every entity every frame. */
@@ -39,6 +40,8 @@ void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown, bool monsters
     g_tickMonsters.store(monsters);
     g_tickFacing.store(facing);
 }
+
+void esp_tick_set_build_targets(bool on) { g_tickBuildTargets.store(on); }
 
 static bool read_u32_pair(pid_t pid, uintptr_t offStart, uintptr_t offCool, uint32_t &startTime,
                         uint32_t &coolTime) {
@@ -992,6 +995,14 @@ EspStatus esp_tick(EspFrame &out) {
     out.selfX = self.x;
     out.selfY = self.y;
     out.selfZ = self.z;
+    out.bmInstance = bm;
+    out.bmKlass = g_bmKlass;
+    out.bmStatics = g_bmStatics;
+    out.status = EspStatus::Ready;
+    if (!g_tickBuildTargets.load()) {
+        std::snprintf(out.hint, sizeof(out.hint), "OK");
+        return out.status;
+    }
 
     uintptr_t pDict = 0;
     mem_read(g_pid, bm + R.dicPlayerShow, pDict);

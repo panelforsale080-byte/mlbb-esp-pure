@@ -341,11 +341,14 @@ static void reader_loop() {
             g_needResolve.store(true);
             lastPid = 0;
         } else if (pid > 0) {
-            const bool wantMon = g_feat.monsterBox || g_feat.monsterName || g_feat.monsterHealth ||
-                                 esp_retri_settings().enabled;
+            const bool retriOn = esp_retri_settings().enabled;
+            const bool espOn = g_espActive.load();
+            const EspHeroAutoSettings &haRun = esp_hero_auto_settings();
+            const bool heroOn = haRun.lingSword || haRun.gusionCombo;
+            const bool wantMon = g_feat.monsterBox || g_feat.monsterName || g_feat.monsterHealth;
             esp_tick_set_feature_flags(g_feat.name, g_feat.enemyCooldown, wantMon, g_feat.facing);
             if (g_needResolve.load()) {
-                if (g_espActive.load()) {
+                if (espOn) {
                     /* #147: vm_read tick only while ESP on; Resolve runs when ESP off */
                 } else if (g_needResolve.exchange(false)) {
                     ui_log("[resolve] start pid=%d", (int)pid);
@@ -354,44 +357,59 @@ static void reader_loop() {
                     log_resolve_result(rep);
                 }
             }
+            using clock = std::chrono::steady_clock;
+            static clock::time_point lastFull{};
+            const auto now = clock::now();
+            const bool needFull = espOn || heroOn || g_showMenu;
+            const int fullMs = espOn ? 16 : (heroOn ? 12 : 100);
+            const bool dueFull = lastFull.time_since_epoch().count() == 0 ||
+                                 now - lastFull >= std::chrono::milliseconds(fullMs);
             EspFrame f;
-            esp_tick(f);
-            g_lastTargetCount.store(static_cast<int>(f.targets.size()), std::memory_order_relaxed);
-            if (g_espActive.load() && f.status == EspStatus::Ready) {
-                float sw = (float)g_width;
-                float sh = (float)g_height;
-                if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
-                if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
-                esp_project_screens(f, sw, sh);
-            }
-            if (f.status != lastStatus || pid != lastPid) {
-                ui_log("[tick] %s | %s", status_name(f.status), f.hint);
-                if (f.status == EspStatus::Ready) {
-                    ui_log("  bm=0x%llx lp=(%.1f,%.1f) dict=0x%llx/0x%llx",
-                           (unsigned long long)f.bmInstance, f.selfX, f.selfZ,
-                           (unsigned long long)f.playerDict, (unsigned long long)f.monsterDict);
+            bool didFull = false;
+            if (needFull && dueFull) {
+                esp_tick_set_build_targets(true);
+                esp_tick(f);
+                didFull = true;
+                lastFull = now;
+                g_lastTargetCount.store(static_cast<int>(f.targets.size()),
+                                        std::memory_order_relaxed);
+                if (espOn && f.status == EspStatus::Ready) {
+                    float sw = (float)g_width;
+                    float sh = (float)g_height;
+                    if (sw < 1.f && g_displayW > 0) sw = (float)g_displayW;
+                    if (sh < 1.f && g_displayH > 0) sh = (float)g_displayH;
+                    esp_project_screens(f, sw, sh);
                 }
-                lastStatus = f.status;
-                lastPid = pid;
+                if (f.status != lastStatus || pid != lastPid) {
+                    ui_log("[tick] %s | %s", status_name(f.status), f.hint);
+                    if (f.status == EspStatus::Ready) {
+                        ui_log("  bm=0x%llx lp=(%.1f,%.1f) dict=0x%llx/0x%llx",
+                               (unsigned long long)f.bmInstance, f.selfX, f.selfZ,
+                               (unsigned long long)f.playerDict, (unsigned long long)f.monsterDict);
+                    }
+                    lastStatus = f.status;
+                    lastPid = pid;
+                }
+                if (heroOn) esp_hero_auto_process(f);
+                if (retriOn) esp_retri_process(f);
+                const int pub = g_frameLatest.load(std::memory_order_relaxed);
+                const int w = 1 - pub;
+                g_frameSlots[w] = std::move(f);
+                g_frameLatest.store(w, std::memory_order_release);
+            } else if (retriOn) {
+                esp_tick_set_build_targets(false);
+                esp_tick(f);
+                esp_retri_process(f);
             }
-            if (esp_retri_settings().enabled) esp_retri_process(f);
-            {
-                const EspHeroAutoSettings &haRun = esp_hero_auto_settings();
-                if (haRun.lingSword || haRun.gusionCombo) esp_hero_auto_process(f);
-            }
-            const int pub = g_frameLatest.load(std::memory_order_relaxed);
-            const int w = 1 - pub;
-            g_frameSlots[w] = std::move(f);
-            g_frameLatest.store(w, std::memory_order_release);
         }
 
         const EspHeroAutoSettings &haSleep = esp_hero_auto_settings();
         const bool heroFast = haSleep.lingSword || haSleep.gusionCombo;
         const bool retriOn = esp_retri_settings().enabled;
         if (retriOn) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            std::this_thread::sleep_for(std::chrono::milliseconds(4));
         } else if (g_espActive.load()) {
-            performance_random_sleep(7, 15);
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
         } else if (pid > 0 && heroFast) {
             performance_random_sleep(8, 12);
         } else if (g_showMenu)
@@ -402,11 +420,10 @@ static void reader_loop() {
 }
 
 static bool ui_wants_continuous_gl() {
-    if (g_espActive.load() || g_showMenu) return true;
-    if (esp_retri_settings().enabled) return true;
-    const EspHeroAutoSettings &h = esp_hero_auto_settings();
-    return h.lingSword || h.gusionCombo;
+    return g_espActive.load() || g_showMenu;
 }
+
+bool ui_needs_continuous_gl() { return ui_wants_continuous_gl(); }
 
 static int g_menuPage = 0;
 

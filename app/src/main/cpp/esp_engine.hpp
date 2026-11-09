@@ -77,6 +77,8 @@ void esp_request_force_resolve();
 bool esp_is_resolved();
 /** Reader thread: skip expensive per-entity reads when overlay toggles off (reduces syscall load). */
 void esp_tick_set_feature_flags(bool heroName, bool enemyCooldown, bool monsters, bool facing);
+/** When false, esp_tick only refreshes the match and local position. Retri still scans on its own. */
+void esp_tick_set_build_targets(bool on);
 EspStatus esp_tick(EspFrame &out);
 /** conRent IL2 W2S on reader thread (not GL) — fills screen* fields. */
 void esp_project_screens(EspFrame &frame, float screenW, float screenH);

@@ -20,6 +20,8 @@ public final class NativeBridge {
     /** ImGui menu off + overlay pass-through (FABs visible). */
     public static native void nativeMinimizeMenu();
     public static native boolean nativeIsMenuInteractive();
+    /** True while the menu or ESP boxes need frames. Retri does not. */
+    public static native boolean nativeNeedsContinuousGl();
     public static native void nativeStartEsp();
     public static native void nativeStopEsp();
     /** One tap = one Ling sword / Gusion combo (when enabled in menu). */
