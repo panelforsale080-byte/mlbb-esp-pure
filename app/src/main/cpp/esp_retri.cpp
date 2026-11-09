@@ -123,31 +123,48 @@ static bool text_has(const char *s, const char *needle) {
     return ascii_has(s, needle);
 }
 
-static bool any_has(const char *a, const char *b, const char *c, const char *n) {
-    return text_has(a, n) || text_has(b, n) || text_has(c, n);
+/** Name ids used as the retri filter. Prefab paths are not these names. */
+static int kind_from_template(int id) {
+    switch (id) {
+    case 2002: return kRetriLord;
+    case 2003:
+    case 2110: return kRetriTurtle;
+    case 2004:
+    case 2220: return kRetriRed; /* Fiend */
+    case 2005:
+    case 2221: return kRetriBlue; /* Serpent */
+    case 2056:
+    case 2072: return kRetriLitho;
+    case 2011:
+    case 2013:
+    case 2222:
+    case 2223: return kRetriCrab;
+    default: return kRetriNone;
+    }
 }
 
-/** Lord / Turtle / Litho / Crab / Buff, taken from the dictionary entry's name. */
-static int kind_from_names(const char *table, const char *role, const char *prefab) {
-    if (any_has(table, role, prefab, "soldier") || any_has(table, role, prefab, "minion") ||
-        any_has(table, role, prefab, "creep") || any_has(table, role, prefab, "lancer") ||
-        any_has(table, role, prefab, "tower"))
+static int read_cfg_template(pid_t pid, uintptr_t ent) {
+    const EspRuntimeOff &R = esp_runtime_off();
+    const uintptr_t cfgOff = R.monsterConfig ? R.monsterConfig : 0x8b8;
+    const uintptr_t idOff = R.monsterTableId ? R.monsterTableId : 0x14;
+    uintptr_t cfg = 0;
+    int id = 0;
+    if (!mem_read(pid, ent + cfgOff, cfg) || !mem_ptr_ok(cfg)) return 0;
+    if (!mem_read(pid, cfg + idOff, id)) return 0;
+    return kind_from_template(id) ? id : 0;
+}
+
+/** Display name only. A prefab like mon_PatrolTurtle_new is not the filter. */
+static int kind_from_display_name(const char *table, const char *role) {
+    if (text_has(table, "soldier") || text_has(role, "soldier") || text_has(table, "minion") ||
+        text_has(role, "minion") || text_has(table, "tower") || text_has(role, "tower"))
         return kRetriNone;
-    if (any_has(table, role, prefab, "litho"))
-        return kRetriLitho;
-    if (any_has(table, role, prefab, "turtle") || any_has(table, role, prefab, "shengui") ||
-        any_has(table, role, prefab, "神龟"))
-        return kRetriTurtle;
-    if (any_has(table, role, prefab, "lord") || any_has(table, role, prefab, "lingzhu") ||
-        any_has(table, role, prefab, "领主"))
-        return kRetriLord;
-    if (any_has(table, role, prefab, "crab") || any_has(table, role, prefab, "蟹"))
-        return kRetriCrab;
-    /* Name ids from the dictionary entry: Fiend, Serpent, Litho. Buff is the menu name. */
-    if (any_has(table, role, prefab, "fiend"))
-        return kRetriRed;
-    if (any_has(table, role, prefab, "serpent"))
-        return kRetriBlue;
+    if (text_has(table, "litho") || text_has(role, "litho")) return kRetriLitho;
+    if (text_has(table, "turtle") || text_has(role, "turtle")) return kRetriTurtle;
+    if (text_has(table, "lord") || text_has(role, "lord")) return kRetriLord;
+    if (text_has(table, "crab") || text_has(role, "crab")) return kRetriCrab;
+    if (text_has(table, "fiend") || text_has(role, "fiend")) return kRetriRed;
+    if (text_has(table, "serpent") || text_has(role, "serpent")) return kRetriBlue;
     if (text_has(table, "buff") || text_has(role, "buff")) {
         if (text_has(table, "blue") || text_has(role, "blue")) return kRetriBlue;
         if (text_has(table, "red") || text_has(role, "red")) return kRetriRed;
@@ -184,6 +201,7 @@ static const char *kind_label(int kind) {
 
 struct NameCacheEntry {
     int kind = 0;
+    int cfg = 0;
     uint64_t atMs = 0;
     char raw[48] = {};
 };
@@ -212,13 +230,28 @@ static int kind_of_entity(pid_t pid, uintptr_t bm, uintptr_t ent, bool fresh, ch
         const char *raw = table[0] ? table : (role[0] ? role : prefab);
         if (raw[0]) std::snprintf(saw, sawSz, "%s", raw);
     }
-    const int kind = kind_from_names(table, role, prefab);
+    const EspRuntimeOff &R = esp_runtime_off();
+    const int cfg = read_cfg_template(pid, ent);
+    int kind = kind_from_template(cfg);
+    if (!kind && R.wildType) {
+        int wt = 0;
+        const uintptr_t wtOff = R.wildType ? R.wildType : 0x8f0;
+        if (mem_read(pid, ent + wtOff, wt)) {
+            if (wt == 4) kind = kRetriLord;
+            else if (wt == 3) kind = kRetriTurtle;
+        }
+    }
+    if (!kind && R.entityId) {
+        int live = 0;
+        if (mem_read(pid, ent + R.entityId, live)) kind = kind_from_template(live);
+    }
+    if (!kind) kind = kind_from_display_name(table, role);
     if (g_nameCache.size() > 256) g_nameCache.clear();
     NameCacheEntry e;
     e.kind = kind;
+    e.cfg = cfg;
     e.atMs = now;
-    const char *shown = table[0] ? table : (role[0] ? role : prefab);
-    std::snprintf(e.raw, sizeof(e.raw), "%s", shown);
+    std::snprintf(e.raw, sizeof(e.raw), "%s", kind ? kind_label(kind) : (table[0] ? table : role));
     g_nameCache[ent] = e;
     return kind;
 }
@@ -377,7 +410,7 @@ static bool find_executable_retri_target(const EspFrame &frame, const EspRuntime
             if (dbgRaw && dbgRawSz) {
                 const auto it = g_nameCache.find(ent);
                 if (it != g_nameCache.end())
-                    std::snprintf(dbgRaw, dbgRawSz, "%s", it->second.raw);
+                    std::snprintf(dbgRaw, dbgRawSz, "%s cfg=%d", it->second.raw, it->second.cfg);
             }
         }
         alive.push_back({ent, kind, hp, hpMax, mx, my, mz, dist});
