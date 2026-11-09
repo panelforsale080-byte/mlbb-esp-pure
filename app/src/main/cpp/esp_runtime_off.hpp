@@ -15,7 +15,11 @@ struct EspRuntimeOff {
     uintptr_t vCachePosition = 0;
     uintptr_t entityId = 0;
     uintptr_t monsterConfig = 0;
+    uintptr_t monsterTransConfig = 0;
     uintptr_t monsterTableId = 0;
+    uintptr_t monsterTransId = 0;
+    uintptr_t monsterName = 0;
+    uintptr_t monsterPrefab = 0;
     uintptr_t wildType = 0;
     uintptr_t entityDeath = 0;
     uintptr_t sameCamp = 0;

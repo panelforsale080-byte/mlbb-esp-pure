@@ -4,6 +4,7 @@
 #include "esp_retri.hpp"
 #include "esp_hero_auto.hpp"
 #include "esp_lobby.hpp"
+#include "esp_monid.hpp"
 #include "proc.hpp"
 #include "ui_log.hpp"
 #include "clip_android.hpp"
@@ -67,6 +68,7 @@ static std::atomic<bool> g_needResolve{true};
 static bool g_autoFind = true;
 static bool g_fallbackPid = true;
 static bool g_showMenu = false;
+static int g_menuPage = 0;
 static bool g_antiCapture = false;
 static bool g_hideWhileRecording = false;
 static std::atomic<bool> g_recordingHide{false};
@@ -349,6 +351,7 @@ static void reader_loop() {
                                        g_feat.playerInfo);
             esp_lobby_set_enabled(g_feat.lobby);
             if (g_feat.lobby) esp_lobby_tick(pid);
+            esp_monid_set_enabled(g_showMenu && g_menuPage == 2);
             if (g_needResolve.load()) {
                 if (g_espActive.load()) {
                     /* #147: vm_read tick only while ESP on; Resolve runs when ESP off */
@@ -361,6 +364,7 @@ static void reader_loop() {
             }
             EspFrame f;
             esp_tick(f);
+            if (g_showMenu && g_menuPage == 2) esp_monid_tick(f);
             g_lastTargetCount.store(static_cast<int>(f.targets.size()), std::memory_order_relaxed);
             if (g_espActive.load() && f.status == EspStatus::Ready) {
                 float sw = (float)g_width;
@@ -412,8 +416,6 @@ static bool ui_wants_continuous_gl() {
     const EspHeroAutoSettings &h = esp_hero_auto_settings();
     return h.lingSword || h.gusionCombo;
 }
-
-static int g_menuPage = 0;
 
 /** Grey page button. Activates on touch-down so one tap switches the page. */
 static bool menu_page_button(const char *label, bool selected, float width) {
@@ -575,11 +577,14 @@ static void draw_ui() {
         }
 
         const float pageGap = ImGui::GetStyle().ItemSpacing.x;
-        const float pageW = (ImGui::GetContentRegionAvail().x - pageGap) * 0.5f;
+        const float pageW = (ImGui::GetContentRegionAvail().x - pageGap * 2.f) / 3.f;
         if (menu_page_button("Overlay", g_menuPage == 0, pageW)) g_menuPage = 0;
         ImGui::SameLine();
         if (menu_page_button("Music", g_menuPage == 1, pageW)) g_menuPage = 1;
+        ImGui::SameLine();
+        if (menu_page_button("Dev", g_menuPage == 2, pageW)) g_menuPage = 2;
         if (g_menuPage == 1) draw_music_panel();
+        if (g_menuPage == 2) esp_monid_draw();
         if (g_menuPage == 0) {
         ImGui::SeparatorText("ESP control");
         if (ImGui::Checkbox("Anti screenshot / record", &g_antiCapture))

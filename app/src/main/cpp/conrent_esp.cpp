@@ -261,13 +261,23 @@ static void fill_runtime_field_offsets(RemoteSession &s, pid_t pid, RemoteIl2Cpp
                 instance_field_offset(s, pid, il2, seKlass, "vCachePosition");
         out.runtime_fields.se_m_ID = instance_field_offset(s, pid, il2, seKlass, "m_ID");
         uintptr_t smKlass = find_class_fast(s, pid, il2, images, "ShowMonster", false);
-        if (smKlass)
+        if (smKlass) {
             out.runtime_fields.sm_m_Config =
                 instance_field_offset(s, pid, il2, smKlass, "m_Config");
+            out.runtime_fields.sm_m_TransConfig =
+                instance_field_offset(s, pid, il2, smKlass, "m_TransConfig");
+        }
         uintptr_t monKlass = find_class_fast(s, pid, il2, images, "CData_Monster_Element", false);
-        if (monKlass)
+        if (monKlass) {
             out.runtime_fields.monster_m_ID =
                 instance_field_offset(s, pid, il2, monKlass, "m_ID");
+            out.runtime_fields.monster_m_TransId =
+                instance_field_offset(s, pid, il2, monKlass, "m_TransId");
+            out.runtime_fields.monster_m_Name =
+                instance_field_offset(s, pid, il2, monKlass, "m_MonsterName");
+            out.runtime_fields.monster_m_Prefabs =
+                instance_field_offset(s, pid, il2, monKlass, "m_Prefabs");
+        }
         uintptr_t wildKlass = find_class_fast(s, pid, il2, images, "ShowWildMonster", false);
         if (wildKlass)
             out.runtime_fields.sw_m_wildType =

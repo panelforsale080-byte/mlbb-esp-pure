@@ -11,6 +11,7 @@ add_library(MlbbEsp SHARED
     esp_engine.cpp
     esp_draw.cpp
     esp_lobby.cpp
+    esp_monid.cpp
     esp_retri.cpp
     esp_retri_il2.cpp
     esp_hero_auto.cpp
