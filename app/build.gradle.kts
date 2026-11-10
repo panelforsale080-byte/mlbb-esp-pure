@@ -25,8 +25,15 @@ android {
     buildTypes {
         getByName("debug") { isMinifyEnabled = false }
         getByName("release") {
-            isMinifyEnabled = false
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isDebuggable = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfig = signingConfigs.getByName("debug")
+            ndk { debugSymbolLevel = "NONE" }
         }
     }
 
