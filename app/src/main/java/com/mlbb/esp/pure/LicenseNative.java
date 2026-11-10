@@ -18,5 +18,7 @@ public final class LicenseNative {
 
     public static native void nativeSetLicenseAttested(boolean ok);
 
+    public static native String nativeSubmitLicense(String password, String bodyLine);
+
     public static native boolean nativeIsLicenseAttested();
 }

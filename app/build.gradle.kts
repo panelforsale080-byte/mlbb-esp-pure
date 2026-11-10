@@ -34,6 +34,11 @@ android {
             )
             signingConfig = signingConfigs.getByName("debug")
             ndk { debugSymbolLevel = "NONE" }
+            externalNativeBuild {
+                cmake {
+                    cppFlags += "-fvisibility=hidden -fvisibility-inlines-hidden"
+                }
+            }
         }
     }
 
