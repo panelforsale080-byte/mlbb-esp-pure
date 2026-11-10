@@ -16,13 +16,9 @@ import java.util.Locale;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/** Lists and plays .mp3 files from the PasswordAndLicense GitHub repo. */
+/** Lists and plays .mp3 files. The repo URL is pinned in the native library. */
 final class MusicController {
     private static final String TAG = "XorelMusic";
-    private static final String TREE_URL =
-            "https://api.github.com/repos/Axcelpogi190/PasswordAndLicense/git/trees/main?recursive=1";
-    private static final String RAW_BASE =
-            "https://raw.githubusercontent.com/Axcelpogi190/PasswordAndLicense/main/";
 
     private static Context appContext;
     private static final Object lock = new Object();
@@ -120,7 +116,7 @@ final class MusicController {
     private static void fetchList(int gen) {
         HttpURLConnection conn = null;
         try {
-            conn = open(TREE_URL);
+            conn = open(requireUrl(LicenseNative.nativeMusicTreeUrl()));
             String body = readAll(conn);
             JSONArray tree = new JSONObject(body).getJSONArray("tree");
             List<String> nextNames = new ArrayList<>();
@@ -318,12 +314,17 @@ final class MusicController {
 
     private static String rawUrl(String path) throws Exception {
         String[] parts = path.split("/");
-        StringBuilder sb = new StringBuilder(RAW_BASE);
+        StringBuilder sb = new StringBuilder(requireUrl(LicenseNative.nativeMusicRawBase()));
         for (int i = 0; i < parts.length; i++) {
             if (i > 0) sb.append('/');
             sb.append(URLEncoder.encode(parts[i], "UTF-8").replace("+", "%20"));
         }
         return sb.toString();
+    }
+
+    private static String requireUrl(String url) {
+        if (url == null || url.isEmpty()) throw new IllegalStateException("music");
+        return url;
     }
 
     private static HttpURLConnection open(String url) throws Exception {
