@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/xorel_menu_promo,@drawable/bg_menu_video_frame,@drawable/bg_menu_video_inner,@drawable/bg_mute_icon_btn,@drawable/ic_menu_volume_on,@drawable/ic_menu_volume_off" />

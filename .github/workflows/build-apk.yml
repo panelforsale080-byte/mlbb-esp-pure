@@ -59,6 +59,14 @@ jobs:
           "${ANDROID_HOME}/build-tools/35.0.0/aapt2" dump badging "$APK" | grep -q "package: name='com.mlbb.esp.pure'"
           "${ANDROID_HOME}/build-tools/35.0.0/aapt2" dump badging "$APK" | grep -q "launchable-activity"
           unzip -l "$APK" | grep -E 'lib/arm64-v8a/libMlbbEsp\.so'
+          python3 - "$APK" <<'PY'
+          import sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1])
+          videos = [i for i in z.infolist() if i.filename.endswith(".mp4")]
+          if not videos or min(i.file_size for i in videos) < 1_000_000:
+              raise SystemExit("promo video was stripped from the release APK")
+          print("promo video bytes", min(i.file_size for i in videos))
+          PY
           echo "OK: protected mlbb-esp-pure release APK"
 
       - uses: actions/upload-artifact@v4

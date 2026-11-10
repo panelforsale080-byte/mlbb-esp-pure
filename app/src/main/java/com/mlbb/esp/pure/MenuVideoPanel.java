@@ -1,10 +1,10 @@
 package com.mlbb.esp.pure;
 
 import android.content.Context;
+import android.content.res.AssetFileDescriptor;
 import android.graphics.Outline;
 import android.graphics.SurfaceTexture;
 import android.media.MediaPlayer;
-import android.net.Uri;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.TypedValue;
@@ -91,13 +91,11 @@ final class MenuVideoPanel extends FrameLayout implements TextureView.SurfaceTex
             player = new MediaPlayer();
             player.setLooping(true);
             player.setVolume(1f, 1f);
-            Uri uri =
-                    Uri.parse(
-                            "android.resource://"
-                                    + context.getPackageName()
-                                    + "/"
-                                    + R.raw.xorel_menu_promo);
-            player.setDataSource(context, uri);
+            try (AssetFileDescriptor afd =
+                    context.getResources().openRawResourceFd(R.raw.xorel_menu_promo)) {
+                player.setDataSource(
+                        afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+            }
             player.setOnPreparedListener(
                     mp -> {
                         playerPrepared = true;
