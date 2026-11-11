@@ -1365,19 +1365,11 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
         g_selfMiss = 0;
     }
 
-    static uintptr_t s_projBm = 0;
-    static uint32_t s_sinceRefresh = 6;
-    static bool s_matrixOk = false;
-    bool refresh = !s_matrixOk || frame.bmInstance != s_projBm || s_sinceRefresh >= 6;
-    if (frame.bmInstance != s_projBm) s_projBm = frame.bmInstance;
-
     ++g_w2sFrame;
-    esp_camera_frame_begin(frame.pid, screenW, screenH, refresh);
-    if (refresh) s_sinceRefresh = 0;
-    else ++s_sinceRefresh;
+    /* Fresh matrix every frame. The camera caches the holder, so this is one vm_read. */
+    esp_camera_frame_begin(frame.pid, screenW, screenH, true);
     EspCameraProjSnap camSnap{};
     esp_camera_acquire_proj_for_draw(frame.pid, camSnap);
-    s_matrixOk = camSnap.validMatrixProj;
     float sx = 0.f, sy = 0.f;
     const bool selfOk =
         camSnap.validMatrixProj

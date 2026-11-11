@@ -31,6 +31,7 @@ static bool g_mainCameraSlotLiveOk = false;
 static Matrix4x4 g_viewProj;
 static bool g_vpHave = false;
 static pid_t g_vpPid = 0;
+static uintptr_t g_fastHolder = 0;
 
 static bool viewproj_sane() {
     float acc = 0.f;
@@ -128,7 +129,10 @@ static bool load_vp_matrices_at_main_cam3(pid_t pid, uintptr_t mainCam3) {
         if (!mem_ptr_ok(h)) continue;
         BattleCameraMatrices cam{};
         if (!mem_read(pid, h + kViewMatrix, cam)) continue;
-        if (apply_battle_camera_matrices(cam)) return true;
+        if (apply_battle_camera_matrices(cam)) {
+            g_fastHolder = h;
+            return true;
+        }
     }
     return false;
 }
@@ -241,6 +245,7 @@ void esp_camera_reset() {
     g_matrixFailLog = 0;
     g_vpHave = false;
     g_vpPid = 0;
+    g_fastHolder = 0;
     g_il2Pid = 0;
     g_rtInvoke = 0;
     g_getMainMi = 0;
@@ -269,6 +274,7 @@ void esp_camera_set_runtime(const EspCameraRuntime &runtime) {
     g_mainCameraSlotLiveOk = runtime.main_camera_slot_live_ok;
     g_vpHave = false;
     g_vpPid = 0;
+    g_fastHolder = 0;
 }
 
 void esp_camera_set_il2cpp_w2s(pid_t pid, uintptr_t runtime_invoke, uintptr_t get_main_method,
@@ -300,7 +306,7 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     if (g_inFrame) remote_session_end(g_sess);
     g_inFrame = false;
 
-    /* Reuse the last good matrix unless this frame is allowed to refresh.
+    /* Reuse only when the caller did not ask for a new matrix.
        The draw path never seizes the game thread. */
     if (!allowIl2Ptrace && g_vpHave && g_vpPid == pid && viewproj_sane()) {
         g_matrixReady = true;
@@ -308,6 +314,23 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
         g_useIl2 = false;
         proj_publish(pid);
         return;
+    }
+
+    Matrix4x4 savedVp = g_viewProj;
+    const bool savedOk = g_vpHave && g_vpPid == pid && viewproj_sane();
+    /* One 128-byte read of the holder that last worked. Pointer chase only if it misses. */
+    if (pid > 0 && g_vpPid == pid && mem_ptr_ok(g_fastHolder)) {
+        BattleCameraMatrices cam{};
+        if (mem_read(pid, g_fastHolder + 0x5C, cam) && apply_battle_camera_matrices(cam)) {
+            g_matrixReady = true;
+            g_matrixFromVmRead = true;
+            g_vpHave = true;
+            g_vpPid = pid;
+            proj_publish(pid);
+            return;
+        }
+        if (savedOk) g_viewProj = savedVp;
+        g_fastHolder = 0;
     }
 
     /* Draw tick only reads. Same slot, GameMethod, then ShowBattleCamera result.
@@ -350,6 +373,12 @@ void esp_camera_frame_begin(pid_t pid, float screenW, float screenH, bool allowI
     }
 
     if (g_matrixReady && viewproj_sane()) {
+        g_vpHave = true;
+        g_vpPid = pid;
+    } else if (savedOk) {
+        g_viewProj = savedVp;
+        g_matrixReady = true;
+        g_matrixFromVmRead = true;
         g_vpHave = true;
         g_vpPid = pid;
     } else if (!viewproj_sane()) {

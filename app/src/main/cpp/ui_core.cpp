@@ -1,12 +1,12 @@
 /* PERF
  * Reader deadline (work time included, not a fixed sleep):
- *   ESP tick 30 Hz (33 ms), retri-only 20 Hz (50 ms), hero-auto-only 10 Hz (100 ms),
+ *   ESP tick 60 Hz (16 ms), retri-only 20 Hz (50 ms), hero-auto-only 10 Hz (100 ms),
  *   menu-only / idle 5 Hz (200 ms).
- * GL present: every shown frame is drawn (no blank swap). Menu is 60 Hz.
- *   ESP with the menu closed is 30 Hz. Retri/skill dots alone are 20 Hz.
- * Camera view-projection is refreshed every 6th project (or on pid / BattleManager
- *   change, or when the cached matrix fails the sanity check). Other frames reuse it.
- *   allowIl2Ptrace is false on reuse frames. The draw path does not ptrace.
+ * GL present: every shown frame is drawn (no blank swap). Menu and ESP are 60 Hz.
+ *   Retri/skill dots alone are 20 Hz.
+ * Camera view-projection is one vm_read of the last good holder each ESP frame.
+ *   A failed read keeps the previous matrix. The pointer chain runs only when that
+ *   holder is missing. The draw path does not ptrace.
  * Dict pointers, monster dict, hero names, and cooldown dicts rebuild at 4 Hz.
  *   Between rebuilds only pos / hp / screen are re-read. proc_probe_read is 5 s.
  * Caches drop on esp_reset(), esp_attach(new pid), BattleManager instance change,
@@ -41,7 +41,8 @@
 static void performance_thread_init() {
     prctl(PR_SET_NAME, "RenderThread", 0, 0, 0);
     const pid_t tid = (pid_t)syscall(SYS_gettid);
-    setpriority(PRIO_PROCESS, tid, 19);
+    /* A few vm_reads per frame. Nice 19 was scheduled after the game and the boxes hitched. */
+    setpriority(PRIO_PROCESS, tid, 0);
 }
 
 /* Lock-free latest-frame handoff: reader writes slot (1-latest), publishes with release;
@@ -351,8 +352,8 @@ static void reader_loop() {
         } else if (pid > 0) {
             using clock = std::chrono::steady_clock;
             static clock::time_point nextTick{};
-            const auto now = clock::now();
-            if (nextTick.time_since_epoch().count() != 0 && now < nextTick) {
+            const auto tickStart = clock::now();
+            if (nextTick.time_since_epoch().count() != 0 && tickStart < nextTick) {
                 std::this_thread::sleep_until(nextTick);
                 continue;
             }
@@ -409,10 +410,11 @@ static void reader_loop() {
                 esp_retri_process(f);
             }
             int periodMs = 200;
-            if (espOn) periodMs = 33;
+            if (espOn) periodMs = 16;
             else if (retriOn) periodMs = 50;
             else if (heroOn) periodMs = 100;
-            nextTick = clock::now() + std::chrono::milliseconds(periodMs);
+            nextTick = tickStart + std::chrono::milliseconds(periodMs);
+            if (nextTick <= clock::now()) nextTick = clock::now();
             std::this_thread::sleep_until(nextTick);
             continue;
         }
@@ -967,8 +969,7 @@ void ui_gl_surface_destroyed() {
 
 int ui_gl_frame_delay_ms() {
     /* Menu stays on every requested frame. Skipping a swap left a blank buffer and the menu flashed. */
-    if (g_showMenu) return 16;
-    if (g_espActive.load()) return 33;
+    if (g_showMenu || g_espActive.load()) return 16;
     return 50;
 }
 
