@@ -246,6 +246,50 @@ struct CdEntCache {
 };
 static std::unordered_map<uintptr_t, CdEntCache> g_cdByEnt;
 
+struct DictSnap {
+    uintptr_t bm = 0;
+    uintptr_t pDict = 0;
+    uintptr_t mDict = 0;
+    int dictPlayers = 0;
+    int dictMonsters = 0;
+    std::vector<std::pair<int, uintptr_t>> players;
+    std::vector<std::pair<int, uintptr_t>> monsters;
+    std::chrono::steady_clock::time_point at{};
+    bool valid = false;
+};
+static DictSnap g_dictSnap;
+
+struct MonSnap {
+    pid_t pid = 0;
+    uintptr_t bm = 0;
+    std::vector<std::pair<int, uintptr_t>> entries;
+    std::chrono::steady_clock::time_point at{};
+    bool valid = false;
+};
+static MonSnap g_monSnap;
+
+static pid_t g_probePid = 0;
+static bool g_probeOk = false;
+static std::chrono::steady_clock::time_point g_probeAt{};
+
+static void invalidate_read_caches() {
+    g_dictSnap = {};
+    g_monSnap = {};
+    g_probePid = 0;
+    g_probeAt = {};
+}
+
+static bool probe_read_cached(pid_t pid) {
+    const auto now = std::chrono::steady_clock::now();
+    if (g_probePid == pid && g_probeAt.time_since_epoch().count() != 0 &&
+        now - g_probeAt < std::chrono::seconds(5))
+        return g_probeOk;
+    g_probeOk = proc_probe_read(pid);
+    g_probePid = pid;
+    g_probeAt = now;
+    return g_probeOk;
+}
+
 static void apply_cooldown_skill_slot(int skillID, int playerSpellId, int timeLeftSec,
                                       int &s1, int &s2, int &s3, int &spell, int &regen) {
     const int fSkill = skillID % 100;
@@ -300,14 +344,45 @@ static bool fill_show_cooldowns(pid_t pid, uintptr_t showEnt, int playerSpellId,
     if (!mem_read(pid, cdComp + R.showCdDic, dic) || !dic || !mem_ptr_ok(dic)) return false;
     std::vector<std::pair<int, uintptr_t>> items;
     if (!dict_entries(pid, dic, items) || items.empty()) return false;
-    int s1 = 0, s2 = 0, s3 = 0, spell = 0, regen = 0;
-    const auto now = std::chrono::steady_clock::now();
+    struct CdWant {
+        int skillID = 0;
+        uintptr_t cdAddr = 0;
+    };
+    std::vector<CdWant> wanted;
+    wanted.reserve(items.size());
+    std::vector<std::pair<uintptr_t, size_t>> req;
+    req.reserve(items.size() * 2);
     for (const auto &kv : items) {
         const int skillID = kv.first;
         const uintptr_t cdAddr = kv.second;
         if (skillID <= 0 || !cdAddr || !mem_ptr_ok(cdAddr)) continue;
+        CdWant w{};
+        w.skillID = skillID;
+        w.cdAddr = cdAddr;
+        wanted.push_back(w);
+        req.emplace_back(cdAddr + R.cddStartTime, 4);
+        req.emplace_back(cdAddr + R.cddCoolTime, 4);
+    }
+    std::vector<std::vector<uint8_t>> raw;
+    const bool batched = !req.empty() && mem_read_batch(pid, req, raw) && raw.size() == req.size();
+    int s1 = 0, s2 = 0, s3 = 0, spell = 0, regen = 0;
+    const auto now = std::chrono::steady_clock::now();
+    for (size_t i = 0; i < wanted.size(); ++i) {
+        const int skillID = wanted[i].skillID;
+        const uintptr_t cdAddr = wanted[i].cdAddr;
         uint32_t startTime = 0, coolTime = 0;
-        if (!read_u32_pair(pid, cdAddr + R.cddStartTime, cdAddr + R.cddCoolTime, startTime, coolTime))
+        bool got = false;
+        if (batched) {
+            const size_t a = i * 2;
+            const size_t b = a + 1;
+            if (a < raw.size() && b < raw.size() && raw[a].size() >= 4 && raw[b].size() >= 4) {
+                std::memcpy(&startTime, raw[a].data(), 4);
+                std::memcpy(&coolTime, raw[b].data(), 4);
+                got = true;
+            }
+        }
+        if (!got &&
+            !read_u32_pair(pid, cdAddr + R.cddStartTime, cdAddr + R.cddCoolTime, startTime, coolTime))
             continue;
         if (coolTime == 0) continue;
         auto &timer = g_cooldownTimers[cdAddr];
@@ -793,6 +868,7 @@ void esp_reset() {
     g_cooldownTimers.clear();
     g_heroNameByEnt.clear();
     g_cdByEnt.clear();
+    invalidate_read_caches();
     esp_runtime_off_clear();
     esp_camera_reset();
 }
@@ -809,6 +885,7 @@ EspStatus esp_attach(pid_t pid) {
         g_cooldownTimers.clear();
         g_heroNameByEnt.clear();
         g_cdByEnt.clear();
+        invalidate_read_caches();
     }
     g_pid = pid;
     if (pid <= 0) return EspStatus::NoProcess;
@@ -902,6 +979,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
     camRt.main_camera_slot_live_ok = cr.main_camera_slot_live_ok;
     camRt.game_method_main_camera_obj = cr.game_method_main_camera_obj;
     esp_camera_set_runtime(camRt);
+    invalidate_read_caches();
     esp_camera_set_il2cpp_w2s(g_pid, il2.sym_runtime_invoke, cr.camera_get_main_method,
                               cr.camera_w2s_method);
     esp_retri_il2_bind(il2.sym_runtime_invoke, cr.retri_try_use_skill_mi);
@@ -966,9 +1044,11 @@ EspStatus esp_tick(EspFrame &out) {
     refresh_instance(g_pid);
     uintptr_t bm = 0;
     if (g_bmInstance && bm_container_live(g_pid, g_bmInstance)) {
-        if (g_bmInstancePin && g_bmInstance != g_bmInstancePin)
+        if (g_bmInstancePin && g_bmInstance != g_bmInstancePin) {
             ui_log("[bm] match instance 0x%llx -> 0x%llx",
                    (unsigned long long)g_bmInstancePin, (unsigned long long)g_bmInstance);
+            invalidate_read_caches();
+        }
         g_bmInstancePin = g_bmInstance;
         bm = g_bmInstance;
     } else {
@@ -1007,31 +1087,123 @@ EspStatus esp_tick(EspFrame &out) {
     uintptr_t pDict = 0;
     mem_read(g_pid, bm + R.dicPlayerShow, pDict);
     const bool wantMonsters = g_tickMonsters.load();
+    const auto dictNow = std::chrono::steady_clock::now();
+    const bool dictDue = !g_dictSnap.valid || g_dictSnap.bm != bm ||
+                         dictNow - g_dictSnap.at >= std::chrono::milliseconds(250);
     std::vector<std::pair<int, uintptr_t>> players, monsters;
-    dict_entries(g_pid, pDict, players);
-    if (wantMonsters) esp_monster_dict_entries(g_pid, bm, monsters);
-    if (players.empty() && R.listPlayerShow) {
-        uintptr_t pList = 0;
-        mem_read(g_pid, bm + R.listPlayerShow, pList);
-        std::vector<uintptr_t> listP;
-        if (list_entities(g_pid, pList, listP))
-            for (size_t i = 0; i < listP.size(); ++i) players.emplace_back((int)i, listP[i]);
+    if (dictDue) {
+        dict_entries(g_pid, pDict, players);
+        if (wantMonsters) esp_monster_dict_entries(g_pid, bm, monsters);
+        if (players.empty() && R.listPlayerShow) {
+            uintptr_t pList = 0;
+            mem_read(g_pid, bm + R.listPlayerShow, pList);
+            std::vector<uintptr_t> listP;
+            if (list_entities(g_pid, pList, listP))
+                for (size_t i = 0; i < listP.size(); ++i) players.emplace_back((int)i, listP[i]);
+        }
+        g_dictSnap.bm = bm;
+        g_dictSnap.pDict = pDict;
+        g_dictSnap.players = players;
+        g_dictSnap.monsters = monsters;
+        g_dictSnap.dictPlayers = (int)players.size();
+        g_dictSnap.dictMonsters = (int)monsters.size();
+        g_dictSnap.at = dictNow;
+        g_dictSnap.valid = true;
+    } else {
+        pDict = g_dictSnap.pDict ? g_dictSnap.pDict : pDict;
+        players = g_dictSnap.players;
+        monsters = g_dictSnap.monsters;
     }
     const uint64_t tick = g_readerTickIndex.fetch_add(1, std::memory_order_relaxed);
+    const bool slowNames = dictDue;
+
+    std::vector<uintptr_t> fastEnts;
+    fastEnts.reserve(players.size() + monsters.size());
+    for (const auto &kv : players)
+        if (kv.second) fastEnts.push_back(kv.second);
+    for (const auto &kv : monsters)
+        if (kv.second) fastEnts.push_back(kv.second);
+    struct EntFastRead {
+        bool have = false;
+        uint8_t dead = 0;
+        uint8_t camp = 0;
+        int id = 0;
+        int hp = 0;
+        int hpMax = 0;
+        Vec3 pos{};
+        bool posOk = false;
+    };
+    std::unordered_map<uintptr_t, EntFastRead> pref;
+    {
+        const uintptr_t posOff = R.vCachePosition ? R.vCachePosition
+                                : R.cachePosition ? R.cachePosition
+                                                  : R.lastPosition;
+        std::vector<std::pair<uintptr_t, size_t>> req;
+        struct Ix {
+            int dead = -1, camp = -1, id = -1, hp = -1, hpMax = -1, pos = -1;
+        };
+        std::vector<Ix> ix(fastEnts.size());
+        auto add = [&](int &slot, uintptr_t addr, size_t n) {
+            if (!addr) return;
+            slot = (int)req.size();
+            req.emplace_back(addr, n);
+        };
+        for (size_t i = 0; i < fastEnts.size(); ++i) {
+            const uintptr_t e = fastEnts[i];
+            if (R.entityDeath) add(ix[i].dead, e + R.entityDeath, 1);
+            if (R.sameCamp) add(ix[i].camp, e + R.sameCamp, 1);
+            if (R.entityId) add(ix[i].id, e + R.entityId, 4);
+            if (R.hp) add(ix[i].hp, e + R.hp, 4);
+            if (R.hpMax) add(ix[i].hpMax, e + R.hpMax, 4);
+            if (posOff) add(ix[i].pos, e + posOff, sizeof(Vec3));
+        }
+        std::vector<std::vector<uint8_t>> raw;
+        if (!req.empty() && mem_read_batch(g_pid, req, raw) && raw.size() == req.size()) {
+            auto take = [&](int slot, void *dst, size_t n) -> bool {
+                if (slot < 0 || (size_t)slot >= raw.size() || raw[(size_t)slot].size() < n)
+                    return false;
+                std::memcpy(dst, raw[(size_t)slot].data(), n);
+                return true;
+            };
+            for (size_t i = 0; i < fastEnts.size(); ++i) {
+                EntFastRead f{};
+                f.have = true;
+                take(ix[i].dead, &f.dead, 1);
+                take(ix[i].camp, &f.camp, 1);
+                take(ix[i].id, &f.id, 4);
+                take(ix[i].hp, &f.hp, 4);
+                take(ix[i].hpMax, &f.hpMax, 4);
+                if (take(ix[i].pos, &f.pos, sizeof(Vec3)) && pos_ok(f.pos)) f.posOk = true;
+                pref[fastEnts[i]] = f;
+            }
+        }
+    }
 
     auto push = [&](uintptr_t v, int kind, const char *labelOverride, int key) {
         if (!v) return;
+        const EntFastRead *fast = nullptr;
+        const auto fit = pref.find(v);
+        if (fit != pref.end() && fit->second.have) fast = &fit->second;
         uint8_t dead = 0, camp = 0;
-        if (mem_read(g_pid, v + R.entityDeath, dead) && dead) return;
-        if (mem_read(g_pid, v + R.sameCamp, camp) && camp) return;
+        if (fast) {
+            dead = fast->dead;
+            camp = fast->camp;
+        } else {
+            if (mem_read(g_pid, v + R.entityDeath, dead) && dead) return;
+            if (mem_read(g_pid, v + R.sameCamp, camp) && camp) return;
+        }
+        if (dead) return;
+        if (camp) return;
         int id = key;
         if (!(kind == 1 && esp_monster_id(key))) {
-            int live = 0;
-            if (R.entityId && mem_read(g_pid, v + R.entityId, live)) id = live;
+            int live = fast ? fast->id : 0;
+            if (!fast && R.entityId) mem_read(g_pid, v + R.entityId, live);
+            if (live) id = live;
         }
         if (kind == 1 && !esp_monster_id(id)) return;
         Vec3 pos{};
-        if (!read_entity_pos(g_pid, v, pos)) return;
+        if (fast && fast->posOk) pos = fast->pos;
+        else if (!read_entity_pos(g_pid, v, pos)) return;
         EspTarget t{};
         t.ent = v;
         t.worldX = pos.x;
@@ -1040,8 +1212,13 @@ EspStatus esp_tick(EspFrame &out) {
         t.relX = pos.x - self.x;
         t.relZ = pos.z - self.z;
         t.meters = (int)std::sqrt(t.relX * t.relX + t.relZ * t.relZ);
-        mem_read(g_pid, v + R.hp, t.hp);
-        mem_read(g_pid, v + R.hpMax, t.hpMax);
+        if (fast) {
+            t.hp = fast->hp;
+            t.hpMax = fast->hpMax;
+        } else {
+            mem_read(g_pid, v + R.hp, t.hp);
+            mem_read(g_pid, v + R.hpMax, t.hpMax);
+        }
         t.kind = kind;
         if (kind == 0 && g_tickFacing.load() && R.faceDir && !(local && v == local)) {
             float dir[3] = {};
@@ -1063,9 +1240,9 @@ EspStatus esp_tick(EspFrame &out) {
             const unsigned phase = static_cast<unsigned>(tick % kHeavyReadInterval);
             const unsigned mix =
                 static_cast<unsigned>(reinterpret_cast<uintptr_t>(v) ^ static_cast<uintptr_t>(tick >> 2u));
-            const bool doHeavyName = g_tickHeroName.load() && R.heroName
+            const bool doHeavyName = slowNames && g_tickHeroName.load() && R.heroName
                 && (isLocal || ((mix % kHeavyReadInterval) == phase));
-            const bool doHeavyCd = g_tickEnemyCd.load() && !isLocal
+            const bool doHeavyCd = slowNames && g_tickEnemyCd.load() && !isLocal
                 && (((mix + 1u) % kHeavyReadInterval) == phase);
 
             t.label[0] = '\0';
@@ -1135,13 +1312,14 @@ EspStatus esp_tick(EspFrame &out) {
     }
 
     out.mapsCount = 0;
-    out.readProbe = proc_probe_read(g_pid);
+    out.readProbe = probe_read_cached(g_pid);
     out.bmKlass = g_bmKlass;
     out.bmStatics = g_bmStatics;
     out.bmInstance = bm;
     out.playerDict = pDict;
     uintptr_t mDict = 0;
-    if (R.dicMonsterShow) mem_read(g_pid, bm + R.dicMonsterShow, mDict);
+    if (!dictDue && g_dictSnap.mDict) mDict = g_dictSnap.mDict;
+    else if (R.dicMonsterShow) mem_read(g_pid, bm + R.dicMonsterShow, mDict);
     out.monsterDict = mDict;
     out.dictPlayers = (int)players.size();
     out.dictMonsters = (int)monsters.size();
@@ -1187,10 +1365,19 @@ void esp_project_screens(EspFrame &frame, float screenW, float screenH) {
         g_selfMiss = 0;
     }
 
+    static uintptr_t s_projBm = 0;
+    static uint32_t s_sinceRefresh = 6;
+    static bool s_matrixOk = false;
+    bool refresh = !s_matrixOk || frame.bmInstance != s_projBm || s_sinceRefresh >= 6;
+    if (frame.bmInstance != s_projBm) s_projBm = frame.bmInstance;
+
     ++g_w2sFrame;
-    esp_camera_frame_begin(frame.pid, screenW, screenH, true);
+    esp_camera_frame_begin(frame.pid, screenW, screenH, refresh);
+    if (refresh) s_sinceRefresh = 0;
+    else ++s_sinceRefresh;
     EspCameraProjSnap camSnap{};
     esp_camera_acquire_proj_for_draw(frame.pid, camSnap);
+    s_matrixOk = camSnap.validMatrixProj;
     float sx = 0.f, sy = 0.f;
     const bool selfOk =
         camSnap.validMatrixProj
@@ -1341,6 +1528,12 @@ static int read_monster_template_id(pid_t pid, uintptr_t ent, const EspRuntimeOf
 bool esp_monster_dict_entries(pid_t pid, uintptr_t bmInstance,
                               std::vector<std::pair<int, uintptr_t>> &out) {
     if (!esp_runtime_off_ready() || !bmInstance) return false;
+    const auto now = std::chrono::steady_clock::now();
+    if (g_monSnap.valid && g_monSnap.pid == pid && g_monSnap.bm == bmInstance &&
+        !g_monSnap.entries.empty() && now - g_monSnap.at < std::chrono::milliseconds(250)) {
+        out = g_monSnap.entries;
+        return true;
+    }
     const EspRuntimeOff &R = esp_runtime_off();
     out.clear();
     std::unordered_set<uintptr_t> seen;
@@ -1357,6 +1550,14 @@ bool esp_monster_dict_entries(pid_t pid, uintptr_t bmInstance,
         !dict_entries(pid, mDict, dictM))
         return false;
     for (const auto &kv : dictM) add_ent(kv.second);
+    if (!out.empty()) {
+        g_monSnap.pid = pid;
+        g_monSnap.bm = bmInstance;
+        g_monSnap.entries = out;
+        g_monSnap.at = now;
+        g_monSnap.valid = true;
+        if (g_dictSnap.bm == bmInstance) g_dictSnap.mDict = mDict;
+    }
     return !out.empty();
 }
 

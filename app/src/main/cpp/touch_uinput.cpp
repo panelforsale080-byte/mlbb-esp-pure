@@ -161,11 +161,50 @@ bool touch_uinput_tap(int x, int y) {
     return true;
 }
 
+bool touch_uinput_swipe(int x1, int y1, int x2, int y2, int durationMs) {
+    if (g_uinputFd < 0) return false;
+    if (durationMs < 16) durationMs = 16;
+    int steps = durationMs / 8;
+    if (steps < 5) steps = 5;
+    if (steps > 8) steps = 8;
+    const int ax1 = to_abs_x(x1);
+    const int ay1 = to_abs_y(y1);
+    const int ax2 = to_abs_x(x2);
+    const int ay2 = to_abs_y(y2);
+
+    write_ev(g_uinputFd, EV_ABS, ABS_MT_TRACKING_ID, 52021);
+    write_ev(g_uinputFd, EV_ABS, ABS_MT_POSITION_X, ax1);
+    write_ev(g_uinputFd, EV_ABS, ABS_MT_POSITION_Y, ay1);
+    write_ev(g_uinputFd, EV_KEY, BTN_TOUCH, 1);
+    write_ev(g_uinputFd, EV_KEY, BTN_TOOL_FINGER, 1);
+    write_ev(g_uinputFd, EV_SYN, SYN_REPORT, 0);
+
+    for (int i = 1; i <= steps; ++i) {
+        usleep((useconds_t)(durationMs * 1000 / steps));
+        const int x = ax1 + (ax2 - ax1) * i / steps;
+        const int y = ay1 + (ay2 - ay1) * i / steps;
+        write_ev(g_uinputFd, EV_ABS, ABS_MT_POSITION_X, x);
+        write_ev(g_uinputFd, EV_ABS, ABS_MT_POSITION_Y, y);
+        write_ev(g_uinputFd, EV_SYN, SYN_REPORT, 0);
+    }
+
+    write_ev(g_uinputFd, EV_ABS, ABS_MT_TRACKING_ID, -1);
+    write_ev(g_uinputFd, EV_KEY, BTN_TOUCH, 0);
+    write_ev(g_uinputFd, EV_KEY, BTN_TOOL_FINGER, 0);
+    write_ev(g_uinputFd, EV_SYN, SYN_REPORT, 0);
+    return true;
+}
+
 const char *touch_inject_screen_tap(int x, int y, int screenW, int screenH) {
     static char s_method[24];
     if (touch_uinput_open(screenW, screenH) && touch_uinput_tap(x, y)) {
         std::snprintf(s_method, sizeof(s_method), "uinput");
         return s_method;
+    }
+    static bool s_loggedFail = false;
+    if (!s_loggedFail) {
+        s_loggedFail = true;
+        __android_log_print(ANDROID_LOG_INFO, "MlbbEsp", "[touch] uinput tap failed once");
     }
     std::snprintf(s_method, sizeof(s_method), "fail");
     return s_method;
@@ -174,7 +213,10 @@ const char *touch_inject_screen_tap(int x, int y, int screenW, int screenH) {
 const char *touch_inject_screen_swipe(int x1, int y1, int x2, int y2, int durationMs, int screenW,
                                       int screenH) {
     static char s_method[24];
-    (void)touch_uinput_open(screenW, screenH);
+    if (touch_uinput_open(screenW, screenH) && touch_uinput_swipe(x1, y1, x2, y2, durationMs)) {
+        std::snprintf(s_method, sizeof(s_method), "uinput-swipe");
+        return s_method;
+    }
     static const char *kSu[] = {
         "su -c 'input swipe %d %d %d %d %d' 2>/dev/null",
         "su -c \"input swipe %d %d %d %d %d\" 2>/dev/null",

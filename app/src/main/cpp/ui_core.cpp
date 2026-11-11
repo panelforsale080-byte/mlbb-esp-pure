@@ -1,3 +1,17 @@
+/* PERF
+ * Reader deadline (work time included, not a fixed sleep):
+ *   ESP tick 30 Hz (33 ms), retri-only 20 Hz (50 ms), hero-auto-only 10 Hz (100 ms),
+ *   menu-only / idle 5 Hz (200 ms).
+ * GL present: 30 fps while entities draw, 20 fps for retri/skill dots alone,
+ *   5 fps while the menu is open and ESP is off.
+ * Camera view-projection is refreshed every 6th project (or on pid / BattleManager
+ *   change, or when the cached matrix fails the sanity check). Other frames reuse it.
+ *   allowIl2Ptrace is false on reuse frames. The draw path does not ptrace.
+ * Dict pointers, monster dict, hero names, and cooldown dicts rebuild at 4 Hz.
+ *   Between rebuilds only pos / hp / screen are re-read. proc_probe_read is 5 s.
+ * Caches drop on esp_reset(), esp_attach(new pid), BattleManager instance change,
+ *   and Resolve (esp_camera_set_runtime / invalidate_read_caches).
+ */
 #include "ui_core.hpp"
 #include "esp_engine.hpp"
 #include "esp_draw.hpp"
@@ -18,18 +32,11 @@
 #include <cstring>
 #include <mutex>
 #include <vector>
-#include <random>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <thread>
 #include <unistd.h>
-
-static void performance_random_sleep(int min_ms, int max_ms) {
-    static std::mt19937 gen{std::random_device{}()};
-    std::uniform_int_distribution<> distr(min_ms, max_ms);
-    std::this_thread::sleep_for(std::chrono::milliseconds(distr(gen)));
-}
 
 static void performance_thread_init() {
     prctl(PR_SET_NAME, "RenderThread", 0, 0, 0);
@@ -341,6 +348,13 @@ static void reader_loop() {
             g_needResolve.store(true);
             lastPid = 0;
         } else if (pid > 0) {
+            using clock = std::chrono::steady_clock;
+            static clock::time_point nextTick{};
+            const auto now = clock::now();
+            if (nextTick.time_since_epoch().count() != 0 && now < nextTick) {
+                std::this_thread::sleep_until(nextTick);
+                continue;
+            }
             const bool retriOn = esp_retri_settings().enabled;
             const bool espOn = g_espActive.load();
             const EspHeroAutoSettings &haRun = esp_hero_auto_settings();
@@ -357,20 +371,11 @@ static void reader_loop() {
                     log_resolve_result(rep);
                 }
             }
-            using clock = std::chrono::steady_clock;
-            static clock::time_point lastFull{};
-            const auto now = clock::now();
             const bool needFull = espOn || heroOn || g_showMenu;
-            const int fullMs = espOn ? 16 : (heroOn ? 12 : 100);
-            const bool dueFull = lastFull.time_since_epoch().count() == 0 ||
-                                 now - lastFull >= std::chrono::milliseconds(fullMs);
             EspFrame f;
-            bool didFull = false;
-            if (needFull && dueFull) {
+            if (needFull) {
                 esp_tick_set_build_targets(true);
                 esp_tick(f);
-                didFull = true;
-                lastFull = now;
                 g_lastTargetCount.store(static_cast<int>(f.targets.size()),
                                         std::memory_order_relaxed);
                 if (espOn && f.status == EspStatus::Ready) {
@@ -385,7 +390,8 @@ static void reader_loop() {
                     if (f.status == EspStatus::Ready) {
                         ui_log("  bm=0x%llx lp=(%.1f,%.1f) dict=0x%llx/0x%llx",
                                (unsigned long long)f.bmInstance, f.selfX, f.selfZ,
-                               (unsigned long long)f.playerDict, (unsigned long long)f.monsterDict);
+                               (unsigned long long)f.playerDict,
+                               (unsigned long long)f.monsterDict);
                     }
                     lastStatus = f.status;
                     lastPid = pid;
@@ -401,21 +407,16 @@ static void reader_loop() {
                 esp_tick(f);
                 esp_retri_process(f);
             }
+            int periodMs = 200;
+            if (espOn) periodMs = 33;
+            else if (retriOn) periodMs = 50;
+            else if (heroOn) periodMs = 100;
+            nextTick = clock::now() + std::chrono::milliseconds(periodMs);
+            std::this_thread::sleep_until(nextTick);
+            continue;
         }
 
-        const EspHeroAutoSettings &haSleep = esp_hero_auto_settings();
-        const bool heroFast = haSleep.lingSword || haSleep.gusionCombo;
-        const bool retriOn = esp_retri_settings().enabled;
-        if (retriOn) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(4));
-        } else if (g_espActive.load()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(16));
-        } else if (pid > 0 && heroFast) {
-            performance_random_sleep(8, 12);
-        } else if (g_showMenu)
-            std::this_thread::sleep_for(std::chrono::milliseconds(16));
-        else
-            std::this_thread::sleep_for(std::chrono::milliseconds(24));
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 }
 
@@ -958,17 +959,22 @@ void ui_gl_surface_destroyed() {
 }
 
 void ui_gl_draw_frame() {
-    /* Throttle only when idle (no ESP/menu/retri/hero). Skipping draw left stale menu + stuck touch. */
+    /* 30 fps with entities, 20 fps for retri/skill dots, 5 fps for a static menu. */
     const bool forceClear = ui_should_force_gl_clear();
-    if (!ui_wants_continuous_gl() && !forceClear) {
+    if (!forceClear) {
         using clock = std::chrono::steady_clock;
-        static thread_local clock::time_point s_lastDraw{};
+        static thread_local clock::time_point s_nextDraw{};
+        const bool espOn = g_espActive.load();
+        const bool dots = esp_retri_settings().enabled || esp_hero_auto_settings().lingSword
+            || esp_hero_auto_settings().gusionCombo;
+        int minMs = 33;
+        if (espOn) minMs = 33;
+        else if (dots) minMs = 50;
+        else if (g_showMenu) minMs = 200;
+        else minMs = 50;
         const auto now = clock::now();
-        if (s_lastDraw.time_since_epoch().count() != 0
-            && now - s_lastDraw < std::chrono::milliseconds(16)) {
-            return;
-        }
-        s_lastDraw = now;
+        if (s_nextDraw.time_since_epoch().count() != 0 && now < s_nextDraw) return;
+        s_nextDraw = now + std::chrono::milliseconds(minMs);
     }
     std::lock_guard<std::mutex> lock(g_glMu);
     render_imgui_frame();
