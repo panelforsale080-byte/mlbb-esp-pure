@@ -11,6 +11,7 @@ void ui_gl_surface_created();
 void ui_gl_surface_changed(int width, int height);
 void ui_gl_surface_destroyed();
 void ui_gl_draw_frame();
+int ui_gl_frame_delay_ms();
 
 void ui_touch(int action, float x, float y);
 void ui_open_menu();

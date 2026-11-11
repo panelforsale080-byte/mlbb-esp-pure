@@ -208,6 +208,12 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeNeedsContinuousGl(JNIEnv *, jclass) {
     return ui_needs_continuous_gl() ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_mlbb_esp_pure_NativeBridge_nativeGlFrameDelayMs(JNIEnv *, jclass) {
+    const int ms = ui_gl_frame_delay_ms();
+    return ms < 16 ? 16 : ms;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_mlbb_esp_pure_NativeBridge_nativeStartEsp(JNIEnv *, jclass) {
     ui_esp_start();

@@ -108,7 +108,13 @@ public class GlImGuiView extends GLSurfaceView implements GLSurfaceView.Renderer
         if (frameQueued || !surfaceReady) return;
         if (!NativeBridge.nativeNeedsContinuousGl()) return;
         frameQueued = true;
-        postDelayed(drawAgain, 16);
+        int delay = 16;
+        try {
+            delay = NativeBridge.nativeGlFrameDelayMs();
+        } catch (Throwable ignored) {
+        }
+        if (delay < 16) delay = 16;
+        postDelayed(drawAgain, delay);
     }
 
     @Override

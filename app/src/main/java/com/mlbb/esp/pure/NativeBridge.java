@@ -22,6 +22,8 @@ public final class NativeBridge {
     public static native boolean nativeIsMenuInteractive();
     /** True while the menu or ESP boxes need frames. Retri does not. */
     public static native boolean nativeNeedsContinuousGl();
+    /** Milliseconds until the next overlay frame. Menu is 16 so it does not flash. */
+    public static native int nativeGlFrameDelayMs();
     public static native void nativeStartEsp();
     public static native void nativeStopEsp();
     /** One tap = one Ling sword / Gusion combo (when enabled in menu). */

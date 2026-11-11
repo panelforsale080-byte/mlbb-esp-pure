@@ -2,8 +2,8 @@
  * Reader deadline (work time included, not a fixed sleep):
  *   ESP tick 30 Hz (33 ms), retri-only 20 Hz (50 ms), hero-auto-only 10 Hz (100 ms),
  *   menu-only / idle 5 Hz (200 ms).
- * GL present: 30 fps while entities draw, 20 fps for retri/skill dots alone,
- *   5 fps while the menu is open and ESP is off.
+ * GL present: every shown frame is drawn (no blank swap). Menu is 60 Hz.
+ *   ESP with the menu closed is 30 Hz. Retri/skill dots alone are 20 Hz.
  * Camera view-projection is refreshed every 6th project (or on pid / BattleManager
  *   change, or when the cached matrix fails the sanity check). Other frames reuse it.
  *   allowIl2Ptrace is false on reuse frames. The draw path does not ptrace.
@@ -80,6 +80,7 @@ static bool g_menuLayoutReset = false;
 static ImVec2 g_menuLayoutScreen{0.f, 0.f};
 static bool g_logScrollBottom = true;
 static bool g_menuVideoMuted = false;
+static bool g_menuVideoRemoved = false;
 static constexpr float kMenuVideoColFrac = 0.36f;
 static std::atomic<int> g_menuDismissClearFrames{0};
 static EspFeatures g_feat{};
@@ -545,8 +546,9 @@ static void draw_ui() {
                 apply_menu_display_scale(io.DisplaySize.x, io.DisplaySize.y);
             }
             menu_panel_fit_screen(io.DisplaySize, panelSz, panelPos);
-            const float videoW = panelSz.x * kMenuVideoColFrac;
-            const float splitGap = 8.f;
+            const bool showVideo = !g_menuVideoRemoved;
+            const float videoW = showVideo ? panelSz.x * kMenuVideoColFrac : 0.f;
+            const float splitGap = showVideo ? 8.f : 0.f;
             ctrlPanelW = panelSz.x - videoW - splitGap;
             const ImGuiCond cond = relayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
             ImGui::SetNextWindowPos(
@@ -563,12 +565,17 @@ static void draw_ui() {
         ImGui::Begin("Xorel", &g_showMenu,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
     if (menuBegin) {
-        menu_sync_video_strip(panelPos, panelSz);
+        if (g_menuVideoRemoved) ui_menu_video_sync(false, 0, 0, 0, 0);
+        else menu_sync_video_strip(panelPos, panelSz);
         ImGui::PushItemWidth(-FLT_MIN);
 
         ImGui::TextDisabled("#147 ESP | IL2CPP offsets (conRentV1)");
         ImGui::TextDisabled("All features OFF on start.");
         ImGui::TextColored(ImVec4(1.f, 0.85f, 0.4f, 1.f), "Tap X (top-right) to close & play");
+        if (ImGui::Button(g_menuVideoRemoved ? "Show video" : "Remove video", ImVec2(-FLT_MIN, 0.f))) {
+            g_menuVideoRemoved = !g_menuVideoRemoved;
+            g_menuLayoutReset = true;
+        }
         ImGui::Separator();
         ImGui::Text("Status: %s", status_name(fr.status));
         if (fr.hint[0]) ImGui::TextWrapped("%s", fr.hint);
@@ -958,24 +965,15 @@ void ui_gl_surface_destroyed() {
     shutdown_imgui_only();
 }
 
+int ui_gl_frame_delay_ms() {
+    /* Menu stays on every requested frame. Skipping a swap left a blank buffer and the menu flashed. */
+    if (g_showMenu) return 16;
+    if (g_espActive.load()) return 33;
+    return 50;
+}
+
 void ui_gl_draw_frame() {
-    /* 30 fps with entities, 20 fps for retri/skill dots, 5 fps for a static menu. */
     const bool forceClear = ui_should_force_gl_clear();
-    if (!forceClear) {
-        using clock = std::chrono::steady_clock;
-        static thread_local clock::time_point s_nextDraw{};
-        const bool espOn = g_espActive.load();
-        const bool dots = esp_retri_settings().enabled || esp_hero_auto_settings().lingSword
-            || esp_hero_auto_settings().gusionCombo;
-        int minMs = 33;
-        if (espOn) minMs = 33;
-        else if (dots) minMs = 50;
-        else if (g_showMenu) minMs = 200;
-        else minMs = 50;
-        const auto now = clock::now();
-        if (s_nextDraw.time_since_epoch().count() != 0 && now < s_nextDraw) return;
-        s_nextDraw = now + std::chrono::milliseconds(minMs);
-    }
     std::lock_guard<std::mutex> lock(g_glMu);
     render_imgui_frame();
     if (forceClear && g_menuDismissClearFrames.load(std::memory_order_relaxed) > 0)
