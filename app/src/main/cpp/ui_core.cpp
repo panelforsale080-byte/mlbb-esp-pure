@@ -563,8 +563,9 @@ static void draw_ui() {
             if (g_menuLayoutReset) g_menuLayoutReset = false;
         }
     }
-    /* Light charcoal scrim so the menu video shows through a little. */
-    ImGui::SetNextWindowBgAlpha(0.50f);
+    /* Video shows through, but the wash stays dark enough that menu text stays readable.
+       Buttons and checkboxes stay solid, so the clip does not cover the controls. */
+    ImGui::SetNextWindowBgAlpha(0.40f);
     const bool menuBegin =
         ImGui::Begin("Xorel", &g_showMenu,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
