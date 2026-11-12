@@ -44,6 +44,11 @@ public final class NativeBridge {
         if (svc != null) svc.updateMenuVideoLayout(visible, x, y, w, h);
     }
 
+    public static void updateMenuBgLayout(boolean visible, int x, int y, int w, int h) {
+        OverlayService svc = OverlayService.instance;
+        if (svc != null) svc.updateMenuBgLayout(visible, x, y, w, h);
+    }
+
     public static void applyMenuVideoMuted(boolean muted) {
         OverlayService svc = OverlayService.instance;
         if (svc != null) svc.applyMenuVideoMuted(muted);

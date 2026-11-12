@@ -11,6 +11,7 @@ static jclass g_bridgeCls = nullptr;
 static jmethodID g_setMenuTouch = nullptr;
 static jmethodID g_setComboFab = nullptr;
 static jmethodID g_updateMenuVideo = nullptr;
+static jmethodID g_updateMenuBg = nullptr;
 static jmethodID g_applyMenuVideoMuted = nullptr;
 static jmethodID g_applyAntiCapture = nullptr;
 static jmethodID g_setHideWhileRecording = nullptr;
@@ -22,6 +23,11 @@ static int g_lastMenuVideoX = -1;
 static int g_lastMenuVideoY = -1;
 static int g_lastMenuVideoW = -1;
 static int g_lastMenuVideoH = -1;
+static bool g_lastMenuBgVisible = false;
+static int g_lastMenuBgX = -1;
+static int g_lastMenuBgY = -1;
+static int g_lastMenuBgW = -1;
+static int g_lastMenuBgH = -1;
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
     g_vm = vm;
@@ -46,6 +52,8 @@ Java_com_mlbb_esp_pure_NativeBridge_nativeInit(JNIEnv *env, jclass clazz) {
     if (!g_updateMenuVideo)
         g_updateMenuVideo =
             env->GetStaticMethodID(clazz, "updateMenuVideoLayout", "(ZIIII)V");
+    if (!g_updateMenuBg)
+        g_updateMenuBg = env->GetStaticMethodID(clazz, "updateMenuBgLayout", "(ZIIII)V");
     if (!g_applyMenuVideoMuted)
         g_applyMenuVideoMuted = env->GetStaticMethodID(clazz, "applyMenuVideoMuted", "(Z)V");
     if (!g_applyAntiCapture)
@@ -96,6 +104,29 @@ void ui_menu_video_sync(bool visible, int x, int y, int w, int h) {
     if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
     env->CallStaticVoidMethod(g_bridgeCls, g_updateMenuVideo, visible ? JNI_TRUE : JNI_FALSE, x, y,
                               w, h);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+}
+
+void ui_menu_bg_sync(bool visible, int x, int y, int w, int h) {
+    if (!g_vm || !g_bridgeCls || !g_updateMenuBg) return;
+    if (!visible) {
+        if (!g_lastMenuBgVisible) return;
+        g_lastMenuBgVisible = false;
+        g_lastMenuBgX = g_lastMenuBgY = g_lastMenuBgW = g_lastMenuBgH = -1;
+    } else if (g_lastMenuBgVisible && g_lastMenuBgX == x && g_lastMenuBgY == y && g_lastMenuBgW == w
+               && g_lastMenuBgH == h) {
+        return;
+    } else {
+        g_lastMenuBgVisible = true;
+        g_lastMenuBgX = x;
+        g_lastMenuBgY = y;
+        g_lastMenuBgW = w;
+        g_lastMenuBgH = h;
+    }
+    JNIEnv *env = nullptr;
+    if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return;
+    env->CallStaticVoidMethod(g_bridgeCls, g_updateMenuBg, visible ? JNI_TRUE : JNI_FALSE, x, y, w,
+                              h);
     if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
@@ -156,6 +187,7 @@ void ui_sync_menu_touch_state() {
 
 void ui_force_menu_pass_through() {
     ui_menu_video_sync(false, 0, 0, 0, 0);
+    ui_menu_bg_sync(false, 0, 0, 0, 0);
     g_lastMenuVideoVisible = false;
     g_lastMenuVideoX = g_lastMenuVideoY = g_lastMenuVideoW = g_lastMenuVideoH = -1;
     g_menuTouchNotified = true;

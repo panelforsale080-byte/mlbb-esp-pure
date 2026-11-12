@@ -28,6 +28,7 @@ void ui_sync_combo_fab_visible(bool show);
 void ui_sync_menu_touch_state();
 
 void ui_menu_video_sync(bool visible, int x, int y, int w, int h);
+void ui_menu_bg_sync(bool visible, int x, int y, int w, int h);
 void ui_menu_video_set_muted(bool muted);
 void ui_menu_video_apply_muted_from_java(bool muted);
 bool ui_menu_video_is_muted();

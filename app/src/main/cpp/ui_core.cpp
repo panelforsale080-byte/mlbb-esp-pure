@@ -562,11 +562,16 @@ static void draw_ui() {
             if (g_menuLayoutReset) g_menuLayoutReset = false;
         }
     }
-    ImGui::SetNextWindowBgAlpha(0.98f);
+    /* Charcoal scrim over the looping menu background video. */
+    ImGui::SetNextWindowBgAlpha(0.58f);
     const bool menuBegin =
         ImGui::Begin("Xorel", &g_showMenu,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
     if (menuBegin) {
+        const ImVec2 menuWp = ImGui::GetWindowPos();
+        const ImVec2 menuWs = ImGui::GetWindowSize();
+        ui_menu_bg_sync(true, (int)menuWp.x, (int)menuWp.y, (int)std::max(8.f, menuWs.x),
+                        (int)std::max(8.f, menuWs.y));
         if (g_menuVideoRemoved) ui_menu_video_sync(false, 0, 0, 0, 0);
         else menu_sync_video_strip(panelPos, panelSz);
         ImGui::PushItemWidth(-FLT_MIN);
