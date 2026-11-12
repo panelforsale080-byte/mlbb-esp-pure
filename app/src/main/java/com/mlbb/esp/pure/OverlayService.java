@@ -760,8 +760,10 @@ public class OverlayService extends Service {
                                     | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
                     if (overlaySecure()) bf |= WindowManager.LayoutParams.FLAG_SECURE;
                     menuBgLp.flags = bf;
-                    menuBgLp.x = Math.max(0, x);
-                    menuBgLp.y = Math.max(0, y);
+                    final int[] origin = new int[2];
+                    if (root != null) root.getLocationOnScreen(origin);
+                    menuBgLp.x = origin[0] + x;
+                    menuBgLp.y = origin[1] + y;
                     menuBgLp.width = w;
                     menuBgLp.height = h;
                     try {
@@ -788,8 +790,10 @@ public class OverlayService extends Service {
                                     | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
                     if (overlaySecure()) vf |= WindowManager.LayoutParams.FLAG_SECURE;
                     menuVideoLp.flags = vf;
-                    menuVideoLp.x = x;
-                    menuVideoLp.y = y;
+                    final int[] origin = new int[2];
+                    if (root != null) root.getLocationOnScreen(origin);
+                    menuVideoLp.x = origin[0] + x;
+                    menuVideoLp.y = origin[1] + y;
                     menuVideoLp.width = w;
                     menuVideoLp.height = h;
                     try {

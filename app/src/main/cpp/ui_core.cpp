@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -228,16 +229,16 @@ static float menu_half_button_width() {
   return std::max(64.f, (ImGui::GetContentRegionAvail().x - gap) * 0.5f);
 }
 
-static void menu_sync_video_strip(const ImVec2 &panelPos, const ImVec2 &panelSz) {
+static void menu_sync_video_strip(const ImVec2 &windowPos, const ImVec2 &windowSz, float videoW) {
     const float titleBar = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 0.5f;
     const float padX = ImGui::GetStyle().WindowPadding.x;
-    const float videoW = panelSz.x * kMenuVideoColFrac;
-    const float railX = panelPos.x + padX * 0.35f;
-    const float railY = panelPos.y + titleBar;
+    const float splitGap = 8.f;
+    const float railX = windowPos.x - videoW - splitGap + padX * 0.35f;
+    const float railY = windowPos.y + titleBar;
     const float railW = videoW - padX * 0.7f;
-    const float railH = panelSz.y - titleBar - ImGui::GetStyle().WindowPadding.y;
-    ui_menu_video_sync(true, (int)railX, (int)railY, (int)std::max(8.f, railW),
-                       (int)std::max(8.f, railH));
+    const float railH = windowSz.y - titleBar - ImGui::GetStyle().WindowPadding.y;
+    ui_menu_video_sync(true, (int)std::lround(railX), (int)std::lround(railY),
+                       (int)std::max(8.f, railW), (int)std::max(8.f, railH));
 }
 
 static const char *status_name(EspStatus s) {
@@ -562,18 +563,19 @@ static void draw_ui() {
             if (g_menuLayoutReset) g_menuLayoutReset = false;
         }
     }
-    /* Charcoal scrim over the looping menu background video. */
-    ImGui::SetNextWindowBgAlpha(0.58f);
+    /* Light charcoal scrim so the menu video shows through a little. */
+    ImGui::SetNextWindowBgAlpha(0.50f);
     const bool menuBegin =
         ImGui::Begin("Xorel", &g_showMenu,
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
     if (menuBegin) {
         const ImVec2 menuWp = ImGui::GetWindowPos();
         const ImVec2 menuWs = ImGui::GetWindowSize();
-        ui_menu_bg_sync(true, (int)menuWp.x, (int)menuWp.y, (int)std::max(8.f, menuWs.x),
-                        (int)std::max(8.f, menuWs.y));
+        ui_menu_bg_sync(true, (int)std::lround(menuWp.x), (int)std::lround(menuWp.y),
+                        (int)std::lround(std::max(8.f, menuWs.x)),
+                        (int)std::lround(std::max(8.f, menuWs.y)));
         if (g_menuVideoRemoved) ui_menu_video_sync(false, 0, 0, 0, 0);
-        else menu_sync_video_strip(panelPos, panelSz);
+        else menu_sync_video_strip(menuWp, menuWs, panelSz.x * kMenuVideoColFrac);
         ImGui::PushItemWidth(-FLT_MIN);
 
         ImGui::TextDisabled("#147 ESP | IL2CPP offsets (conRentV1)");

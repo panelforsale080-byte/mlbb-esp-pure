@@ -2,8 +2,6 @@ package com.mlbb.esp.pure;
 
 import android.content.Context;
 import android.content.res.AssetFileDescriptor;
-import android.graphics.Color;
-import android.graphics.Matrix;
 import android.graphics.Outline;
 import android.graphics.SurfaceTexture;
 import android.media.AudioAttributes;
@@ -28,23 +26,23 @@ final class MenuBgPanel extends FrameLayout implements TextureView.SurfaceTextur
 
     MenuBgPanel(Context context) {
         super(context);
-        setBackgroundColor(Color.BLACK);
+        setBackgroundColor(0);
         setClickable(false);
         setFocusable(false);
-
-        textureView = new TextureView(context);
-        textureView.setSurfaceTextureListener(this);
-        textureView.setOpaque(false);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            textureView.setOutlineProvider(
+            setOutlineProvider(
                     new ViewOutlineProvider() {
                         @Override
                         public void getOutline(View view, Outline outline) {
                             outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), 18f);
                         }
                     });
-            textureView.setClipToOutline(true);
+            setClipToOutline(true);
         }
+
+        textureView = new TextureView(context);
+        textureView.setSurfaceTextureListener(this);
+        textureView.setOpaque(false);
         addView(textureView, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
         setVisibility(GONE);
         ensurePlayer(context);
@@ -70,7 +68,6 @@ final class MenuBgPanel extends FrameLayout implements TextureView.SurfaceTextur
             player.setOnPreparedListener(
                     mp -> {
                         playerPrepared = true;
-                        applyCenterCrop(textureView.getWidth(), textureView.getHeight());
                         if (menuWantsVisible && getVisibility() == VISIBLE) startIfReady();
                     });
             player.setOnErrorListener(
@@ -113,22 +110,6 @@ final class MenuBgPanel extends FrameLayout implements TextureView.SurfaceTextur
         }
     }
 
-    private void applyCenterCrop(int viewW, int viewH) {
-        if (player == null || viewW <= 0 || viewH <= 0) return;
-        final int videoW = player.getVideoWidth();
-        final int videoH = player.getVideoHeight();
-        if (videoW <= 0 || videoH <= 0) return;
-        final float viewAspect = viewW / (float) viewH;
-        final float videoAspect = videoW / (float) videoH;
-        float scaleX = 1f;
-        float scaleY = 1f;
-        if (videoAspect > viewAspect) scaleX = videoAspect / viewAspect;
-        else scaleY = viewAspect / videoAspect;
-        final Matrix matrix = new Matrix();
-        matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f);
-        textureView.setTransform(matrix);
-    }
-
     @Override
     public void onSurfaceTextureAvailable(SurfaceTexture st, int width, int height) {
         if (surface != null) surface.release();
@@ -136,7 +117,6 @@ final class MenuBgPanel extends FrameLayout implements TextureView.SurfaceTextur
         try {
             if (player != null) {
                 player.setSurface(surface);
-                applyCenterCrop(width, height);
                 if (menuWantsVisible && playerPrepared) startIfReady();
             }
         } catch (Throwable t) {
@@ -145,9 +125,7 @@ final class MenuBgPanel extends FrameLayout implements TextureView.SurfaceTextur
     }
 
     @Override
-    public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int width, int height) {
-        applyCenterCrop(width, height);
-    }
+    public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int width, int height) {}
 
     @Override
     public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
