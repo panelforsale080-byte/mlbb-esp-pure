@@ -63,9 +63,14 @@ jobs:
           import sys, zipfile
           z = zipfile.ZipFile(sys.argv[1])
           videos = [i for i in z.infolist() if i.filename.endswith(".mp4")]
-          if not videos or min(i.file_size for i in videos) < 1_000_000:
+          promo = [i for i in videos if "xorel_menu_promo" in i.filename]
+          bg = [i for i in videos if "xorel_menu_bg" in i.filename]
+          if not promo or promo[0].file_size < 1_000_000:
               raise SystemExit("promo video was stripped from the release APK")
-          print("promo video bytes", min(i.file_size for i in videos))
+          if not bg or bg[0].file_size < 50_000:
+              raise SystemExit("menu background video was stripped from the release APK")
+          print("promo video bytes", promo[0].file_size)
+          print("menu bg bytes", bg[0].file_size)
           PY
           echo "OK: protected mlbb-esp-pure release APK"
 
