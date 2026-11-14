@@ -112,6 +112,49 @@ static bool is_gsc_json_from_server(const char *v) {
 }
 
 static char g_lastServerJsonSaved[1024] = {};
+static char g_lastRawJsonFile[1024] = {};
+
+/** Exact GameServerConfig._strJsonDeviceID from live read — no Apply, every Refresh when value changes. */
+static void persist_gsc_json_device_id_raw(const EspDeviceIdSnap &snap) {
+    const char *j = snap.gameServerJsonId;
+    if (!j || !j[0]) return;
+    if (std::strncmp(g_lastRawJsonFile, j, sizeof(g_lastRawJsonFile)) == 0) return;
+
+    static const char *const kRaw[] = {"/storage/emulated/0/gsc_json_device_id.txt",
+                                       "/sdcard/gsc_json_device_id.txt", nullptr};
+    const char *writtenPath = nullptr;
+    for (unsigned i = 0; kRaw[i]; ++i) {
+        if (android_write_file_path(kRaw[i], j)) {
+            writtenPath = kRaw[i];
+            break;
+        }
+    }
+    if (!writtenPath) {
+        static uint64_t s_lastFailMs = 0;
+        const uint64_t nowMs = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now().time_since_epoch())
+                                   .count();
+        if (nowMs - s_lastFailMs >= 15000) {
+            ui_log("[device] gsc_json_device_id.txt FAIL — allow All files access");
+            s_lastFailMs = nowMs;
+        }
+        return;
+    }
+
+    std::snprintf(g_lastRawJsonFile, sizeof(g_lastRawJsonFile), "%s", j);
+    const size_t n = std::strlen(j);
+    const bool fromServer = is_gsc_json_from_server(j);
+    char preview[96];
+    preview[0] = '\0';
+    if (n > 0) {
+        size_t clip = n < sizeof(preview) - 1 ? n : sizeof(preview) - 4;
+        std::memcpy(preview, j, clip);
+        preview[clip] = '\0';
+        if (n > clip) std::strcat(preview, "...");
+    }
+    ui_log("[device] GSC JsonDeviceID file -> %s | %zu chars | server=%s | %s", writtenPath, n,
+           fromServer ? "yes" : "no", preview[0] ? preview : "(empty)");
+}
 
 static void spoof_fill_from_snap(const EspDeviceIdSnap &s) {
     std::snprintf(g_spoof.gscJson, sizeof(g_spoof.gscJson), "%s", s.gameServerJsonId);
@@ -812,6 +855,7 @@ void esp_device_id_clear() {
     g_baselinePid = 0;
     g_baselineSaved = false;
     g_lastServerJsonSaved[0] = '\0';
+    g_lastRawJsonFile[0] = '\0';
 }
 
 static bool read_il2_str(pid_t pid, uintptr_t strObj, char *out, size_t outSz) {
@@ -979,6 +1023,7 @@ void esp_device_id_refresh(pid_t pid) {
     std::snprintf(snap.hint, sizeof(snap.hint),
                   "GSC instance; SDK/DeviceUtil static (IL2 + vm_read offsets)");
 
+    persist_gsc_json_device_id_raw(snap);
     try_autosave_server_json_device_id(pid, snap);
 
     if (!is_gsc_json_from_server(snap.gameServerJsonId) && g_spoof.autoAndroidTxt)
@@ -1144,6 +1189,11 @@ void esp_device_id_draw_panel(pid_t pid) {
     const EspDeviceIdSnap &s = esp_device_id_snapshot();
     if (s.hint[0]) ImGui::TextDisabled("%s", s.hint);
     if (ImGui::CollapsingHeader("Live read (game)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Spacing();
+        ImGui::TextWrapped(
+            "Refresh only (no Apply): exact _strJsonDeviceID -> /sdcard/gsc_json_device_id.txt");
+        ImGui::TextWrapped(
+            "When server JSON ready (+ checkbox): all IDs also -> /sdcard/android.txt");
         ImGui::Spacing();
         line_or_dash("GSC JsonDeviceID", s.gameServerJsonId);
         line_or_dash("GSC Report", s.gameServerReportId);
