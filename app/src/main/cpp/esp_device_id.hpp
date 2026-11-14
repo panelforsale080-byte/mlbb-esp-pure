@@ -64,3 +64,4 @@ void esp_device_id_spoof_fill_from_snapshot();
 /** /storage/emulated/0/android.txt — Copy-all lines or key=value. */
 bool esp_device_id_load_android_txt(bool force);
 bool esp_device_id_save_android_txt(const EspDeviceIdSnap *snapOpt = nullptr);
+bool esp_device_id_waiting_server_json();

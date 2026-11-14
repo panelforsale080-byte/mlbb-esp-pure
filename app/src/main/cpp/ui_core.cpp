@@ -611,7 +611,18 @@ static void draw_ui() {
         ImGui::SameLine();
         if (menu_page_button("Device", g_menuPage == 2, pageW)) g_menuPage = 2;
         if (g_menuPage == 1) draw_music_panel();
-        else if (g_menuPage == 2) esp_device_id_draw_panel(fr.pid);
+        else if (g_menuPage == 2) {
+            static uint64_t s_devJsonPollMs = 0;
+            const uint64_t nowMs = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now().time_since_epoch())
+                                       .count();
+            if (fr.pid > 0 && esp_device_id_waiting_server_json() &&
+                nowMs - s_devJsonPollMs >= 8000) {
+                esp_device_id_refresh(fr.pid);
+                s_devJsonPollMs = nowMs;
+            }
+            esp_device_id_draw_panel(fr.pid);
+        }
         else if (g_menuPage == 0) {
         ImGui::SeparatorText("ESP control");
         if (ImGui::Checkbox("Anti screenshot / record", &g_antiCapture))
