@@ -9,6 +9,7 @@
 #include "remote_il2cpp.hpp"
 #include "remote_elf.hpp"
 #include "ui_log.hpp"
+#include "esp_device_id.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -859,6 +860,7 @@ void esp_reset() {
         remote_il2cpp_invalidate_cache(g_pid);
     g_pid = 0;
     g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
+    esp_device_id_clear();
     g_resolved = false;
     g_il2SnapOk = false;
     g_tickHeroName.store(true);
@@ -879,6 +881,7 @@ EspStatus esp_attach(pid_t pid) {
         if (g_pid > 0)
             remote_il2cpp_invalidate_cache(g_pid);
         g_bmKlass = g_bmStatics = g_bmInstance = g_bmInstancePin = 0;
+    esp_device_id_clear();
         g_resolved = false;
         g_il2SnapOk = false;
         g_readerTickIndex.store(0);
@@ -1007,6 +1010,9 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
                     cr.battle_manager_statics, cr.battle_manager);
         std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1 fast: %s", cr.detail);
         ui_log("[resolve] OK %s", cr.detail);
+        esp_device_id_on_resolve(g_pid, cr.device_game_server_config_klass,
+                                 cr.device_sdk_common_klass);
+        esp_device_id_refresh(g_pid);
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
         return rep.status;

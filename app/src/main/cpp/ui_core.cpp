@@ -17,6 +17,7 @@
 #include "esp_draw.hpp"
 #include "esp_retri.hpp"
 #include "esp_hero_auto.hpp"
+#include "esp_device_id.hpp"
 #include "proc.hpp"
 #include "ui_log.hpp"
 #include "clip_android.hpp"
@@ -602,12 +603,19 @@ static void draw_ui() {
         }
 
         const float pageGap = ImGui::GetStyle().ItemSpacing.x;
-        const float pageW = (ImGui::GetContentRegionAvail().x - pageGap) * 0.5f;
+        const float pageW =
+            (ImGui::GetContentRegionAvail().x - pageGap * 2.f) / 3.f;
         if (menu_page_button("Overlay", g_menuPage == 0, pageW)) g_menuPage = 0;
         ImGui::SameLine();
         if (menu_page_button("Music", g_menuPage == 1, pageW)) g_menuPage = 1;
+        ImGui::SameLine();
+        if (menu_page_button("Device", g_menuPage == 2, pageW)) {
+            g_menuPage = 2;
+            esp_device_id_refresh(fr.pid);
+        }
         if (g_menuPage == 1) draw_music_panel();
-        if (g_menuPage == 0) {
+        else if (g_menuPage == 2) esp_device_id_draw_panel(fr.pid);
+        else if (g_menuPage == 0) {
         ImGui::SeparatorText("ESP control");
         if (ImGui::Checkbox("Anti screenshot / record", &g_antiCapture))
             ui_sync_anti_capture(g_antiCapture);

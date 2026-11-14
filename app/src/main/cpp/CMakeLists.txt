@@ -13,6 +13,7 @@ add_library(MlbbEsp SHARED
     esp_retri.cpp
     esp_retri_il2.cpp
     esp_hero_auto.cpp
+    esp_device_id.cpp
     touch_uinput.cpp
     esp_camera.cpp
     conrent_esp.cpp

@@ -548,6 +548,13 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
                 method_from_name(s, pid, il2, out.retri_show_self_player_klass, "TryUseSkill", 7);
     }
 
+    out.device_game_server_config_klass =
+        find_class_fast(s, pid, il2, images, "GameServerConfig", false);
+    out.device_sdk_common_klass = find_class_fast(s, pid, il2, images, "SDKCommon", false);
+    ui_log("[resolve] device: GameServerConfig=0x%llx SDKCommon=0x%llx",
+           (unsigned long long)out.device_game_server_config_klass,
+           (unsigned long long)out.device_sdk_common_klass);
+
     ui_log("[resolve] mod menu + auto retri classes (FindClass):");
     for (unsigned i = 0; i < kEspResolveFindClassCount; ++i) {
         const char *cn = kEspResolveFindClasses[i];
