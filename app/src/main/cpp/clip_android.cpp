@@ -143,6 +143,16 @@ bool android_app_file_write(const char *relName, const char *text) {
     return n == std::strlen(text);
 }
 
+bool android_write_file_path(const char *absPath, const char *text) {
+    if (!absPath || !text) return false;
+    FILE *f = std::fopen(absPath, "wb");
+    if (!f) return false;
+    const size_t n = std::strlen(text);
+    const size_t w = n > 0 ? std::fwrite(text, 1, n, f) : 0;
+    std::fclose(f);
+    return w == n;
+}
+
 bool android_read_file_path(const char *absPath, std::vector<uint8_t> &out) {
     out.clear();
     if (!absPath || !absPath[0]) return false;
