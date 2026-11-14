@@ -87,39 +87,103 @@ static size_t utf8_to_utf16le(const char *utf8, uint16_t *out, size_t maxUnits) 
     return o;
 }
 
-static bool patch_il2_string_inplace(pid_t pid, uintptr_t strObj, const char *utf8) {
-    if (!strObj || !mem_ptr_ok(strObj) || !utf8) return false;
+static bool spoof_value_placeholder(const char *v) {
+    if (!v || !v[0]) return true;
+    if (std::strcmp(v, "(empty)") == 0 || std::strcmp(v, "—") == 0) return true;
+    if (std::strcmp(v, "none") == 0 || std::strcmp(v, "NONE") == 0) return true;
+    return false;
+}
+
+static bool patch_il2_string_inplace(pid_t pid, uintptr_t strObj, const char *utf8, char *why,
+                                     size_t whyN) {
+    if (why && whyN) why[0] = '\0';
+    if (!strObj || !mem_ptr_ok(strObj) || !utf8) {
+        if (why && whyN) std::snprintf(why, whyN, "bad string obj");
+        return false;
+    }
     int32_t oldLen = 0;
-    if (!mem_read(pid, strObj + 0x10, oldLen) || oldLen <= 0 || oldLen > 384) return false;
-    uint16_t units[384];
+    if (!mem_read(pid, strObj + 0x10, oldLen) || oldLen <= 0 || oldLen > 512) {
+        if (why && whyN) std::snprintf(why, whyN, "read len fail (old=%d)", oldLen);
+        return false;
+    }
+    uint16_t units[512];
     const size_t newLen = utf8_to_utf16le(utf8, units, sizeof(units) / sizeof(units[0]));
-    if (newLen == 0 || newLen > (size_t)oldLen) return false;
-    uint8_t blob[4 + 384 * 2] = {};
+    if (newLen == 0) {
+        if (why && whyN) std::snprintf(why, whyN, "utf8 empty");
+        return false;
+    }
+    if (newLen > (size_t)oldLen) {
+        if (why && whyN)
+            std::snprintf(why, whyN, "too long (new=%zu old=%d) need Apply lobby", newLen, oldLen);
+        return false;
+    }
+    uint8_t blob[4 + 512 * 2] = {};
     const int32_t wlen = (int32_t)newLen;
     std::memcpy(blob, &wlen, sizeof(wlen));
     for (size_t i = 0; i < newLen; ++i) {
         blob[4 + i * 2] = (uint8_t)(units[i] & 0xFF);
         blob[4 + i * 2 + 1] = (uint8_t)(units[i] >> 8);
     }
-    return mem_write(pid, strObj + 0x10, blob, 4 + newLen * 2);
+    for (size_t i = newLen; i < (size_t)oldLen; ++i) {
+        blob[4 + i * 2] = ' ';
+        blob[4 + i * 2 + 1] = 0;
+    }
+    const size_t writeN =
+        newLen < (size_t)oldLen ? 4 + (size_t)oldLen * 2 : 4 + newLen * 2;
+    if (!mem_write(pid, strObj + 0x10, blob, writeN)) {
+        if (why && whyN) std::snprintf(why, whyN, "mem_write fail");
+        return false;
+    }
+    if (why && whyN) std::snprintf(why, whyN, "in-place (old=%d new=%zu)", oldLen, newLen);
+    return true;
 }
 
 static bool write_managed_string_at(pid_t pid, RemoteIl2CppInfo &il2, RemoteSession *ptraceS,
                                     bool allowPtrace, uintptr_t holder, uintptr_t fieldOff,
-                                    const char *utf8) {
-    if (!holder || !utf8 || !utf8[0]) return false;
+                                    const char *utf8, char *why, size_t whyN) {
+    if (why && whyN) why[0] = '\0';
+    if (!holder) {
+        if (why && whyN) std::snprintf(why, whyN, "holder=0");
+        return false;
+    }
+    if (!utf8 || !utf8[0] || spoof_value_placeholder(utf8)) {
+        if (why && whyN) std::snprintf(why, whyN, "skip empty/none");
+        return false;
+    }
     uintptr_t strObj = 0;
     mem_read(pid, holder + fieldOff, strObj);
-    if (strObj && patch_il2_string_inplace(pid, strObj, utf8)) return true;
-    if (!allowPtrace || !ptraceS || !ptraceS->attached) return false;
-    uintptr_t neu = 0;
-    if (!conrent_il2_string_new_session(*ptraceS, pid, il2, utf8, neu) || !mem_ptr_ok(neu))
+    if (strObj && patch_il2_string_inplace(pid, strObj, utf8, why, whyN)) return true;
+    if (!strObj) {
+        if (why && whyN) std::snprintf(why, whyN, "string ptr null");
+    }
+    if (!allowPtrace) {
+        if (why && whyN && why[0] == '\0') std::snprintf(why, whyN, "in-place failed; tap Apply in lobby");
         return false;
-    return mem_write(pid, holder + fieldOff, &neu, sizeof(neu));
+    }
+    if (!ptraceS || !ptraceS->attached) {
+        if (why && whyN) std::snprintf(why, whyN, "ptrace not attached");
+        return false;
+    }
+    if (!il2.sym_string_new) {
+        if (why && whyN) std::snprintf(why, whyN, "il2cpp_string_new missing");
+        return false;
+    }
+    uintptr_t neu = 0;
+    if (!conrent_il2_string_new_session(*ptraceS, pid, il2, utf8, neu) || !mem_ptr_ok(neu)) {
+        if (why && whyN)
+            std::snprintf(why, whyN, "string_new fail (%s)", ptraceS->err[0] ? ptraceS->err : "?");
+        return false;
+    }
+    if (!mem_write(pid, holder + fieldOff, &neu, sizeof(neu))) {
+        if (why && whyN) std::snprintf(why, whyN, "write ptr fail");
+        return false;
+    }
+    if (why && whyN) std::snprintf(why, whyN, "new string 0x%llx", (unsigned long long)neu);
+    return true;
 }
 
 static bool spoof_apply_kv(const char *key, const char *val) {
-    if (!key || !val) return false;
+    if (!key || !val || spoof_value_placeholder(val)) return false;
     if (std::strcmp(key, "enabled") == 0) {
         g_spoof.enabled = std::strcmp(val, "1") == 0 || std::strcmp(val, "true") == 0 ||
                             std::strcmp(val, "yes") == 0;
@@ -193,7 +257,7 @@ static bool spoof_apply_kv(const char *key, const char *val) {
 }
 
 static bool spoof_apply_copyall_label(const char *label, const char *val) {
-    if (!label || !val) return false;
+    if (!label || !val || spoof_value_placeholder(val)) return false;
     if (std::strstr(label, "_strJsonDeviceID") != nullptr) {
         std::snprintf(g_spoof.gscJson, sizeof(g_spoof.gscJson), "%s", val);
         return true;
@@ -394,7 +458,10 @@ static bool resolve_gsc_instance(pid_t pid, uintptr_t gscKlass, uintptr_t &inst)
 }
 
 bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled, bool allowPtrace) {
-    if (pid <= 0) return false;
+    if (pid <= 0) {
+        ui_log("[device] apply FAIL: pid=0 (Find pid)");
+        return false;
+    }
     if (requireEnabled && !g_spoof.enabled) return false;
 
     uintptr_t gscKlass = 0;
@@ -406,76 +473,120 @@ bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled, bool allowPtrace)
         sdkKlass = g_sdkKlass;
         utilKlass = g_utilKlass;
     }
+
+    ui_log("[device] apply start pid=%d ptrace=%d GSC=0x%llx SDK=0x%llx Util=0x%llx", (int)pid,
+           allowPtrace ? 1 : 0, (unsigned long long)gscKlass, (unsigned long long)sdkKlass,
+           (unsigned long long)utilKlass);
+
+    if (!gscKlass && !sdkKlass && !utilKlass) {
+        ui_log("[device] apply FAIL: Resolve first (no device klass)");
+        return false;
+    }
+
     RemoteIl2CppInfo il2{};
-    if (!esp_resolved_il2(il2)) return false;
+    if (!esp_resolved_il2(il2)) {
+        ui_log("[device] apply FAIL: IL2 not resolved");
+        return false;
+    }
 
     RemoteSession ptraceS{};
     RemoteSession *ptracePtr = nullptr;
-    if (allowPtrace && il2.sym_string_new && remote_session_begin_try(pid, ptraceS))
-        ptracePtr = &ptraceS;
+    if (allowPtrace && il2.sym_string_new) {
+        if (remote_session_begin_try(pid, ptraceS))
+            ptracePtr = &ptraceS;
+        else if (remote_session_begin(pid, ptraceS)) {
+            ptracePtr = &ptraceS;
+            ui_log("[device] ptrace (full attach for string_new)");
+        } else
+            ui_log("[device] WARN: ptrace failed (%s) — in-place only", ptraceS.err);
+    } else if (allowPtrace && !il2.sym_string_new) {
+        ui_log("[device] WARN: il2cpp_string_new=0 — long IDs need same length");
+    }
 
     int ok = 0;
-    auto writeBump = [&](bool w) {
-        if (w) ++ok;
-    };
-    auto wStr = [&](uintptr_t holder, uintptr_t off, const char *val) {
-        return write_managed_string_at(pid, il2, ptracePtr, allowPtrace, holder, off, val);
+    int fail = 0;
+    int skip = 0;
+
+    auto applyStr = [&](const char *label, uintptr_t holder, uintptr_t off, const char *val) {
+        if (spoof_value_placeholder(val)) {
+            ++skip;
+            return;
+        }
+        if (!holder) {
+            ui_log("[device] %s FAIL: holder=0", label);
+            ++fail;
+            return;
+        }
+        char why[128];
+        const bool w =
+            write_managed_string_at(pid, il2, ptracePtr, allowPtrace, holder, off, val, why,
+                                    sizeof(why));
+        if (w) {
+            ++ok;
+            ui_log("[device] %s OK: %s = %s", label, why, val);
+        } else {
+            ++fail;
+            ui_log("[device] %s FAIL: %s", label, why[0] ? why : "unknown");
+        }
     };
 
     uintptr_t gscInst = 0;
     if (gscKlass) resolve_gsc_instance(pid, gscKlass, gscInst);
+    if (!gscInst && gscKlass)
+        ui_log("[device] GSC Instance=0 — open lobby/login then Apply");
     if (gscInst) {
-        if (g_spoof.gscJson[0])
-            writeBump(wStr(gscInst, DumpOff::GscJsonDeviceId, g_spoof.gscJson));
-        if (g_spoof.gscReport[0])
-            writeBump(wStr(gscInst, DumpOff::GscReportDeviceId, g_spoof.gscReport));
-        if (g_spoof.gscUnique[0])
-            writeBump(wStr(gscInst, DumpOff::GscUniqueId, g_spoof.gscUnique));
-        if (g_spoof.gscAndroid[0])
-            writeBump(wStr(gscInst, DumpOff::GscAndroidId, g_spoof.gscAndroid));
-        if (g_spoof.gscAd[0])
-            writeBump(wStr(gscInst, DumpOff::GscAdvertisingId, g_spoof.gscAd));
+        applyStr("GSC JsonDeviceID", gscInst, DumpOff::GscJsonDeviceId, g_spoof.gscJson);
+        applyStr("GSC Report", gscInst, DumpOff::GscReportDeviceId, g_spoof.gscReport);
+        applyStr("GSC Unique", gscInst, DumpOff::GscUniqueId, g_spoof.gscUnique);
+        applyStr("GSC Android", gscInst, DumpOff::GscAndroidId, g_spoof.gscAndroid);
+        applyStr("GSC Ad", gscInst, DumpOff::GscAdvertisingId, g_spoof.gscAd);
     }
+
+    const char *sdkAnd =
+        !spoof_value_placeholder(g_spoof.sdkAndroid)
+            ? g_spoof.sdkAndroid
+            : (!spoof_value_placeholder(g_spoof.gscAndroid) ? g_spoof.gscAndroid
+                                                              : (!spoof_value_placeholder(
+                                                                     g_spoof.utilAndroid)
+                                                                     ? g_spoof.utilAndroid
+                                                                     : nullptr));
 
     if (sdkKlass) {
         const uintptr_t st = esp_bm_static_fields_ptr(pid, sdkKlass);
+        if (!st)
+            ui_log("[device] SDKCommon statics=0");
         if (st) {
-            if (g_spoof.sdkDeviceId[0])
-                writeBump(wStr(st, DumpOff::SdkDeviceId, g_spoof.sdkDeviceId));
-            if (g_spoof.sdkUnique[0])
-                writeBump(wStr(st, DumpOff::SdkUsUnique, g_spoof.sdkUnique));
-            if (g_spoof.sdkAndroid[0])
-                writeBump(wStr(st, DumpOff::SdkUsAndroid, g_spoof.sdkAndroid));
-            if (g_spoof.sdkAd[0])
-                writeBump(wStr(st, DumpOff::SdkUsAdvertising, g_spoof.sdkAd));
-            if (g_spoof.sdkOaid[0])
-                writeBump(wStr(st, DumpOff::SdkOaid, g_spoof.sdkOaid));
-            if (g_spoof.sdkChannel[0])
-                writeBump(wStr(st, DumpOff::SdkChannel, g_spoof.sdkChannel));
+            applyStr("SDK deviceId", st, DumpOff::SdkDeviceId, g_spoof.sdkDeviceId);
+            applyStr("SDK us unique", st, DumpOff::SdkUsUnique, g_spoof.sdkUnique);
+            if (sdkAnd) applyStr("SDK us android", st, DumpOff::SdkUsAndroid, sdkAnd);
+            applyStr("SDK us ad", st, DumpOff::SdkUsAdvertising, g_spoof.sdkAd);
+            applyStr("SDK OAID", st, DumpOff::SdkOaid, g_spoof.sdkOaid);
+            applyStr("SDK channel", st, DumpOff::SdkChannel, g_spoof.sdkChannel);
         }
     }
 
     if (utilKlass) {
         const uintptr_t st = esp_bm_static_fields_ptr(pid, utilKlass);
+        if (!st)
+            ui_log("[device] DeviceUtil statics=0");
         if (st) {
-            if (g_spoof.utilAndroid[0])
-                writeBump(wStr(st, DumpOff::UtilAndroidId, g_spoof.utilAndroid));
-            if (g_spoof.utilAd[0]) {
-                writeBump(wStr(st, DumpOff::UtilAdvertisingId, g_spoof.utilAd));
-                writeBump(wStr(st, DumpOff::UtilRealAdvertisingId, g_spoof.utilAd));
+            if (!spoof_value_placeholder(g_spoof.utilAndroid))
+                applyStr("Util Android", st, DumpOff::UtilAndroidId, g_spoof.utilAndroid);
+            else if (sdkAnd)
+                applyStr("Util Android", st, DumpOff::UtilAndroidId, sdkAnd);
+            if (!spoof_value_placeholder(g_spoof.utilAd)) {
+                applyStr("Util Ad", st, DumpOff::UtilAdvertisingId, g_spoof.utilAd);
+                applyStr("Util realAd", st, DumpOff::UtilRealAdvertisingId, g_spoof.utilAd);
             }
-            if (g_spoof.utilTelephony[0])
-                writeBump(wStr(st, DumpOff::UtilTelephony, g_spoof.utilTelephony));
-            if (g_spoof.utilMac[0])
-                writeBump(wStr(st, DumpOff::UtilMac, g_spoof.utilMac));
+            applyStr("Util Telephony", st, DumpOff::UtilTelephony, g_spoof.utilTelephony);
+            applyStr("Util MAC", st, DumpOff::UtilMac, g_spoof.utilMac);
         }
     }
 
     if (ptracePtr) remote_session_end(ptraceS);
 
-    if (ok > 0)
-        ui_log("[device] spoof applied (%d writes)%s", ok,
-               allowPtrace ? "" : " (in-place only)");
+    ui_log("[device] apply done OK=%d FAIL=%d skip=%d%s", ok, fail, skip,
+           allowPtrace ? "" : " (in-place only)");
     return ok > 0;
 }
 
@@ -795,8 +906,7 @@ void esp_device_id_draw_panel(pid_t pid) {
     if (ImGui::Button("Apply now", ImVec2(spoofBtn, 0.f))) {
         esp_device_id_spoof_save();
         if (esp_device_id_apply_spoof(pid, false, true)) esp_device_id_refresh(pid);
-        else
-            ui_log("[device] apply failed — lobby only; use same/shorter length");
+        else ui_log("[device] apply: see log above (Resolve + lobby + field length)");
     }
     ImGui::SameLine();
     if (ImGui::Button("Clear spoof fields", ImVec2(spoofBtn, 0.f))) {
