@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <vector>
 
 namespace DumpOff {
@@ -87,11 +88,11 @@ static size_t utf8_to_utf16le(const char *utf8, uint16_t *out, size_t maxUnits) 
 static bool patch_il2_string_inplace(pid_t pid, uintptr_t strObj, const char *utf8) {
     if (!strObj || !mem_ptr_ok(strObj) || !utf8) return false;
     int32_t oldLen = 0;
-    if (!mem_read(pid, strObj + 0x10, oldLen) || oldLen <= 0 || oldLen > 192) return false;
-    uint16_t units[192];
+    if (!mem_read(pid, strObj + 0x10, oldLen) || oldLen <= 0 || oldLen > 384) return false;
+    uint16_t units[384];
     const size_t newLen = utf8_to_utf16le(utf8, units, sizeof(units) / sizeof(units[0]));
     if (newLen == 0 || newLen > (size_t)oldLen) return false;
-    uint8_t blob[4 + 192 * 2] = {};
+    uint8_t blob[4 + 384 * 2] = {};
     const int32_t wlen = (int32_t)newLen;
     std::memcpy(blob, &wlen, sizeof(wlen));
     for (size_t i = 0; i < newLen; ++i) {
@@ -134,68 +135,185 @@ static void spoof_load_from_disk() {
         if (std::strcmp(key, "enabled") == 0)
             g_spoof.enabled = std::strcmp(val, "1") == 0 || std::strcmp(val, "true") == 0 ||
                               std::strcmp(val, "yes") == 0;
+        else if (std::strcmp(key, "gsc_json") == 0)
+            std::snprintf(g_spoof.gscJson, sizeof(g_spoof.gscJson), "%s", val);
+        else if (std::strcmp(key, "gsc_report") == 0)
+            std::snprintf(g_spoof.gscReport, sizeof(g_spoof.gscReport), "%s", val);
+        else if (std::strcmp(key, "gsc_unique") == 0)
+            std::snprintf(g_spoof.gscUnique, sizeof(g_spoof.gscUnique), "%s", val);
         else if (std::strcmp(key, "gsc_android") == 0)
             std::snprintf(g_spoof.gscAndroid, sizeof(g_spoof.gscAndroid), "%s", val);
+        else if (std::strcmp(key, "gsc_ad") == 0)
+            std::snprintf(g_spoof.gscAd, sizeof(g_spoof.gscAd), "%s", val);
+        else if (std::strcmp(key, "sdk_device") == 0)
+            std::snprintf(g_spoof.sdkDeviceId, sizeof(g_spoof.sdkDeviceId), "%s", val);
+        else if (std::strcmp(key, "sdk_unique") == 0)
+            std::snprintf(g_spoof.sdkUnique, sizeof(g_spoof.sdkUnique), "%s", val);
+        else if (std::strcmp(key, "sdk_android") == 0)
+            std::snprintf(g_spoof.sdkAndroid, sizeof(g_spoof.sdkAndroid), "%s", val);
+        else if (std::strcmp(key, "sdk_ad") == 0)
+            std::snprintf(g_spoof.sdkAd, sizeof(g_spoof.sdkAd), "%s", val);
+        else if (std::strcmp(key, "sdk_oaid") == 0)
+            std::snprintf(g_spoof.sdkOaid, sizeof(g_spoof.sdkOaid), "%s", val);
+        else if (std::strcmp(key, "sdk_channel") == 0)
+            std::snprintf(g_spoof.sdkChannel, sizeof(g_spoof.sdkChannel), "%s", val);
         else if (std::strcmp(key, "util_android") == 0)
             std::snprintf(g_spoof.utilAndroid, sizeof(g_spoof.utilAndroid), "%s", val);
         else if (std::strcmp(key, "util_ad") == 0)
             std::snprintf(g_spoof.utilAd, sizeof(g_spoof.utilAd), "%s", val);
+        else if (std::strcmp(key, "util_telephony") == 0)
+            std::snprintf(g_spoof.utilTelephony, sizeof(g_spoof.utilTelephony), "%s", val);
+        else if (std::strcmp(key, "util_mac") == 0)
+            std::snprintf(g_spoof.utilMac, sizeof(g_spoof.utilMac), "%s", val);
     }
     g_spoof.loaded = true;
 }
 
-bool esp_device_id_spoof_save() {
-    char body[512];
-    std::snprintf(body, sizeof(body),
-                  "# Saved spoof IDs (overlay app; survives restart)\n"
-                  "enabled=%d\n"
-                  "gsc_android=%s\n"
-                  "util_android=%s\n"
-                  "util_ad=%s\n",
-                  g_spoof.enabled ? 1 : 0, g_spoof.gscAndroid, g_spoof.utilAndroid, g_spoof.utilAd);
-    return android_app_file_write(kSpoofFile, body);
+static void spoof_put_line(std::string &body, const char *key, const char *val) {
+    body += key;
+    body += '=';
+    body += val ? val : "";
+    body += '\n';
 }
 
-bool esp_device_id_apply_spoof(pid_t pid) {
-    if (pid <= 0 || !g_spoof.enabled) return false;
-    const bool wantGsc = g_spoof.gscAndroid[0] != '\0';
-    const bool wantUtilA = g_spoof.utilAndroid[0] != '\0';
-    const bool wantUtilAd = g_spoof.utilAd[0] != '\0';
-    if (!wantGsc && !wantUtilA && !wantUtilAd) return false;
+bool esp_device_id_spoof_save() {
+    std::string body;
+    body += "# Spoof IDs — overlay app only; empty value = skip on apply\n";
+    spoof_put_line(body, "enabled", g_spoof.enabled ? "1" : "0");
+    spoof_put_line(body, "gsc_json", g_spoof.gscJson);
+    spoof_put_line(body, "gsc_report", g_spoof.gscReport);
+    spoof_put_line(body, "gsc_unique", g_spoof.gscUnique);
+    spoof_put_line(body, "gsc_android", g_spoof.gscAndroid);
+    spoof_put_line(body, "gsc_ad", g_spoof.gscAd);
+    spoof_put_line(body, "sdk_device", g_spoof.sdkDeviceId);
+    spoof_put_line(body, "sdk_unique", g_spoof.sdkUnique);
+    spoof_put_line(body, "sdk_android", g_spoof.sdkAndroid);
+    spoof_put_line(body, "sdk_ad", g_spoof.sdkAd);
+    spoof_put_line(body, "sdk_oaid", g_spoof.sdkOaid);
+    spoof_put_line(body, "sdk_channel", g_spoof.sdkChannel);
+    spoof_put_line(body, "util_android", g_spoof.utilAndroid);
+    spoof_put_line(body, "util_ad", g_spoof.utilAd);
+    spoof_put_line(body, "util_telephony", g_spoof.utilTelephony);
+    spoof_put_line(body, "util_mac", g_spoof.utilMac);
+    return android_app_file_write(kSpoofFile, body.c_str());
+}
+
+void esp_device_id_spoof_fill_from_snapshot() {
+    const EspDeviceIdSnap &s = esp_device_id_snapshot();
+    std::snprintf(g_spoof.gscJson, sizeof(g_spoof.gscJson), "%s", s.gameServerJsonId);
+    std::snprintf(g_spoof.gscReport, sizeof(g_spoof.gscReport), "%s", s.gameServerReportId);
+    std::snprintf(g_spoof.gscUnique, sizeof(g_spoof.gscUnique), "%s", s.gameServerUniqueId);
+    std::snprintf(g_spoof.gscAndroid, sizeof(g_spoof.gscAndroid), "%s", s.gameServerAndroidId);
+    std::snprintf(g_spoof.gscAd, sizeof(g_spoof.gscAd), "%s", s.gameServerAdId);
+    std::snprintf(g_spoof.sdkDeviceId, sizeof(g_spoof.sdkDeviceId), "%s", s.sdkDeviceId);
+    std::snprintf(g_spoof.sdkUnique, sizeof(g_spoof.sdkUnique), "%s", s.sdkUniqueId);
+    std::snprintf(g_spoof.sdkAndroid, sizeof(g_spoof.sdkAndroid), "%s", s.sdkAndroidId);
+    std::snprintf(g_spoof.sdkAd, sizeof(g_spoof.sdkAd), "%s", s.sdkAdvertisingId);
+    std::snprintf(g_spoof.sdkOaid, sizeof(g_spoof.sdkOaid), "%s", s.sdkOaid);
+    std::snprintf(g_spoof.sdkChannel, sizeof(g_spoof.sdkChannel), "%s", s.sdkChannel);
+    std::snprintf(g_spoof.utilAndroid, sizeof(g_spoof.utilAndroid), "%s", s.utilAndroidId);
+    std::snprintf(g_spoof.utilAd, sizeof(g_spoof.utilAd), "%s", s.utilAdId);
+    std::snprintf(g_spoof.utilTelephony, sizeof(g_spoof.utilTelephony), "%s", s.utilTelephonyId);
+    std::snprintf(g_spoof.utilMac, sizeof(g_spoof.utilMac), "%s", s.utilMac);
+}
+
+static bool resolve_gsc_instance(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t gscKlass,
+                                 uintptr_t &inst) {
+    inst = 0;
+    if (!gscKlass) return false;
+    if (!conrent_il2_static_field_ptr(pid, il2, gscKlass, "Instance", inst) || !inst) {
+        const uintptr_t st = esp_bm_static_fields_ptr(pid, gscKlass);
+        if (st) mem_read(pid, st + DumpOff::GscStaticInstance, inst);
+    }
+    return inst != 0 && mem_ptr_ok(inst);
+}
+
+bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled) {
+    if (pid <= 0) return false;
+    if (requireEnabled && !g_spoof.enabled) return false;
 
     uintptr_t gscKlass = 0;
+    uintptr_t sdkKlass = 0;
     uintptr_t utilKlass = 0;
     {
         std::lock_guard<std::mutex> lock(g_mu);
         gscKlass = g_gscKlass;
+        sdkKlass = g_sdkKlass;
         utilKlass = g_utilKlass;
     }
     RemoteIl2CppInfo il2{};
     if (!esp_resolved_il2(il2)) return false;
 
     int ok = 0;
-    if (wantGsc && gscKlass) {
-        uintptr_t inst = 0;
-        if (!conrent_il2_static_field_ptr(pid, il2, gscKlass, "Instance", inst) || !inst) {
-            const uintptr_t st = esp_bm_static_fields_ptr(pid, gscKlass);
-            if (st) mem_read(pid, st + DumpOff::GscStaticInstance, inst);
-        }
-        if (inst && mem_ptr_ok(inst) &&
-            write_managed_string_at(pid, il2, inst, DumpOff::GscAndroidId, g_spoof.gscAndroid))
-            ++ok;
+    auto writeBump = [&](bool w) {
+        if (w) ++ok;
+    };
+
+    uintptr_t gscInst = 0;
+    if (gscKlass) resolve_gsc_instance(pid, il2, gscKlass, gscInst);
+    if (gscInst) {
+        if (g_spoof.gscJson[0])
+            writeBump(write_managed_string_at(pid, il2, gscInst, DumpOff::GscJsonDeviceId,
+                                            g_spoof.gscJson));
+        if (g_spoof.gscReport[0])
+            writeBump(write_managed_string_at(pid, il2, gscInst, DumpOff::GscReportDeviceId,
+                                            g_spoof.gscReport));
+        if (g_spoof.gscUnique[0])
+            writeBump(write_managed_string_at(pid, il2, gscInst, DumpOff::GscUniqueId,
+                                            g_spoof.gscUnique));
+        if (g_spoof.gscAndroid[0])
+            writeBump(write_managed_string_at(pid, il2, gscInst, DumpOff::GscAndroidId,
+                                            g_spoof.gscAndroid));
+        if (g_spoof.gscAd[0])
+            writeBump(write_managed_string_at(pid, il2, gscInst, DumpOff::GscAdvertisingId,
+                                            g_spoof.gscAd));
     }
+
+    if (sdkKlass) {
+        const uintptr_t st = esp_bm_static_fields_ptr(pid, sdkKlass);
+        if (st) {
+            if (g_spoof.sdkDeviceId[0])
+                writeBump(
+                    write_managed_string_at(pid, il2, st, DumpOff::SdkDeviceId, g_spoof.sdkDeviceId));
+            if (g_spoof.sdkUnique[0])
+                writeBump(
+                    write_managed_string_at(pid, il2, st, DumpOff::SdkUsUnique, g_spoof.sdkUnique));
+            if (g_spoof.sdkAndroid[0])
+                writeBump(
+                    write_managed_string_at(pid, il2, st, DumpOff::SdkUsAndroid, g_spoof.sdkAndroid));
+            if (g_spoof.sdkAd[0])
+                writeBump(
+                    write_managed_string_at(pid, il2, st, DumpOff::SdkUsAdvertising, g_spoof.sdkAd));
+            if (g_spoof.sdkOaid[0])
+                writeBump(write_managed_string_at(pid, il2, st, DumpOff::SdkOaid, g_spoof.sdkOaid));
+            if (g_spoof.sdkChannel[0])
+                writeBump(
+                    write_managed_string_at(pid, il2, st, DumpOff::SdkChannel, g_spoof.sdkChannel));
+        }
+    }
+
     if (utilKlass) {
         const uintptr_t st = esp_bm_static_fields_ptr(pid, utilKlass);
         if (st) {
-            if (wantUtilA &&
-                write_managed_string_at(pid, il2, st, DumpOff::UtilAndroidId, g_spoof.utilAndroid))
-                ++ok;
-            if (wantUtilAd &&
-                write_managed_string_at(pid, il2, st, DumpOff::UtilAdvertisingId, g_spoof.utilAd))
-                ++ok;
+            if (g_spoof.utilAndroid[0])
+                writeBump(write_managed_string_at(pid, il2, st, DumpOff::UtilAndroidId,
+                                                g_spoof.utilAndroid));
+            if (g_spoof.utilAd[0]) {
+                writeBump(write_managed_string_at(pid, il2, st, DumpOff::UtilAdvertisingId,
+                                                g_spoof.utilAd));
+                writeBump(write_managed_string_at(pid, il2, st, DumpOff::UtilRealAdvertisingId,
+                                                g_spoof.utilAd));
+            }
+            if (g_spoof.utilTelephony[0])
+                writeBump(write_managed_string_at(pid, il2, st, DumpOff::UtilTelephony,
+                                                g_spoof.utilTelephony));
+            if (g_spoof.utilMac[0])
+                writeBump(
+                    write_managed_string_at(pid, il2, st, DumpOff::UtilMac, g_spoof.utilMac));
         }
     }
-    if (ok > 0) ui_log("[device] spoof applied (%d fields)", ok);
+
+    if (ok > 0) ui_log("[device] spoof applied (%d writes)", ok);
     return ok > 0;
 }
 
@@ -221,11 +339,11 @@ static bool read_il2_str(pid_t pid, uintptr_t strObj, char *out, size_t outSz) {
     if (!out || outSz == 0) return false;
     out[0] = '\0';
     if (!strObj || !mem_ptr_ok(strObj)) return false;
-    alignas(4) uint8_t blob[4 + 128 * 2];
+    alignas(4) uint8_t blob[4 + 384 * 2];
     if (!mem_read(pid, strObj + 0x10, blob, sizeof(blob))) return false;
     int32_t len = 0;
     std::memcpy(&len, blob, sizeof(len));
-    if (len <= 0 || len > 128) return false;
+    if (len <= 0 || len > 384) return false;
     size_t o = 0;
     for (int32_t i = 0; i < len && o + 4 < outSz; ++i) {
         uint16_t cu = 0;
@@ -431,24 +549,57 @@ static void line_or_dash(const char *label, const char *val) {
 void esp_device_id_draw_panel(pid_t pid) {
     if (!g_spoof.loaded) spoof_load_from_disk();
 
-    ImGui::SeparatorText("Spoof (saved)");
+    ImGui::SeparatorText("Spoof (saved) — empty = skip");
     ImGui::Checkbox("Enable spoof on Refresh", &g_spoof.enabled);
+    if (ImGui::Button("Fill from game (Refresh first)")) {
+        esp_device_id_spoof_fill_from_snapshot();
+        ui_log("[device] spoof fields filled from live read");
+    }
+    ImGui::BeginChild("device_spoof_edit", ImVec2(0.f, 300.f), true);
+    ImGui::TextDisabled("GameServerConfig");
+    ImGui::InputTextMultiline("GSC _strJsonDeviceID", g_spoof.gscJson, sizeof(g_spoof.gscJson),
+                              ImVec2(-1.f, 56.f));
+    ImGui::InputText("GSC _strDeviceIDForReport", g_spoof.gscReport, sizeof(g_spoof.gscReport));
+    ImGui::InputText("GSC _strUsrUniqueIdentifier", g_spoof.gscUnique, sizeof(g_spoof.gscUnique));
     ImGui::InputText("GSC _strAndroidID", g_spoof.gscAndroid, sizeof(g_spoof.gscAndroid));
-    ImGui::InputText("DeviceUtil _strAndroidID", g_spoof.utilAndroid, sizeof(g_spoof.utilAndroid));
-    ImGui::InputText("DeviceUtil _strAdvertisingID", g_spoof.utilAd, sizeof(g_spoof.utilAd));
-  const float spoofBtn = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    ImGui::InputText("GSC _strAdvertisingID", g_spoof.gscAd, sizeof(g_spoof.gscAd));
+    ImGui::Separator();
+    ImGui::TextDisabled("SDKCommon");
+    ImGui::InputText("SDKCommon._deviceId", g_spoof.sdkDeviceId, sizeof(g_spoof.sdkDeviceId));
+    ImGui::InputText("SDKCommon._us_id_device_uniqueid", g_spoof.sdkUnique,
+                     sizeof(g_spoof.sdkUnique));
+    ImGui::InputText("SDKCommon._us_id_android_id", g_spoof.sdkAndroid, sizeof(g_spoof.sdkAndroid));
+    ImGui::InputText("SDKCommon._us_id_advertising_id", g_spoof.sdkAd, sizeof(g_spoof.sdkAd));
+    ImGui::InputText("SDKCommon._sOAID", g_spoof.sdkOaid, sizeof(g_spoof.sdkOaid));
+    ImGui::InputText("SDKCommon._channel", g_spoof.sdkChannel, sizeof(g_spoof.sdkChannel));
+    ImGui::Separator();
+    ImGui::TextDisabled("DeviceUtil");
+    ImGui::InputText("DeviceUtil._strAndroidID", g_spoof.utilAndroid, sizeof(g_spoof.utilAndroid));
+    ImGui::InputText("DeviceUtil._strAdvertisingID", g_spoof.utilAd, sizeof(g_spoof.utilAd));
+    ImGui::InputText("DeviceUtil._strTelephonyDeviceID", g_spoof.utilTelephony,
+                     sizeof(g_spoof.utilTelephony));
+    ImGui::InputText("DeviceUtil._strMacAddress", g_spoof.utilMac, sizeof(g_spoof.utilMac));
+    ImGui::EndChild();
+    const float spoofBtn =
+        (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.33f;
     if (ImGui::Button("Save", ImVec2(spoofBtn, 0.f))) {
         if (esp_device_id_spoof_save()) ui_log("[device] spoof saved");
     }
     ImGui::SameLine();
     if (ImGui::Button("Apply now", ImVec2(spoofBtn, 0.f))) {
         esp_device_id_spoof_save();
-        if (esp_device_id_apply_spoof(pid)) esp_device_id_refresh(pid);
-        else ui_log("[device] spoof apply failed — Resolve first; same-length ID may work without new alloc");
+        if (esp_device_id_apply_spoof(pid, false)) esp_device_id_refresh(pid);
+        else ui_log("[device] apply failed — Resolve; shorter/same length works in-place");
     }
-    ImGui::TextDisabled("Stored in overlay app files; game may overwrite until you Apply.");
+    ImGui::SameLine();
+    if (ImGui::Button("Clear spoof fields", ImVec2(spoofBtn, 0.f))) {
+        g_spoof = {};
+        g_spoof.loaded = true;
+        esp_device_id_spoof_save();
+    }
+    ImGui::TextDisabled("Overlay app saves values. Game restart: Resolve + Apply or Refresh.");
 
-    ImGui::SeparatorText("Device ID (IL2)");
+    ImGui::SeparatorText("Live read (game)");
     const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
     if (ImGui::Button("Refresh", ImVec2(half, 0.f))) esp_device_id_refresh(pid);
     ImGui::SameLine();

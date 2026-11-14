@@ -3,12 +3,12 @@
 
 struct EspDeviceIdSnap {
     bool refreshed = false;
-    char gameServerJsonId[192] = {};
-    char gameServerReportId[192] = {};
-    char gameServerUniqueId[192] = {};
-    char gameServerAndroidId[192] = {};
+    char gameServerJsonId[1024] = {};
+    char gameServerReportId[256] = {};
+    char gameServerUniqueId[384] = {};
+    char gameServerAndroidId[96] = {};
     char gameServerAdId[192] = {};
-    char sdkDeviceId[192] = {};
+    char sdkDeviceId[384] = {};
     char sdkUniqueId[192] = {};
     char sdkAndroidId[192] = {};
     char sdkAdvertisingId[192] = {};
@@ -29,14 +29,29 @@ const EspDeviceIdSnap &esp_device_id_snapshot();
 void esp_device_id_format_copy_all(char *out, size_t outSz);
 void esp_device_id_draw_panel(pid_t pid);
 
+/** Empty field = skip apply. Saved to overlay app files/device_spoof.cfg */
 struct EspDeviceSpoofCfg {
     bool enabled = false;
     bool loaded = false;
+    char gscJson[1024] = {};
+    char gscReport[256] = {};
+    char gscUnique[384] = {};
     char gscAndroid[96] = {};
-    char utilAndroid[96] = {};
-    char utilAd[96] = {};
+    char gscAd[192] = {};
+    char sdkDeviceId[384] = {};
+    char sdkUnique[192] = {};
+    char sdkAndroid[192] = {};
+    char sdkAd[192] = {};
+    char sdkOaid[192] = {};
+    char sdkChannel[96] = {};
+    char utilAndroid[192] = {};
+    char utilAd[192] = {};
+    char utilTelephony[192] = {};
+    char utilMac[96] = {};
 };
 
 EspDeviceSpoofCfg &esp_device_id_spoof_cfg();
 bool esp_device_id_spoof_save();
-bool esp_device_id_apply_spoof(pid_t pid);
+/** requireEnabled: Refresh path; false = Apply now button */
+bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled = true);
+void esp_device_id_spoof_fill_from_snapshot();
