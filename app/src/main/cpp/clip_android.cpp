@@ -143,6 +143,66 @@ bool android_app_file_write(const char *relName, const char *text) {
     return n == std::strlen(text);
 }
 
+bool android_read_clipboard(char *out, size_t outSz) {
+    if (!out || outSz == 0) return false;
+    out[0] = '\0';
+    if (!g_clipVm || !g_clipCtx) return false;
+    JNIEnv *env = nullptr;
+    if (g_clipVm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return false;
+
+    jclass ctxCls = env->FindClass("android/content/Context");
+    jclass clipMgrCls = env->FindClass("android/content/ClipboardManager");
+    jclass clipDataCls = env->FindClass("android/content/ClipData");
+    jclass charSeqCls = env->FindClass("java/lang/CharSequence");
+    if (!ctxCls || !clipMgrCls || !clipDataCls || !charSeqCls) return false;
+
+    jfieldID clipSvc = env->GetStaticFieldID(ctxCls, "CLIPBOARD_SERVICE", "Ljava/lang/String;");
+    jmethodID getSvc = env->GetMethodID(ctxCls, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;");
+    jmethodID hasClip = env->GetMethodID(clipMgrCls, "hasPrimaryClip", "()Z");
+    jmethodID getClip = env->GetMethodID(clipMgrCls, "getPrimaryClip", "()Landroid/content/ClipData;");
+    jmethodID getItem = env->GetMethodID(clipDataCls, "getItemAt", "(I)Landroid/content/ClipData$Item;");
+    if (!clipSvc || !getSvc || !hasClip || !getClip || !getItem) return false;
+
+    jstring svcName = (jstring)env->GetStaticObjectField(ctxCls, clipSvc);
+    jobject clipMgr = env->CallObjectMethod(g_clipCtx, getSvc, svcName);
+    if (env->ExceptionCheck() || !clipMgr) {
+        env->ExceptionClear();
+        return false;
+    }
+    if (!env->CallBooleanMethod(clipMgr, hasClip)) return false;
+    jobject clip = env->CallObjectMethod(clipMgr, getClip);
+    if (env->ExceptionCheck() || !clip) {
+        env->ExceptionClear();
+        return false;
+    }
+    jobject item = env->CallObjectMethod(clip, getItem, 0);
+    if (!item) return false;
+    jclass itemCls = env->FindClass("android/content/ClipData$Item");
+    if (!itemCls) return false;
+    jmethodID itemCoerce =
+        env->GetMethodID(itemCls, "coerceToText", "(Landroid/content/Context;)Ljava/lang/CharSequence;");
+    if (!itemCoerce) return false;
+    jobject textObj = env->CallObjectMethod(item, itemCoerce, g_clipCtx);
+    if (env->ExceptionCheck() || !textObj) {
+        env->ExceptionClear();
+        return false;
+    }
+    jmethodID toStr = env->GetMethodID(charSeqCls, "toString", "()Ljava/lang/String;");
+    if (!toStr) return false;
+    jstring jtext = (jstring)env->CallObjectMethod(textObj, toStr);
+    if (!jtext) return false;
+    const char *utf = env->GetStringUTFChars(jtext, nullptr);
+    if (!utf) return false;
+    std::snprintf(out, outSz, "%s", utf);
+    env->ReleaseStringUTFChars(jtext, utf);
+    while (out[0]) {
+        const size_t n = std::strlen(out);
+        if (n > 0 && (out[n - 1] == '\n' || out[n - 1] == '\r')) out[n - 1] = '\0';
+        else break;
+    }
+    return out[0] != '\0';
+}
+
 bool android_copy_to_clipboard(const char *text) {
     if (!g_clipVm || !g_clipCtx) return false;
     JNIEnv *env = nullptr;

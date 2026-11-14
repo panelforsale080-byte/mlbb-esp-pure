@@ -824,12 +824,25 @@ static void apply_display_metrics() {
     if (initialScreenSize.y < 1.f) initialScreenSize.y = (float)g_height;
 }
 
+static const char *imgui_clipboard_get(void *) {
+    static char clip[4096];
+    clip[0] = '\0';
+    (void)android_read_clipboard(clip, sizeof(clip));
+    return clip;
+}
+
+static void imgui_clipboard_set(void *, const char *text) {
+    if (text && text[0]) (void)android_copy_to_clipboard(text);
+}
+
 static bool init_imgui_backends() {
     if (!ImGui::GetCurrentContext()) {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO &io = ImGui::GetIO();
         io.IniFilename = nullptr;
+        io.GetClipboardTextFn = imgui_clipboard_get;
+        io.SetClipboardTextFn = imgui_clipboard_set;
         io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
         io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
         io.ConfigFlags &= ~ImGuiConfigFlags_DockingEnable;

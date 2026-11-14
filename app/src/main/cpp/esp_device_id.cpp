@@ -554,39 +554,69 @@ static void line_or_dash(const char *label, const char *val) {
     else ImGui::TextDisabled("—");
 }
 
+static void paste_into_buf(char *buf, size_t bufSz) {
+    if (!buf || bufSz == 0) return;
+    char clip[4096];
+    if (!android_read_clipboard(clip, sizeof(clip))) {
+        ui_log("[device] clipboard empty");
+        return;
+    }
+    std::snprintf(buf, bufSz, "%s", clip);
+    ui_log("[device] pasted");
+}
+
+static bool spoof_text_field(const char *label, char *buf, size_t bufSz, float multilineH = 0.f) {
+    if (!label || !buf) return false;
+    ImGui::PushID(label);
+    const float rowW = ImGui::GetContentRegionAvail().x;
+    const float pasteW = ImGui::CalcTextSize("Paste").x + ImGui::GetStyle().FramePadding.x * 2.f + 6.f;
+    ImGui::TextDisabled("%s", label);
+    ImGui::SameLine(rowW - pasteW);
+    if (ImGui::Button("Paste")) paste_into_buf(buf, bufSz);
+    if (multilineH > 0.f) {
+        ImGui::InputTextMultiline("##val", buf, bufSz, ImVec2(-1.f, multilineH));
+    } else {
+        ImGui::SetNextItemWidth(-1.f);
+        ImGui::InputText("##val", buf, bufSz, ImGuiInputTextFlags_None);
+    }
+    ImGui::PopID();
+    return true;
+}
+
 void esp_device_id_draw_panel(pid_t pid) {
     if (!g_spoof.loaded) spoof_load_from_disk();
 
     ImGui::SeparatorText("Spoof (saved) — empty = skip");
     ImGui::Checkbox("In-place spoof on Refresh (15s, safe)", &g_spoof.enabled);
-    if (ImGui::Button("Fill from game (Refresh first)")) {
+    if (ImGui::Button("Fill from game")) {
         esp_device_id_spoof_fill_from_snapshot();
         ui_log("[device] spoof fields filled from live read");
     }
-    ImGui::BeginChild("device_spoof_edit", ImVec2(0.f, 300.f), true);
+    ImGui::SameLine();
+    if (ImGui::Button("Paste into Json")) paste_into_buf(g_spoof.gscJson, sizeof(g_spoof.gscJson));
+    ImGui::BeginChild("device_spoof_edit", ImVec2(0.f, 260.f), true);
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.f, 4.f));
     ImGui::TextDisabled("GameServerConfig");
-    ImGui::InputTextMultiline("GSC _strJsonDeviceID", g_spoof.gscJson, sizeof(g_spoof.gscJson),
-                              ImVec2(-1.f, 56.f));
-    ImGui::InputText("GSC _strDeviceIDForReport", g_spoof.gscReport, sizeof(g_spoof.gscReport));
-    ImGui::InputText("GSC _strUsrUniqueIdentifier", g_spoof.gscUnique, sizeof(g_spoof.gscUnique));
-    ImGui::InputText("GSC _strAndroidID", g_spoof.gscAndroid, sizeof(g_spoof.gscAndroid));
-    ImGui::InputText("GSC _strAdvertisingID", g_spoof.gscAd, sizeof(g_spoof.gscAd));
+    spoof_text_field("JsonDeviceID", g_spoof.gscJson, sizeof(g_spoof.gscJson), 44.f);
+    spoof_text_field("Report ID", g_spoof.gscReport, sizeof(g_spoof.gscReport));
+    spoof_text_field("Unique ID", g_spoof.gscUnique, sizeof(g_spoof.gscUnique));
+    spoof_text_field("Android ID", g_spoof.gscAndroid, sizeof(g_spoof.gscAndroid));
+    spoof_text_field("Ad ID", g_spoof.gscAd, sizeof(g_spoof.gscAd));
     ImGui::Separator();
     ImGui::TextDisabled("SDKCommon");
-    ImGui::InputText("SDKCommon._deviceId", g_spoof.sdkDeviceId, sizeof(g_spoof.sdkDeviceId));
-    ImGui::InputText("SDKCommon._us_id_device_uniqueid", g_spoof.sdkUnique,
-                     sizeof(g_spoof.sdkUnique));
-    ImGui::InputText("SDKCommon._us_id_android_id", g_spoof.sdkAndroid, sizeof(g_spoof.sdkAndroid));
-    ImGui::InputText("SDKCommon._us_id_advertising_id", g_spoof.sdkAd, sizeof(g_spoof.sdkAd));
-    ImGui::InputText("SDKCommon._sOAID", g_spoof.sdkOaid, sizeof(g_spoof.sdkOaid));
-    ImGui::InputText("SDKCommon._channel", g_spoof.sdkChannel, sizeof(g_spoof.sdkChannel));
+    spoof_text_field("deviceId", g_spoof.sdkDeviceId, sizeof(g_spoof.sdkDeviceId));
+    spoof_text_field("us unique", g_spoof.sdkUnique, sizeof(g_spoof.sdkUnique));
+    spoof_text_field("us android", g_spoof.sdkAndroid, sizeof(g_spoof.sdkAndroid));
+    spoof_text_field("us ad", g_spoof.sdkAd, sizeof(g_spoof.sdkAd));
+    spoof_text_field("OAID", g_spoof.sdkOaid, sizeof(g_spoof.sdkOaid));
+    spoof_text_field("channel", g_spoof.sdkChannel, sizeof(g_spoof.sdkChannel));
     ImGui::Separator();
     ImGui::TextDisabled("DeviceUtil");
-    ImGui::InputText("DeviceUtil._strAndroidID", g_spoof.utilAndroid, sizeof(g_spoof.utilAndroid));
-    ImGui::InputText("DeviceUtil._strAdvertisingID", g_spoof.utilAd, sizeof(g_spoof.utilAd));
-    ImGui::InputText("DeviceUtil._strTelephonyDeviceID", g_spoof.utilTelephony,
-                     sizeof(g_spoof.utilTelephony));
-    ImGui::InputText("DeviceUtil._strMacAddress", g_spoof.utilMac, sizeof(g_spoof.utilMac));
+    spoof_text_field("Android ID", g_spoof.utilAndroid, sizeof(g_spoof.utilAndroid));
+    spoof_text_field("Ad ID", g_spoof.utilAd, sizeof(g_spoof.utilAd));
+    spoof_text_field("Telephony", g_spoof.utilTelephony, sizeof(g_spoof.utilTelephony));
+    spoof_text_field("MAC", g_spoof.utilMac, sizeof(g_spoof.utilMac));
+    ImGui::PopStyleVar();
     ImGui::EndChild();
     const float spoofBtn =
         (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.33f;
@@ -608,7 +638,6 @@ void esp_device_id_draw_panel(pid_t pid) {
     }
     ImGui::TextDisabled("Apply now = lobby/menu only (ptrace). Refresh = read only + optional in-place.");
 
-    ImGui::SeparatorText("Live read (game)");
     const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
     if (ImGui::Button("Refresh", ImVec2(half, 0.f))) esp_device_id_refresh(pid);
     ImGui::SameLine();
@@ -619,22 +648,24 @@ void esp_device_id_draw_panel(pid_t pid) {
     }
     const EspDeviceIdSnap &s = esp_device_id_snapshot();
     if (s.hint[0]) ImGui::TextDisabled("%s", s.hint);
-    ImGui::Spacing();
-    line_or_dash("GameServerConfig._strJsonDeviceID", s.gameServerJsonId);
-    line_or_dash("GameServerConfig._strDeviceIDForReport", s.gameServerReportId);
-    line_or_dash("GameServerConfig._strUsrUniqueIdentifier", s.gameServerUniqueId);
-    line_or_dash("GameServerConfig._strAndroidID", s.gameServerAndroidId);
-    line_or_dash("GameServerConfig._strAdvertisingID", s.gameServerAdId);
-    ImGui::Separator();
-    line_or_dash("SDKCommon._deviceId", s.sdkDeviceId);
-    line_or_dash("SDKCommon._us_id_device_uniqueid", s.sdkUniqueId);
-    line_or_dash("SDKCommon._us_id_android_id", s.sdkAndroidId);
-    line_or_dash("SDKCommon._us_id_advertising_id", s.sdkAdvertisingId);
-    line_or_dash("SDKCommon._sOAID", s.sdkOaid);
-    line_or_dash("SDKCommon._channel", s.sdkChannel);
-    ImGui::Separator();
-    line_or_dash("DeviceUtil._strAndroidID", s.utilAndroidId);
-    line_or_dash("DeviceUtil._strAdvertisingID", s.utilAdId);
-    line_or_dash("DeviceUtil._strTelephonyDeviceID", s.utilTelephonyId);
-    line_or_dash("DeviceUtil._strMacAddress", s.utilMac);
+    if (ImGui::CollapsingHeader("Live read (game)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Spacing();
+        line_or_dash("GSC JsonDeviceID", s.gameServerJsonId);
+        line_or_dash("GSC Report", s.gameServerReportId);
+        line_or_dash("GSC Unique", s.gameServerUniqueId);
+        line_or_dash("GSC Android", s.gameServerAndroidId);
+        line_or_dash("GSC Ad", s.gameServerAdId);
+        ImGui::Separator();
+        line_or_dash("SDK deviceId", s.sdkDeviceId);
+        line_or_dash("SDK us unique", s.sdkUniqueId);
+        line_or_dash("SDK us android", s.sdkAndroidId);
+        line_or_dash("SDK us ad", s.sdkAdvertisingId);
+        line_or_dash("SDK OAID", s.sdkOaid);
+        line_or_dash("SDK channel", s.sdkChannel);
+        ImGui::Separator();
+        line_or_dash("Util Android", s.utilAndroidId);
+        line_or_dash("Util Ad", s.utilAdId);
+        line_or_dash("Util Telephony", s.utilTelephonyId);
+        line_or_dash("Util MAC", s.utilMac);
+    }
 }
