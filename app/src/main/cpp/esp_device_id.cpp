@@ -459,6 +459,8 @@ static void spoof_load_from_disk() {
     g_spoof.loaded = true;
 }
 
+static void spoof_put_line(std::string &body, const char *key, const char *val);
+
 static void snap_to_export_lines(std::string &body, const EspDeviceIdSnap &s) {
     auto line = [&](const char *key, const char *val) {
         if (!val || !val[0] || spoof_value_placeholder(val)) return;
