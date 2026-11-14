@@ -33,6 +33,9 @@ void esp_device_id_draw_panel(pid_t pid);
 struct EspDeviceSpoofCfg {
     bool enabled = false;
     bool autoAndroidTxt = true;
+    /** Rebuild SDKCommon._deviceId as and_<gsc_unique> before apply unless sdk_device in txt. */
+    bool syncSdkDeviceFromUnique = true;
+    bool sdkDeviceLocked = false;
     bool loaded = false;
     char gscJson[1024] = {};
     char gscReport[256] = {};

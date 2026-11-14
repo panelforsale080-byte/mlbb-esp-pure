@@ -48,6 +48,8 @@ static EspDeviceSpoofCfg g_spoof;
 
 static constexpr char kSpoofFile[] = "device_spoof.cfg";
 
+static bool read_il2_str(pid_t pid, uintptr_t strObj, char *out, size_t outSz);
+
 EspDeviceSpoofCfg &esp_device_id_spoof_cfg() { return g_spoof; }
 
 static void trim_line(char *s) {
@@ -193,6 +195,11 @@ static bool spoof_apply_kv(const char *key, const char *val) {
         g_spoof.autoAndroidTxt = std::strcmp(val, "0") != 0 && std::strcmp(val, "false") != 0;
         return true;
     }
+    if (std::strcmp(key, "sync_sdk_device") == 0) {
+        g_spoof.syncSdkDeviceFromUnique =
+            std::strcmp(val, "0") != 0 && std::strcmp(val, "false") != 0;
+        return true;
+    }
     if (std::strcmp(key, "gsc_json") == 0) {
         std::snprintf(g_spoof.gscJson, sizeof(g_spoof.gscJson), "%s", val);
         return true;
@@ -215,6 +222,7 @@ static bool spoof_apply_kv(const char *key, const char *val) {
     }
     if (std::strcmp(key, "sdk_device") == 0) {
         std::snprintf(g_spoof.sdkDeviceId, sizeof(g_spoof.sdkDeviceId), "%s", val);
+        g_spoof.sdkDeviceLocked = true;
         return true;
     }
     if (std::strcmp(key, "sdk_unique") == 0) {
@@ -283,6 +291,7 @@ static bool spoof_apply_copyall_label(const char *label, const char *val) {
     if (std::strstr(label, "SDKCommon._deviceId") != nullptr ||
         (std::strstr(label, "SDKCommon") != nullptr && std::strstr(label, "_deviceId") != nullptr)) {
         std::snprintf(g_spoof.sdkDeviceId, sizeof(g_spoof.sdkDeviceId), "%s", val);
+        g_spoof.sdkDeviceLocked = true;
         return true;
     }
     if (std::strstr(label, "_us_id_device_uniqueid") != nullptr) {
@@ -390,6 +399,7 @@ bool esp_device_id_load_android_txt(bool force) {
         return false;
     }
     raw.push_back(0);
+    g_spoof.sdkDeviceLocked = false;
     const int n = spoof_parse_text_buffer(reinterpret_cast<char *>(raw.data()));
     if (n > 0) {
         ui_log("[device] loaded %s (%d fields)", used, n);
@@ -412,6 +422,7 @@ bool esp_device_id_spoof_save() {
     body += "# Spoof IDs — overlay app only; empty value = skip on apply\n";
     spoof_put_line(body, "enabled", g_spoof.enabled ? "1" : "0");
     spoof_put_line(body, "auto_android_txt", g_spoof.autoAndroidTxt ? "1" : "0");
+    spoof_put_line(body, "sync_sdk_device", g_spoof.syncSdkDeviceFromUnique ? "1" : "0");
     spoof_put_line(body, "gsc_json", g_spoof.gscJson);
     spoof_put_line(body, "gsc_report", g_spoof.gscReport);
     spoof_put_line(body, "gsc_unique", g_spoof.gscUnique);
@@ -447,6 +458,36 @@ void esp_device_id_spoof_fill_from_snapshot() {
     std::snprintf(g_spoof.utilAd, sizeof(g_spoof.utilAd), "%s", s.utilAdId);
     std::snprintf(g_spoof.utilTelephony, sizeof(g_spoof.utilTelephony), "%s", s.utilTelephonyId);
     std::snprintf(g_spoof.utilMac, sizeof(g_spoof.utilMac), "%s", s.utilMac);
+}
+
+static void spoof_derive_before_apply() {
+    if (!g_spoof.syncSdkDeviceFromUnique || g_spoof.sdkDeviceLocked) return;
+    if (spoof_value_placeholder(g_spoof.gscUnique)) return;
+    char built[384];
+    std::snprintf(built, sizeof(built), "and_%s", g_spoof.gscUnique);
+    if (std::strcmp(g_spoof.sdkDeviceId, built) != 0) {
+        std::snprintf(g_spoof.sdkDeviceId, sizeof(g_spoof.sdkDeviceId), "%s", built);
+        ui_log("[device] derived SDK deviceId: %s", built);
+    }
+}
+
+static void verify_string_field(pid_t pid, uintptr_t holder, uintptr_t off, const char *expect,
+                                const char *label) {
+    if (!holder || !expect || spoof_value_placeholder(expect)) return;
+    uintptr_t strObj = 0;
+    if (!mem_read(pid, holder + off, strObj) || !strObj) {
+        ui_log("[device] verify %s: no string ptr", label);
+        return;
+    }
+    char got[192];
+    if (!read_il2_str(pid, strObj, got, sizeof(got))) {
+        ui_log("[device] verify %s: read fail", label);
+        return;
+    }
+    if (std::strcmp(got, expect) == 0)
+        ui_log("[device] verify %s OK (%s)", label, got);
+    else
+        ui_log("[device] verify %s MISMATCH want=%s got=%s", label, expect, got);
 }
 
 static bool resolve_gsc_instance(pid_t pid, uintptr_t gscKlass, uintptr_t &inst) {
@@ -502,6 +543,8 @@ bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled, bool allowPtrace)
     } else if (allowPtrace && !il2.sym_string_new) {
         ui_log("[device] WARN: il2cpp_string_new=0 — long IDs need same length");
     }
+
+    spoof_derive_before_apply();
 
     int ok = 0;
     int fail = 0;
@@ -587,6 +630,25 @@ bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled, bool allowPtrace)
 
     ui_log("[device] apply done OK=%d FAIL=%d skip=%d%s", ok, fail, skip,
            allowPtrace ? "" : " (in-place only)");
+
+    if (ok > 0 && gscInst) {
+        verify_string_field(pid, gscInst, DumpOff::GscAndroidId, g_spoof.gscAndroid, "GSC Android");
+        verify_string_field(pid, gscInst, DumpOff::GscUniqueId, g_spoof.gscUnique, "GSC Unique");
+    }
+    if (ok > 0 && utilKlass) {
+        const uintptr_t ut = esp_bm_static_fields_ptr(pid, utilKlass);
+        if (ut) {
+            const char *a = !spoof_value_placeholder(g_spoof.utilAndroid) ? g_spoof.utilAndroid
+                                                                          : sdkAnd;
+            if (a) verify_string_field(pid, ut, DumpOff::UtilAndroidId, a, "Util Android");
+        }
+    }
+  if (ok > 0 && sdkKlass) {
+        const uintptr_t st = esp_bm_static_fields_ptr(pid, sdkKlass);
+        if (st && sdkAnd)
+            verify_string_field(pid, st, DumpOff::SdkUsAndroid, sdkAnd, "SDK us android");
+    }
+
     return ok > 0;
 }
 
