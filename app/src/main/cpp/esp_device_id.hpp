@@ -33,7 +33,7 @@ void esp_device_id_draw_panel(pid_t pid);
 struct EspDeviceSpoofCfg {
     bool enabled = false;
     bool autoAndroidTxt = true;
-    /** After Refresh, write live IDs to /sdcard/android.txt when JsonDeviceID is present. */
+    /** First live read with JsonDeviceID: save to sdcard before any Apply/spoof. */
     bool autoSaveAndroidTxt = true;
     /** Rebuild SDKCommon._deviceId as and_<gsc_unique> before apply unless sdk_device in txt. */
     bool syncSdkDeviceFromUnique = true;

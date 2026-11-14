@@ -45,6 +45,8 @@ static uintptr_t g_utilKlass = 0;
 static std::mutex g_mu;
 static EspDeviceIdSnap g_snap;
 static EspDeviceSpoofCfg g_spoof;
+static pid_t g_baselinePid = 0;
+static bool g_baselineSaved = false;
 
 static constexpr char kSpoofFile[] = "device_spoof.cfg";
 
@@ -401,24 +403,60 @@ static void snap_to_export_lines(std::string &body, const EspDeviceIdSnap &s) {
     line("util_mac", s.utilMac);
 }
 
+static bool save_snap_to_path(const EspDeviceIdSnap &s, const char *absPath, const char *header) {
+    if (!absPath || !s.gameServerJsonId[0]) return false;
+    std::string body;
+    body += header ? header : "# Xorel device IDs\n";
+    spoof_put_line(body, "auto_android_txt", "0");
+    spoof_put_line(body, "sync_sdk_device", "1");
+    snap_to_export_lines(body, s);
+    return android_write_file_path(absPath, body.c_str());
+}
+
+static void save_baseline_before_spoof(pid_t pid, const EspDeviceIdSnap &snap) {
+    if (!g_spoof.autoSaveAndroidTxt || !snap.gameServerJsonId[0]) return;
+    if (g_baselineSaved && g_baselinePid == pid) return;
+
+    static const char *const kOrig[] = {"/storage/emulated/0/android_original.txt",
+                                        "/sdcard/android_original.txt", nullptr};
+    for (unsigned i = 0; kOrig[i]; ++i) {
+        if (save_snap_to_path(snap, kOrig[i],
+                              "# Original from game — captured BEFORE spoof/Apply\n")) {
+            ui_log("[device] baseline (pre-change) -> %s json=%s", kOrig[i], snap.gameServerJsonId);
+            break;
+        }
+    }
+
+    std::vector<uint8_t> existing;
+    const bool hasTxt =
+        android_read_file_path("/storage/emulated/0/android.txt", existing) && !existing.empty();
+    if (!hasTxt) {
+        static const char *const kTxt[] = {"/storage/emulated/0/android.txt", "/sdcard/android.txt",
+                                          nullptr};
+        for (unsigned i = 0; kTxt[i]; ++i) {
+            if (save_snap_to_path(snap, kTxt[i],
+                                  "# Original from game (first capture) — edit then auto_android_txt=1\n")) {
+                ui_log("[device] created %s from game (before change)", kTxt[i]);
+                break;
+            }
+        }
+    }
+
+    g_baselineSaved = true;
+    g_baselinePid = pid;
+}
+
 bool esp_device_id_save_android_txt(const EspDeviceIdSnap *snapOpt) {
     const EspDeviceIdSnap &s = snapOpt ? *snapOpt : esp_device_id_snapshot();
     if (!s.gameServerJsonId[0]) {
         ui_log("[device] save android.txt: no JsonDeviceID yet");
         return false;
     }
-    std::string body;
-    body += "# Xorel device export — edit values then Reload txt / Apply\n";
-    spoof_put_line(body, "auto_android_txt", "1");
-    spoof_put_line(body, "sync_sdk_device", g_spoof.syncSdkDeviceFromUnique ? "1" : "0");
-    snap_to_export_lines(body, s);
     static const char *const kPaths[] = {"/storage/emulated/0/android.txt", "/sdcard/android.txt",
                                          nullptr};
     for (unsigned i = 0; kPaths[i]; ++i) {
-        if (android_write_file_path(kPaths[i], body.c_str())) {
+        if (save_snap_to_path(s, kPaths[i], "# Manual export — edit then Reload txt / Apply\n")) {
             ui_log("[device] saved %s (JsonDeviceID=%s)", kPaths[i], s.gameServerJsonId);
-            g_spoof.sdkDeviceLocked = true;
-            spoof_parse_text_buffer(const_cast<char *>(body.c_str()));
             return true;
         }
     }
@@ -707,6 +745,10 @@ bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled, bool allowPtrace)
 void esp_device_id_on_resolve(pid_t pid, uintptr_t gameServerConfigKlass, uintptr_t sdkCommonKlass,
                               uintptr_t deviceUtilKlass) {
     std::lock_guard<std::mutex> lock(g_mu);
+    if (g_baselinePid != pid) {
+        g_baselinePid = pid;
+        g_baselineSaved = false;
+    }
     g_pid = pid;
     g_gscKlass = gameServerConfigKlass;
     g_sdkKlass = sdkCommonKlass;
@@ -720,6 +762,8 @@ void esp_device_id_clear() {
     g_sdkKlass = 0;
     g_utilKlass = 0;
     g_snap = {};
+    g_baselinePid = 0;
+    g_baselineSaved = false;
 }
 
 static bool read_il2_str(pid_t pid, uintptr_t strObj, char *out, size_t outSz) {
@@ -826,17 +870,6 @@ void esp_device_id_refresh(pid_t pid) {
         return;
     }
 
-    if (g_spoof.enabled) {
-        static uint64_t s_lastInplaceMs = 0;
-        const uint64_t nowMs = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
-                                   std::chrono::steady_clock::now().time_since_epoch())
-                                   .count();
-        if (nowMs - s_lastInplaceMs >= 15000) {
-            esp_device_id_apply_spoof(pid, true, false);
-            s_lastInplaceMs = nowMs;
-        }
-    }
-
     if (sdkKlass) {
         static const char *kDevId[] = {"_deviceId", "<_deviceId>k__BackingField"};
         static const char *kUnique[] = {"_us_id_device_uniqueid", "_sAppUUId"};
@@ -899,17 +932,22 @@ void esp_device_id_refresh(pid_t pid) {
     std::snprintf(snap.hint, sizeof(snap.hint),
                   "GSC instance; SDK/DeviceUtil static (IL2 + vm_read offsets)");
 
+    save_baseline_before_spoof(pid, snap);
+
+    if (g_spoof.enabled) {
+        static uint64_t s_lastInplaceMs = 0;
+        const uint64_t nowMs = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now().time_since_epoch())
+                                   .count();
+        if (nowMs - s_lastInplaceMs >= 15000) {
+            esp_device_id_apply_spoof(pid, true, false);
+            s_lastInplaceMs = nowMs;
+        }
+    }
+
     {
         std::lock_guard<std::mutex> lock(g_mu);
         g_snap = snap;
-    }
-
-    if (g_spoof.autoSaveAndroidTxt && snap.gameServerJsonId[0]) {
-        static char s_lastJson[1024] = {};
-        if (std::strcmp(s_lastJson, snap.gameServerJsonId) != 0) {
-            esp_device_id_save_android_txt(&snap);
-            std::snprintf(s_lastJson, sizeof(s_lastJson), "%s", snap.gameServerJsonId);
-        }
     }
 }
 
@@ -991,7 +1029,7 @@ void esp_device_id_draw_panel(pid_t pid) {
     ImGui::SameLine();
     if (ImGui::SmallButton("Reload txt")) esp_device_id_load_android_txt(true);
     ImGui::Checkbox("SDK deviceId = and_<gsc_unique>", &g_spoof.syncSdkDeviceFromUnique);
-    ImGui::Checkbox("Auto save live IDs → /sdcard/android.txt", &g_spoof.autoSaveAndroidTxt);
+    ImGui::Checkbox("Auto-save original → sdcard (before Apply)", &g_spoof.autoSaveAndroidTxt);
     ImGui::SameLine();
     if (ImGui::SmallButton("Export txt"))
         esp_device_id_save_android_txt(nullptr);
