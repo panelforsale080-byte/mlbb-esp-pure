@@ -78,7 +78,7 @@ static bool read_field_str(pid_t pid, uintptr_t inst, uintptr_t off, char *out, 
     return read_il2_str(pid, p, out, n);
 }
 
-static bool read_static_named(pid_t pid, const RemoteIl2CppInfo &il2, uintptr_t klass,
+static bool read_static_named(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t klass,
                               const char *fieldName, char *out, size_t n) {
     if (!klass || !fieldName || !out || n == 0) return false;
     out[0] = '\0';
@@ -92,7 +92,7 @@ static bool read_static_named(pid_t pid, const RemoteIl2CppInfo &il2, uintptr_t 
     return false;
 }
 
-static void try_static_names(pid_t pid, const RemoteIl2CppInfo &il2, uintptr_t klass,
+static void try_static_names(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t klass,
                              const char *const *names, size_t count, char *out, size_t n) {
     if (!klass || !out || n == 0) return;
     for (size_t i = 0; i < count; ++i) {
