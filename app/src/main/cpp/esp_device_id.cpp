@@ -18,6 +18,20 @@ constexpr uintptr_t GscAndroidId = 0x128;
 constexpr uintptr_t GscAdvertisingId = 0x130;
 constexpr uintptr_t GscReportDeviceId = 0x140;
 constexpr uintptr_t GscStaticInstance = 0xd0;
+
+constexpr uintptr_t SdkChannel = 0x20;
+constexpr uintptr_t SdkDeviceId = 0x28;
+constexpr uintptr_t SdkAppUuid = 0x30;
+constexpr uintptr_t SdkOaid = 0x58;
+constexpr uintptr_t SdkUsUnique = 0x200;
+constexpr uintptr_t SdkUsAndroid = 0x208;
+constexpr uintptr_t SdkUsAdvertising = 0x210;
+
+constexpr uintptr_t UtilAndroidId = 0x120;
+constexpr uintptr_t UtilAdvertisingId = 0x128;
+constexpr uintptr_t UtilRealAdvertisingId = 0x130;
+constexpr uintptr_t UtilMac = 0x140;
+constexpr uintptr_t UtilTelephony = 0x148;
 } // namespace DumpOff
 
 static pid_t g_pid = 0;
@@ -78,27 +92,42 @@ static bool read_field_str(pid_t pid, uintptr_t inst, uintptr_t off, char *out, 
     return read_il2_str(pid, p, out, n);
 }
 
+static bool read_static_off_str(pid_t pid, uintptr_t klass, uintptr_t fieldOff, char *out,
+                                size_t n) {
+    if (!klass || !fieldOff || !out || n == 0) return false;
+    const uintptr_t st = esp_bm_static_fields_ptr(pid, klass);
+    if (!st) return false;
+    uintptr_t strObj = 0;
+    if (!mem_read(pid, st + fieldOff, strObj) || !strObj) return false;
+    return read_il2_str(pid, strObj, out, n);
+}
+
+static void fill_static_off_if_empty(pid_t pid, uintptr_t klass, uintptr_t off, char *out,
+                                     size_t n) {
+    if (!out || out[0] || !klass) return;
+    read_static_off_str(pid, klass, off, out, n);
+}
+
 static bool read_static_named(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t klass,
-                              const char *fieldName, char *out, size_t n) {
+                              const char *fieldName, uintptr_t fieldOff, char *out, size_t n) {
     if (!klass || !fieldName || !out || n == 0) return false;
     out[0] = '\0';
     uintptr_t strObj = 0;
     if (conrent_il2_static_field_ptr(pid, il2, klass, fieldName, strObj) && strObj)
         return read_il2_str(pid, strObj, out, n);
-    const uintptr_t st = esp_bm_static_fields_ptr(pid, klass);
-    if (!st) return false;
-    /* Field offset walk is unreliable on static blocks; only named IL2 get_value is trusted. */
-    (void)st;
+    if (fieldOff) return read_static_off_str(pid, klass, fieldOff, out, n);
     return false;
 }
 
 static void try_static_names(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t klass,
-                             const char *const *names, size_t count, char *out, size_t n) {
+                             const char *const *names, size_t count, uintptr_t fieldOff, char *out,
+                             size_t n) {
     if (!klass || !out || n == 0) return;
     for (size_t i = 0; i < count; ++i) {
         if (out[0]) return;
-        read_static_named(pid, il2, klass, names[i], out, n);
+        read_static_named(pid, il2, klass, names[i], fieldOff, out, n);
     }
+    fill_static_off_if_empty(pid, klass, fieldOff, out, n);
 }
 
 void esp_device_id_refresh(pid_t pid) {
@@ -141,30 +170,35 @@ void esp_device_id_refresh(pid_t pid) {
         static const char *kOaid[] = {"_sOAID", "_us_id_appset_id"};
         static const char *kChan[] = {"_channel"};
         try_static_names(pid, il2, sdkKlass, kDevId, sizeof(kDevId) / sizeof(kDevId[0]),
-                         snap.sdkDeviceId, sizeof(snap.sdkDeviceId));
+                         DumpOff::SdkDeviceId, snap.sdkDeviceId, sizeof(snap.sdkDeviceId));
         try_static_names(pid, il2, sdkKlass, kUnique, sizeof(kUnique) / sizeof(kUnique[0]),
-                         snap.sdkUniqueId, sizeof(snap.sdkUniqueId));
-        try_static_names(pid, il2, sdkKlass, kAnd, sizeof(kAnd) / sizeof(kAnd[0]), snap.sdkAndroidId,
-                         sizeof(snap.sdkAndroidId));
+                         DumpOff::SdkUsUnique, snap.sdkUniqueId, sizeof(snap.sdkUniqueId));
+        if (!snap.sdkUniqueId[0])
+            fill_static_off_if_empty(pid, sdkKlass, DumpOff::SdkAppUuid, snap.sdkUniqueId,
+                                     sizeof(snap.sdkUniqueId));
+        try_static_names(pid, il2, sdkKlass, kAnd, sizeof(kAnd) / sizeof(kAnd[0]),
+                         DumpOff::SdkUsAndroid, snap.sdkAndroidId, sizeof(snap.sdkAndroidId));
         try_static_names(pid, il2, sdkKlass, kAd, sizeof(kAd) / sizeof(kAd[0]),
-                         snap.sdkAdvertisingId, sizeof(snap.sdkAdvertisingId));
-        try_static_names(pid, il2, sdkKlass, kOaid, sizeof(kOaid) / sizeof(kOaid[0]), snap.sdkOaid,
-                         sizeof(snap.sdkOaid));
+                         DumpOff::SdkUsAdvertising, snap.sdkAdvertisingId,
+                         sizeof(snap.sdkAdvertisingId));
+        try_static_names(pid, il2, sdkKlass, kOaid, sizeof(kOaid) / sizeof(kOaid[0]),
+                         DumpOff::SdkOaid, snap.sdkOaid, sizeof(snap.sdkOaid));
         try_static_names(pid, il2, sdkKlass, kChan, sizeof(kChan) / sizeof(kChan[0]),
-                         snap.sdkChannel, sizeof(snap.sdkChannel));
+                         DumpOff::SdkChannel, snap.sdkChannel, sizeof(snap.sdkChannel));
     }
 
     if (utilKlass) {
-        read_static_named(pid, il2, utilKlass, "_strAndroidID", snap.utilAndroidId,
-                        sizeof(snap.utilAndroidId));
-        read_static_named(pid, il2, utilKlass, "_strAdvertisingID", snap.utilAdId,
-                        sizeof(snap.utilAdId));
-        read_static_named(pid, il2, utilKlass, "_strTelephonyDeviceID", snap.utilTelephonyId,
-                        sizeof(snap.utilTelephonyId));
-        read_static_named(pid, il2, utilKlass, "_strMacAddress", snap.utilMac, sizeof(snap.utilMac));
+        read_static_named(pid, il2, utilKlass, "_strAndroidID", DumpOff::UtilAndroidId,
+                          snap.utilAndroidId, sizeof(snap.utilAndroidId));
+        read_static_named(pid, il2, utilKlass, "_strAdvertisingID", DumpOff::UtilAdvertisingId,
+                          snap.utilAdId, sizeof(snap.utilAdId));
+        read_static_named(pid, il2, utilKlass, "_strTelephonyDeviceID", DumpOff::UtilTelephony,
+                          snap.utilTelephonyId, sizeof(snap.utilTelephonyId));
+        read_static_named(pid, il2, utilKlass, "_strMacAddress", DumpOff::UtilMac, snap.utilMac,
+                          sizeof(snap.utilMac));
         if (!snap.utilAdId[0])
-            read_static_named(pid, il2, utilKlass, "_realAdvertisingID", snap.utilAdId,
-                            sizeof(snap.utilAdId));
+            read_static_named(pid, il2, utilKlass, "_realAdvertisingID",
+                              DumpOff::UtilRealAdvertisingId, snap.utilAdId, sizeof(snap.utilAdId));
     }
 
     if (gscKlass) {
@@ -187,7 +221,8 @@ void esp_device_id_refresh(pid_t pid) {
         }
     }
 
-    std::snprintf(snap.hint, sizeof(snap.hint), "GSC instance + SDKCommon/DeviceUtil static (IL2)");
+    std::snprintf(snap.hint, sizeof(snap.hint),
+                  "GSC instance; SDK/DeviceUtil static (IL2 + vm_read offsets)");
 
     std::lock_guard<std::mutex> lock(g_mu);
     g_snap = snap;
