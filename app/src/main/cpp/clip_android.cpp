@@ -143,6 +143,24 @@ bool android_app_file_write(const char *relName, const char *text) {
     return n == std::strlen(text);
 }
 
+bool android_read_file_path(const char *absPath, std::vector<uint8_t> &out) {
+    out.clear();
+    if (!absPath || !absPath[0]) return false;
+    FILE *f = std::fopen(absPath, "rb");
+    if (!f) return false;
+    std::fseek(f, 0, SEEK_END);
+    const long len = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    if (len <= 0 || len > 256 * 1024) {
+        std::fclose(f);
+        return false;
+    }
+    out.resize((size_t)len);
+    const size_t n = std::fread(out.data(), 1, out.size(), f);
+    std::fclose(f);
+    return n == out.size();
+}
+
 bool android_read_clipboard(char *out, size_t outSz) {
     if (!out || outSz == 0) return false;
     out[0] = '\0';

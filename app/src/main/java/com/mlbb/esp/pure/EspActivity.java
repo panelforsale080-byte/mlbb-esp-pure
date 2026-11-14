@@ -10,6 +10,7 @@ import android.net.Uri;
 import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.widget.EditText;
 import android.provider.Settings;
 import android.view.inputmethod.EditorInfo;
@@ -32,6 +33,7 @@ import androidx.core.content.ContextCompat;
  */
 public class EspActivity extends Activity {
     private static final int REQ_NOTIF = 1001;
+    private static final int REQ_STORAGE = 1002;
     private static final String MLBB_PACKAGE = "com.mobile.legends";
 
     private boolean pendingOverlay = false;
@@ -238,6 +240,35 @@ public class EspActivity extends Activity {
         }
     }
 
+    private boolean storageOkForDeviceTxt() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            return Environment.isExternalStorageManager();
+        }
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void promptStorageForAndroidTxt() {
+        if (storageOkForDeviceTxt()) return;
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                Intent i = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                i.setData(Uri.parse("package:" + getPackageName()));
+                startActivity(i);
+            } catch (Throwable ignored) {
+                startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+            }
+            Toast.makeText(
+                            this,
+                            "Allow All files access to read /sdcard/android.txt",
+                            Toast.LENGTH_LONG)
+                    .show();
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            requestPermissions(
+                    new String[] {Manifest.permission.READ_EXTERNAL_STORAGE}, REQ_STORAGE);
+        }
+    }
+
     private void tryStartOverlay() {
         if (!licenseOk) {
             Toast.makeText(this, R.string.key_enter_password, Toast.LENGTH_LONG).show();
@@ -256,6 +287,7 @@ public class EspActivity extends Activity {
                 return;
             }
         }
+        promptStorageForAndroidTxt();
         startOverlay();
     }
 

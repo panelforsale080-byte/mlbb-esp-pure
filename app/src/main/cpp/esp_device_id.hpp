@@ -32,6 +32,7 @@ void esp_device_id_draw_panel(pid_t pid);
 /** Empty field = skip apply. Saved to overlay app files/device_spoof.cfg */
 struct EspDeviceSpoofCfg {
     bool enabled = false;
+    bool autoAndroidTxt = true;
     bool loaded = false;
     char gscJson[1024] = {};
     char gscReport[256] = {};
@@ -55,3 +56,5 @@ bool esp_device_id_spoof_save();
 /** requireEnabled: only when auto in-place on Refresh; allowPtrace: Apply now (lobby only) */
 bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled = true, bool allowPtrace = false);
 void esp_device_id_spoof_fill_from_snapshot();
+/** /storage/emulated/0/android.txt — Copy-all lines or key=value. */
+bool esp_device_id_load_android_txt(bool force);
