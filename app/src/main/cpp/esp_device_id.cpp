@@ -110,7 +110,7 @@ static bool write_managed_string_at(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t 
     if (strObj && patch_il2_string_inplace(pid, strObj, utf8)) return true;
     uintptr_t neu = 0;
     if (!conrent_il2_string_new(pid, il2, utf8, neu)) return false;
-    return mem_write(pid, holder + fieldOff, neu);
+    return mem_write(pid, holder + fieldOff, &neu, sizeof(neu));
 }
 
 static void spoof_load_from_disk() {
@@ -122,7 +122,7 @@ static void spoof_load_from_disk() {
     raw.push_back(0);
     char *buf = reinterpret_cast<char *>(raw.data());
     char *save = nullptr;
-    for (char *line = std::strtok_r(buf, "\n", &save); line; line = std::strtok_r(nullptr, "\n", &save)) {
+    for (char *line = strtok_r(buf, "\n", &save); line; line = strtok_r(nullptr, "\n", &save)) {
         trim_line(line);
         if (!line[0] || line[0] == '#') continue;
         char *eq = std::strchr(line, '=');
@@ -604,7 +604,7 @@ void esp_device_id_draw_panel(pid_t pid) {
     if (ImGui::Button("Refresh", ImVec2(half, 0.f))) esp_device_id_refresh(pid);
     ImGui::SameLine();
     if (ImGui::Button("Copy all", ImVec2(half, 0.f))) {
-        static char buf[4096];
+        static char buf[8192];
         esp_device_id_format_copy_all(buf, sizeof(buf));
         if (android_copy_to_clipboard(buf)) ui_log("[device] copied all IDs");
     }
