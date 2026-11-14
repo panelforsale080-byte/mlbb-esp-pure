@@ -52,6 +52,6 @@ struct EspDeviceSpoofCfg {
 
 EspDeviceSpoofCfg &esp_device_id_spoof_cfg();
 bool esp_device_id_spoof_save();
-/** requireEnabled: Refresh path; false = Apply now button */
-bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled = true);
+/** requireEnabled: only when auto in-place on Refresh; allowPtrace: Apply now (lobby only) */
+bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled = true, bool allowPtrace = false);
 void esp_device_id_spoof_fill_from_snapshot();

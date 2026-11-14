@@ -3,10 +3,12 @@
 #include "conrent_esp.hpp"
 #include "esp_engine.hpp"
 #include "mem.hpp"
+#include "remote_call.hpp"
 #include "ui_log.hpp"
 
 #include "imgui.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -102,14 +104,17 @@ static bool patch_il2_string_inplace(pid_t pid, uintptr_t strObj, const char *ut
     return mem_write(pid, strObj + 0x10, blob, 4 + newLen * 2);
 }
 
-static bool write_managed_string_at(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t holder, uintptr_t fieldOff,
+static bool write_managed_string_at(pid_t pid, RemoteIl2CppInfo &il2, RemoteSession *ptraceS,
+                                    bool allowPtrace, uintptr_t holder, uintptr_t fieldOff,
                                     const char *utf8) {
     if (!holder || !utf8 || !utf8[0]) return false;
     uintptr_t strObj = 0;
     mem_read(pid, holder + fieldOff, strObj);
     if (strObj && patch_il2_string_inplace(pid, strObj, utf8)) return true;
+    if (!allowPtrace || !ptraceS || !ptraceS->attached) return false;
     uintptr_t neu = 0;
-    if (!conrent_il2_string_new(pid, il2, utf8, neu)) return false;
+    if (!conrent_il2_string_new_session(*ptraceS, pid, il2, utf8, neu) || !mem_ptr_ok(neu))
+        return false;
     return mem_write(pid, holder + fieldOff, &neu, sizeof(neu));
 }
 
@@ -217,18 +222,15 @@ void esp_device_id_spoof_fill_from_snapshot() {
     std::snprintf(g_spoof.utilMac, sizeof(g_spoof.utilMac), "%s", s.utilMac);
 }
 
-static bool resolve_gsc_instance(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t gscKlass,
-                                 uintptr_t &inst) {
+static bool resolve_gsc_instance(pid_t pid, uintptr_t gscKlass, uintptr_t &inst) {
     inst = 0;
     if (!gscKlass) return false;
-    if (!conrent_il2_static_field_ptr(pid, il2, gscKlass, "Instance", inst) || !inst) {
-        const uintptr_t st = esp_bm_static_fields_ptr(pid, gscKlass);
-        if (st) mem_read(pid, st + DumpOff::GscStaticInstance, inst);
-    }
+    const uintptr_t st = esp_bm_static_fields_ptr(pid, gscKlass);
+    if (st) mem_read(pid, st + DumpOff::GscStaticInstance, inst);
     return inst != 0 && mem_ptr_ok(inst);
 }
 
-bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled) {
+bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled, bool allowPtrace) {
     if (pid <= 0) return false;
     if (requireEnabled && !g_spoof.enabled) return false;
 
@@ -244,51 +246,49 @@ bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled) {
     RemoteIl2CppInfo il2{};
     if (!esp_resolved_il2(il2)) return false;
 
+    RemoteSession ptraceS{};
+    RemoteSession *ptracePtr = nullptr;
+    if (allowPtrace && il2.sym_string_new && remote_session_begin_try(pid, ptraceS))
+        ptracePtr = &ptraceS;
+
     int ok = 0;
     auto writeBump = [&](bool w) {
         if (w) ++ok;
     };
+    auto wStr = [&](uintptr_t holder, uintptr_t off, const char *val) {
+        return write_managed_string_at(pid, il2, ptracePtr, allowPtrace, holder, off, val);
+    };
 
     uintptr_t gscInst = 0;
-    if (gscKlass) resolve_gsc_instance(pid, il2, gscKlass, gscInst);
+    if (gscKlass) resolve_gsc_instance(pid, gscKlass, gscInst);
     if (gscInst) {
         if (g_spoof.gscJson[0])
-            writeBump(write_managed_string_at(pid, il2, gscInst, DumpOff::GscJsonDeviceId,
-                                            g_spoof.gscJson));
+            writeBump(wStr(gscInst, DumpOff::GscJsonDeviceId, g_spoof.gscJson));
         if (g_spoof.gscReport[0])
-            writeBump(write_managed_string_at(pid, il2, gscInst, DumpOff::GscReportDeviceId,
-                                            g_spoof.gscReport));
+            writeBump(wStr(gscInst, DumpOff::GscReportDeviceId, g_spoof.gscReport));
         if (g_spoof.gscUnique[0])
-            writeBump(write_managed_string_at(pid, il2, gscInst, DumpOff::GscUniqueId,
-                                            g_spoof.gscUnique));
+            writeBump(wStr(gscInst, DumpOff::GscUniqueId, g_spoof.gscUnique));
         if (g_spoof.gscAndroid[0])
-            writeBump(write_managed_string_at(pid, il2, gscInst, DumpOff::GscAndroidId,
-                                            g_spoof.gscAndroid));
+            writeBump(wStr(gscInst, DumpOff::GscAndroidId, g_spoof.gscAndroid));
         if (g_spoof.gscAd[0])
-            writeBump(write_managed_string_at(pid, il2, gscInst, DumpOff::GscAdvertisingId,
-                                            g_spoof.gscAd));
+            writeBump(wStr(gscInst, DumpOff::GscAdvertisingId, g_spoof.gscAd));
     }
 
     if (sdkKlass) {
         const uintptr_t st = esp_bm_static_fields_ptr(pid, sdkKlass);
         if (st) {
             if (g_spoof.sdkDeviceId[0])
-                writeBump(
-                    write_managed_string_at(pid, il2, st, DumpOff::SdkDeviceId, g_spoof.sdkDeviceId));
+                writeBump(wStr(st, DumpOff::SdkDeviceId, g_spoof.sdkDeviceId));
             if (g_spoof.sdkUnique[0])
-                writeBump(
-                    write_managed_string_at(pid, il2, st, DumpOff::SdkUsUnique, g_spoof.sdkUnique));
+                writeBump(wStr(st, DumpOff::SdkUsUnique, g_spoof.sdkUnique));
             if (g_spoof.sdkAndroid[0])
-                writeBump(
-                    write_managed_string_at(pid, il2, st, DumpOff::SdkUsAndroid, g_spoof.sdkAndroid));
+                writeBump(wStr(st, DumpOff::SdkUsAndroid, g_spoof.sdkAndroid));
             if (g_spoof.sdkAd[0])
-                writeBump(
-                    write_managed_string_at(pid, il2, st, DumpOff::SdkUsAdvertising, g_spoof.sdkAd));
+                writeBump(wStr(st, DumpOff::SdkUsAdvertising, g_spoof.sdkAd));
             if (g_spoof.sdkOaid[0])
-                writeBump(write_managed_string_at(pid, il2, st, DumpOff::SdkOaid, g_spoof.sdkOaid));
+                writeBump(wStr(st, DumpOff::SdkOaid, g_spoof.sdkOaid));
             if (g_spoof.sdkChannel[0])
-                writeBump(
-                    write_managed_string_at(pid, il2, st, DumpOff::SdkChannel, g_spoof.sdkChannel));
+                writeBump(wStr(st, DumpOff::SdkChannel, g_spoof.sdkChannel));
         }
     }
 
@@ -296,24 +296,23 @@ bool esp_device_id_apply_spoof(pid_t pid, bool requireEnabled) {
         const uintptr_t st = esp_bm_static_fields_ptr(pid, utilKlass);
         if (st) {
             if (g_spoof.utilAndroid[0])
-                writeBump(write_managed_string_at(pid, il2, st, DumpOff::UtilAndroidId,
-                                                g_spoof.utilAndroid));
+                writeBump(wStr(st, DumpOff::UtilAndroidId, g_spoof.utilAndroid));
             if (g_spoof.utilAd[0]) {
-                writeBump(write_managed_string_at(pid, il2, st, DumpOff::UtilAdvertisingId,
-                                                g_spoof.utilAd));
-                writeBump(write_managed_string_at(pid, il2, st, DumpOff::UtilRealAdvertisingId,
-                                                g_spoof.utilAd));
+                writeBump(wStr(st, DumpOff::UtilAdvertisingId, g_spoof.utilAd));
+                writeBump(wStr(st, DumpOff::UtilRealAdvertisingId, g_spoof.utilAd));
             }
             if (g_spoof.utilTelephony[0])
-                writeBump(write_managed_string_at(pid, il2, st, DumpOff::UtilTelephony,
-                                                g_spoof.utilTelephony));
+                writeBump(wStr(st, DumpOff::UtilTelephony, g_spoof.utilTelephony));
             if (g_spoof.utilMac[0])
-                writeBump(
-                    write_managed_string_at(pid, il2, st, DumpOff::UtilMac, g_spoof.utilMac));
+                writeBump(wStr(st, DumpOff::UtilMac, g_spoof.utilMac));
         }
     }
 
-    if (ok > 0) ui_log("[device] spoof applied (%d writes)", ok);
+    if (ptracePtr) remote_session_end(ptraceS);
+
+    if (ok > 0)
+        ui_log("[device] spoof applied (%d writes)%s", ok,
+               allowPtrace ? "" : " (in-place only)");
     return ok > 0;
 }
 
@@ -438,7 +437,16 @@ void esp_device_id_refresh(pid_t pid) {
         return;
     }
 
-    if (g_spoof.enabled) esp_device_id_apply_spoof(pid);
+    if (g_spoof.enabled) {
+        static uint64_t s_lastInplaceMs = 0;
+        const uint64_t nowMs = (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now().time_since_epoch())
+                                   .count();
+        if (nowMs - s_lastInplaceMs >= 15000) {
+            esp_device_id_apply_spoof(pid, true, false);
+            s_lastInplaceMs = nowMs;
+        }
+    }
 
     if (sdkKlass) {
         static const char *kDevId[] = {"_deviceId", "<_deviceId>k__BackingField"};
@@ -550,7 +558,7 @@ void esp_device_id_draw_panel(pid_t pid) {
     if (!g_spoof.loaded) spoof_load_from_disk();
 
     ImGui::SeparatorText("Spoof (saved) — empty = skip");
-    ImGui::Checkbox("Enable spoof on Refresh", &g_spoof.enabled);
+    ImGui::Checkbox("In-place spoof on Refresh (15s, safe)", &g_spoof.enabled);
     if (ImGui::Button("Fill from game (Refresh first)")) {
         esp_device_id_spoof_fill_from_snapshot();
         ui_log("[device] spoof fields filled from live read");
@@ -588,8 +596,9 @@ void esp_device_id_draw_panel(pid_t pid) {
     ImGui::SameLine();
     if (ImGui::Button("Apply now", ImVec2(spoofBtn, 0.f))) {
         esp_device_id_spoof_save();
-        if (esp_device_id_apply_spoof(pid, false)) esp_device_id_refresh(pid);
-        else ui_log("[device] apply failed — Resolve; shorter/same length works in-place");
+        if (esp_device_id_apply_spoof(pid, false, true)) esp_device_id_refresh(pid);
+        else
+            ui_log("[device] apply failed — lobby only; use same/shorter length");
     }
     ImGui::SameLine();
     if (ImGui::Button("Clear spoof fields", ImVec2(spoofBtn, 0.f))) {
@@ -597,7 +606,7 @@ void esp_device_id_draw_panel(pid_t pid) {
         g_spoof.loaded = true;
         esp_device_id_spoof_save();
     }
-    ImGui::TextDisabled("Overlay app saves values. Game restart: Resolve + Apply or Refresh.");
+    ImGui::TextDisabled("Apply now = lobby/menu only (ptrace). Refresh = read only + optional in-place.");
 
     ImGui::SeparatorText("Live read (game)");
     const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;

@@ -609,10 +609,7 @@ static void draw_ui() {
         ImGui::SameLine();
         if (menu_page_button("Music", g_menuPage == 1, pageW)) g_menuPage = 1;
         ImGui::SameLine();
-        if (menu_page_button("Device", g_menuPage == 2, pageW)) {
-            g_menuPage = 2;
-            esp_device_id_refresh(fr.pid);
-        }
+        if (menu_page_button("Device", g_menuPage == 2, pageW)) g_menuPage = 2;
         if (g_menuPage == 1) draw_music_panel();
         else if (g_menuPage == 2) esp_device_id_draw_panel(fr.pid);
         else if (g_menuPage == 0) {

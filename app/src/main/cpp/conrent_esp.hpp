@@ -1,5 +1,6 @@
 #pragma once
 #include "remote_il2cpp.hpp"
+#include "remote_call.hpp"
 #include "mem.hpp"
 #include <sys/types.h>
 #include <vector>
@@ -94,4 +95,6 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> &maps,
 /** il2cpp_field_static_get_value — correct BM _RunBullets / m_RunBullets (not raw statics+off). */
 bool conrent_il2_static_field_ptr(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t klass,
                                     const char *fieldName, uintptr_t &outPtr);
+bool conrent_il2_string_new_session(RemoteSession &s, pid_t pid, RemoteIl2CppInfo &il2,
+                                    const char *utf8, uintptr_t &outStr);
 bool conrent_il2_string_new(pid_t pid, RemoteIl2CppInfo &il2, const char *utf8, uintptr_t &outStr);
