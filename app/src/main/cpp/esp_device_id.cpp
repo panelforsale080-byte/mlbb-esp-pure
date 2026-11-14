@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <vector>
 
 namespace DumpOff {
 constexpr uintptr_t GscJsonDeviceId = 0x118;
@@ -40,6 +41,163 @@ static uintptr_t g_sdkKlass = 0;
 static uintptr_t g_utilKlass = 0;
 static std::mutex g_mu;
 static EspDeviceIdSnap g_snap;
+static EspDeviceSpoofCfg g_spoof;
+
+static constexpr char kSpoofFile[] = "device_spoof.cfg";
+
+EspDeviceSpoofCfg &esp_device_id_spoof_cfg() { return g_spoof; }
+
+static void trim_line(char *s) {
+    if (!s) return;
+    size_t n = std::strlen(s);
+    while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r' || s[n - 1] == ' ' || s[n - 1] == '\t'))
+        s[--n] = '\0';
+    size_t i = 0;
+    while (s[i] == ' ' || s[i] == '\t') ++i;
+    if (i > 0) std::memmove(s, s + i, std::strlen(s + i) + 1);
+}
+
+static size_t utf8_to_utf16le(const char *utf8, uint16_t *out, size_t maxUnits) {
+    if (!utf8 || !out || maxUnits == 0) return 0;
+    size_t o = 0;
+    const unsigned char *p = reinterpret_cast<const unsigned char *>(utf8);
+    while (*p && o < maxUnits) {
+        uint32_t c = 0;
+        if (*p < 0x80) {
+            c = *p++;
+        } else if ((*p & 0xE0) == 0xC0) {
+            c = ((uint32_t)(p[0] & 0x1F) << 6) | (p[1] & 0x3F);
+            p += 2;
+        } else if ((*p & 0xF0) == 0xE0) {
+            c = ((uint32_t)(p[0] & 0x0F) << 12) | ((uint32_t)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+            p += 3;
+        } else if ((*p & 0xF8) == 0xF0) {
+            c = ((uint32_t)(p[0] & 0x07) << 18) | ((uint32_t)(p[1] & 0x3F) << 12) |
+                ((uint32_t)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+            p += 4;
+        } else {
+            ++p;
+            continue;
+        }
+        if (c <= 0xFFFF) out[o++] = (uint16_t)c;
+    }
+    return o;
+}
+
+static bool patch_il2_string_inplace(pid_t pid, uintptr_t strObj, const char *utf8) {
+    if (!strObj || !mem_ptr_ok(strObj) || !utf8) return false;
+    int32_t oldLen = 0;
+    if (!mem_read(pid, strObj + 0x10, oldLen) || oldLen <= 0 || oldLen > 192) return false;
+    uint16_t units[192];
+    const size_t newLen = utf8_to_utf16le(utf8, units, sizeof(units) / sizeof(units[0]));
+    if (newLen == 0 || newLen > (size_t)oldLen) return false;
+    uint8_t blob[4 + 192 * 2] = {};
+    const int32_t wlen = (int32_t)newLen;
+    std::memcpy(blob, &wlen, sizeof(wlen));
+    for (size_t i = 0; i < newLen; ++i) {
+        blob[4 + i * 2] = (uint8_t)(units[i] & 0xFF);
+        blob[4 + i * 2 + 1] = (uint8_t)(units[i] >> 8);
+    }
+    return mem_write(pid, strObj + 0x10, blob, 4 + newLen * 2);
+}
+
+static bool write_managed_string_at(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t holder, uintptr_t fieldOff,
+                                    const char *utf8) {
+    if (!holder || !utf8 || !utf8[0]) return false;
+    uintptr_t strObj = 0;
+    mem_read(pid, holder + fieldOff, strObj);
+    if (strObj && patch_il2_string_inplace(pid, strObj, utf8)) return true;
+    uintptr_t neu = 0;
+    if (!conrent_il2_string_new(pid, il2, utf8, neu)) return false;
+    return mem_write(pid, holder + fieldOff, neu);
+}
+
+static void spoof_load_from_disk() {
+    std::vector<uint8_t> raw;
+    if (!android_app_file_read(kSpoofFile, raw)) {
+        g_spoof.loaded = true;
+        return;
+    }
+    raw.push_back(0);
+    char *buf = reinterpret_cast<char *>(raw.data());
+    char *save = nullptr;
+    for (char *line = std::strtok_r(buf, "\n", &save); line; line = std::strtok_r(nullptr, "\n", &save)) {
+        trim_line(line);
+        if (!line[0] || line[0] == '#') continue;
+        char *eq = std::strchr(line, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        const char *key = line;
+        char *val = eq + 1;
+        trim_line(const_cast<char *>(key));
+        trim_line(val);
+        if (std::strcmp(key, "enabled") == 0)
+            g_spoof.enabled = std::strcmp(val, "1") == 0 || std::strcmp(val, "true") == 0 ||
+                              std::strcmp(val, "yes") == 0;
+        else if (std::strcmp(key, "gsc_android") == 0)
+            std::snprintf(g_spoof.gscAndroid, sizeof(g_spoof.gscAndroid), "%s", val);
+        else if (std::strcmp(key, "util_android") == 0)
+            std::snprintf(g_spoof.utilAndroid, sizeof(g_spoof.utilAndroid), "%s", val);
+        else if (std::strcmp(key, "util_ad") == 0)
+            std::snprintf(g_spoof.utilAd, sizeof(g_spoof.utilAd), "%s", val);
+    }
+    g_spoof.loaded = true;
+}
+
+bool esp_device_id_spoof_save() {
+    char body[512];
+    std::snprintf(body, sizeof(body),
+                  "# Saved spoof IDs (overlay app; survives restart)\n"
+                  "enabled=%d\n"
+                  "gsc_android=%s\n"
+                  "util_android=%s\n"
+                  "util_ad=%s\n",
+                  g_spoof.enabled ? 1 : 0, g_spoof.gscAndroid, g_spoof.utilAndroid, g_spoof.utilAd);
+    return android_app_file_write(kSpoofFile, body);
+}
+
+bool esp_device_id_apply_spoof(pid_t pid) {
+    if (pid <= 0 || !g_spoof.enabled) return false;
+    const bool wantGsc = g_spoof.gscAndroid[0] != '\0';
+    const bool wantUtilA = g_spoof.utilAndroid[0] != '\0';
+    const bool wantUtilAd = g_spoof.utilAd[0] != '\0';
+    if (!wantGsc && !wantUtilA && !wantUtilAd) return false;
+
+    uintptr_t gscKlass = 0;
+    uintptr_t utilKlass = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_mu);
+        gscKlass = g_gscKlass;
+        utilKlass = g_utilKlass;
+    }
+    RemoteIl2CppInfo il2{};
+    if (!esp_resolved_il2(il2)) return false;
+
+    int ok = 0;
+    if (wantGsc && gscKlass) {
+        uintptr_t inst = 0;
+        if (!conrent_il2_static_field_ptr(pid, il2, gscKlass, "Instance", inst) || !inst) {
+            const uintptr_t st = esp_bm_static_fields_ptr(pid, gscKlass);
+            if (st) mem_read(pid, st + DumpOff::GscStaticInstance, inst);
+        }
+        if (inst && mem_ptr_ok(inst) &&
+            write_managed_string_at(pid, il2, inst, DumpOff::GscAndroidId, g_spoof.gscAndroid))
+            ++ok;
+    }
+    if (utilKlass) {
+        const uintptr_t st = esp_bm_static_fields_ptr(pid, utilKlass);
+        if (st) {
+            if (wantUtilA &&
+                write_managed_string_at(pid, il2, st, DumpOff::UtilAndroidId, g_spoof.utilAndroid))
+                ++ok;
+            if (wantUtilAd &&
+                write_managed_string_at(pid, il2, st, DumpOff::UtilAdvertisingId, g_spoof.utilAd))
+                ++ok;
+        }
+    }
+    if (ok > 0) ui_log("[device] spoof applied (%d fields)", ok);
+    return ok > 0;
+}
 
 void esp_device_id_on_resolve(pid_t pid, uintptr_t gameServerConfigKlass, uintptr_t sdkCommonKlass,
                               uintptr_t deviceUtilKlass) {
@@ -162,6 +320,8 @@ void esp_device_id_refresh(pid_t pid) {
         return;
     }
 
+    if (g_spoof.enabled) esp_device_id_apply_spoof(pid);
+
     if (sdkKlass) {
         static const char *kDevId[] = {"_deviceId", "<_deviceId>k__BackingField"};
         static const char *kUnique[] = {"_us_id_device_uniqueid", "_sAppUUId"};
@@ -269,6 +429,25 @@ static void line_or_dash(const char *label, const char *val) {
 }
 
 void esp_device_id_draw_panel(pid_t pid) {
+    if (!g_spoof.loaded) spoof_load_from_disk();
+
+    ImGui::SeparatorText("Spoof (saved)");
+    ImGui::Checkbox("Enable spoof on Refresh", &g_spoof.enabled);
+    ImGui::InputText("GSC _strAndroidID", g_spoof.gscAndroid, sizeof(g_spoof.gscAndroid));
+    ImGui::InputText("DeviceUtil _strAndroidID", g_spoof.utilAndroid, sizeof(g_spoof.utilAndroid));
+    ImGui::InputText("DeviceUtil _strAdvertisingID", g_spoof.utilAd, sizeof(g_spoof.utilAd));
+  const float spoofBtn = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    if (ImGui::Button("Save", ImVec2(spoofBtn, 0.f))) {
+        if (esp_device_id_spoof_save()) ui_log("[device] spoof saved");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Apply now", ImVec2(spoofBtn, 0.f))) {
+        esp_device_id_spoof_save();
+        if (esp_device_id_apply_spoof(pid)) esp_device_id_refresh(pid);
+        else ui_log("[device] spoof apply failed — Resolve first; same-length ID may work without new alloc");
+    }
+    ImGui::TextDisabled("Stored in overlay app files; game may overwrite until you Apply.");
+
     ImGui::SeparatorText("Device ID (IL2)");
     const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
     if (ImGui::Button("Refresh", ImVec2(half, 0.f))) esp_device_id_refresh(pid);

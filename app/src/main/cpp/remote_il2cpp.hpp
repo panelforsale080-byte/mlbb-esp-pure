@@ -17,6 +17,7 @@ struct RemoteIl2CppInfo {
     uintptr_t sym_image_get_class = 0;
     uintptr_t sym_class_get_field_from_name = 0;
     uintptr_t sym_field_static_get_value = 0;
+    uintptr_t sym_string_new = 0;
     uintptr_t sym_thread_attach = 0;
     uintptr_t sym_class_get_method_from_name = 0;
     uintptr_t sym_field_get_offset = 0;

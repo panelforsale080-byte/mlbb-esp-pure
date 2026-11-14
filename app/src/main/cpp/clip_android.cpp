@@ -1,6 +1,8 @@
 #include "clip_android.hpp"
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
+#include <cstdio>
+#include <cstring>
 #include <jni.h>
 
 static JavaVM *g_clipVm = nullptr;
@@ -78,6 +80,67 @@ bool android_read_asset(const char *name, std::vector<uint8_t> &out) {
     const int n = AAsset_read(asset, out.data(), (size_t)len);
     AAsset_close(asset);
     return n == (int)len;
+}
+
+static bool files_dir_abs(JNIEnv *env, char *out, size_t outCap) {
+    if (!env || !g_clipCtx || !out || outCap == 0) return false;
+    jclass ctxCls = env->FindClass("android/content/Context");
+    jclass fileCls = env->FindClass("java/io/File");
+    if (!ctxCls || !fileCls) return false;
+    jmethodID getFilesDir = env->GetMethodID(ctxCls, "getFilesDir", "()Ljava/io/File;");
+    jmethodID getAbsPath = env->GetMethodID(fileCls, "getAbsolutePath", "()Ljava/lang/String;");
+    if (!getFilesDir || !getAbsPath) return false;
+    jobject dir = env->CallObjectMethod(g_clipCtx, getFilesDir);
+    if (env->ExceptionCheck() || !dir) {
+        env->ExceptionClear();
+        return false;
+    }
+    jstring path = (jstring)env->CallObjectMethod(dir, getAbsPath);
+    if (!path) return false;
+    const char *utf = env->GetStringUTFChars(path, nullptr);
+    if (!utf) return false;
+    std::snprintf(out, outCap, "%s", utf);
+    env->ReleaseStringUTFChars(path, utf);
+    return out[0] != '\0';
+}
+
+bool android_app_file_read(const char *relName, std::vector<uint8_t> &out) {
+    out.clear();
+    if (!g_clipVm || !g_clipCtx || !relName) return false;
+    JNIEnv *env = nullptr;
+    if (g_clipVm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return false;
+    char dir[512] = {};
+    if (!files_dir_abs(env, dir, sizeof(dir))) return false;
+    char path[640] = {};
+    std::snprintf(path, sizeof(path), "%s/%s", dir, relName);
+    FILE *f = std::fopen(path, "rb");
+    if (!f) return false;
+    std::fseek(f, 0, SEEK_END);
+    const long len = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    if (len <= 0 || len > 64 * 1024) {
+        std::fclose(f);
+        return false;
+    }
+    out.resize((size_t)len);
+    const size_t n = std::fread(out.data(), 1, out.size(), f);
+    std::fclose(f);
+    return n == out.size();
+}
+
+bool android_app_file_write(const char *relName, const char *text) {
+    if (!g_clipVm || !g_clipCtx || !relName || !text) return false;
+    JNIEnv *env = nullptr;
+    if (g_clipVm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) return false;
+    char dir[512] = {};
+    if (!files_dir_abs(env, dir, sizeof(dir))) return false;
+    char path[640] = {};
+    std::snprintf(path, sizeof(path), "%s/%s", dir, relName);
+    FILE *f = std::fopen(path, "wb");
+    if (!f) return false;
+    const size_t n = std::fwrite(text, 1, std::strlen(text), f);
+    std::fclose(f);
+    return n == std::strlen(text);
 }
 
 bool android_copy_to_clipboard(const char *text) {

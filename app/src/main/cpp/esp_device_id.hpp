@@ -28,3 +28,15 @@ void esp_device_id_refresh(pid_t pid);
 const EspDeviceIdSnap &esp_device_id_snapshot();
 void esp_device_id_format_copy_all(char *out, size_t outSz);
 void esp_device_id_draw_panel(pid_t pid);
+
+struct EspDeviceSpoofCfg {
+    bool enabled = false;
+    bool loaded = false;
+    char gscAndroid[96] = {};
+    char utilAndroid[96] = {};
+    char utilAd[96] = {};
+};
+
+EspDeviceSpoofCfg &esp_device_id_spoof_cfg();
+bool esp_device_id_spoof_save();
+bool esp_device_id_apply_spoof(pid_t pid);

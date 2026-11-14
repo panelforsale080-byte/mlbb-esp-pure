@@ -625,3 +625,21 @@ bool conrent_il2_static_field_ptr(pid_t pid, RemoteIl2CppInfo &il2, uintptr_t kl
     remote_session_end(s);
     return outPtr != 0 && outPtr > 0xffffULL && mem_ptr_ok(outPtr);
 }
+
+bool conrent_il2_string_new(pid_t pid, RemoteIl2CppInfo &il2, const char *utf8, uintptr_t &outStr) {
+    outStr = 0;
+    if (!utf8 || !utf8[0] || !il2.sym_string_new) return false;
+    RemoteSession s{};
+    if (!remote_session_begin(pid, s)) return false;
+    const uintptr_t txt = il2_name_scratch(s, pid, 12, utf8);
+    if (!txt) {
+        remote_session_end(s);
+        return false;
+    }
+    if (!remote_session_call(s, il2.sym_string_new, {txt}, outStr)) {
+        remote_session_end(s);
+        return false;
+    }
+    remote_session_end(s);
+    return outStr != 0 && outStr > 0xffffULL && mem_ptr_ok(outStr);
+}
