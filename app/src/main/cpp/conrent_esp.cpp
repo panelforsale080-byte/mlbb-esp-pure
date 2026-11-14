@@ -551,9 +551,11 @@ bool conrent_resolve_battle_manager(pid_t pid, const std::vector<MapsReg> & /*ma
     out.device_game_server_config_klass =
         find_class_fast(s, pid, il2, images, "GameServerConfig", false);
     out.device_sdk_common_klass = find_class_fast(s, pid, il2, images, "SDKCommon", false);
-    ui_log("[resolve] device: GameServerConfig=0x%llx SDKCommon=0x%llx",
+    out.device_util_klass = find_class_fast(s, pid, il2, images, "DeviceUtil", false);
+    ui_log("[resolve] device: GSC=0x%llx SDKCommon=0x%llx DeviceUtil=0x%llx",
            (unsigned long long)out.device_game_server_config_klass,
-           (unsigned long long)out.device_sdk_common_klass);
+           (unsigned long long)out.device_sdk_common_klass,
+           (unsigned long long)out.device_util_klass);
 
     ui_log("[resolve] mod menu + auto retri classes (FindClass):");
     for (unsigned i = 0; i < kEspResolveFindClassCount; ++i) {

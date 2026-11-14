@@ -1011,7 +1011,7 @@ EspStatus esp_resolve(EspResolveReport *reportOut) {
         std::snprintf(rep.detail, sizeof(rep.detail), "conRentV1 fast: %s", cr.detail);
         ui_log("[resolve] OK %s", cr.detail);
         esp_device_id_on_resolve(g_pid, cr.device_game_server_config_klass,
-                                 cr.device_sdk_common_klass);
+                                 cr.device_sdk_common_klass, cr.device_util_klass);
         esp_device_id_refresh(g_pid);
         g_lastReport = rep;
         if (reportOut) *reportOut = rep;
